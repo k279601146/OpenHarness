@@ -26,6 +26,7 @@ from openharness.tools.mcp_tool import McpToolAdapter
 from openharness.tools.notebook_edit_tool import NotebookEditTool
 from openharness.tools.read_mcp_resource_tool import ReadMcpResourceTool
 from openharness.tools.remote_trigger_tool import RemoteTriggerTool
+from openharness.tools.query_memory_tool import QueryMemoryTool
 from openharness.tools.send_message_tool import SendMessageTool
 from openharness.tools.skill_tool import SkillTool
 from openharness.tools.sleep_tool import SleepTool
@@ -86,6 +87,7 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         TeamCreateTool(),
         TeamDeleteTool(),
         ImageGenerationTool(),
+        QueryMemoryTool(),
     ):
         registry.register(tool)
     if mcp_manager is not None:
