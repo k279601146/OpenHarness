@@ -44,11 +44,26 @@ class BaseTool(ABC):
         return False
 
     def to_api_schema(self) -> dict[str, Any]:
-        """Return the tool schema expected by the Anthropic Messages API."""
+        """Return the tool schema expected by the Messages API with global reasoning injection."""
+        schema = self.input_model.model_json_schema()
+        
+        # ====== 全局意图注入 (Manus/Loveart 级架构) ======
+        # 强制所有工具都具备 purpose 字段，让模型每次调用工具都必须向用户解释动作目的
+        if "properties" in schema:
+            schema["properties"]["purpose"] = {
+                "type": "string",
+                "description": "对该具体操作的功能及其用途进行对话式说明（默认使用中文）。此文本将直接展示给用户。"
+            }
+            # 强迫大模型必须输出该字段，否则不合法
+            if "required" not in schema:
+                schema["required"] = []
+            if "purpose" not in schema["required"]:
+                schema["required"].append("purpose")
+                
         return {
             "name": self.name,
             "description": self.description,
-            "input_schema": self.input_model.model_json_schema(),
+            "input_schema": schema,
         }
 
 

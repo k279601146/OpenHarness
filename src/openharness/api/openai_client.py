@@ -157,7 +157,7 @@ def _convert_assistant_message(msg: ConversationMessage) -> dict[str, Any]:
     openai_msg: dict[str, Any] = {"role": "assistant"}
 
     content = "".join(text_parts)
-    openai_msg["content"] = content if content else None
+    openai_msg["content"] = content if content else ""
 
     # Replay reasoning_content for thinking models (stored by streaming parser)
     reasoning = getattr(msg, "_reasoning", None)
@@ -291,6 +291,9 @@ class OpenAICompatibleClient:
                 continue
 
             delta = chunk.choices[0].delta
+            if not delta:
+                continue
+
             chunk_finish = chunk.choices[0].finish_reason
 
             if chunk_finish:
@@ -300,6 +303,7 @@ class OpenAICompatibleClient:
             reasoning_piece = getattr(delta, "reasoning_content", None) or ""
             if reasoning_piece:
                 collected_reasoning += reasoning_piece
+                yield ApiReasoningDeltaEvent(text=reasoning_piece)
 
             # Stream text content to user
             if delta.content:

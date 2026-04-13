@@ -41,6 +41,7 @@ from openharness.tools.todo_write_tool import TodoWriteTool
 from openharness.tools.tool_search_tool import ToolSearchTool
 from openharness.tools.web_fetch_tool import WebFetchTool
 from openharness.tools.web_search_tool import WebSearchTool
+from openharness.tools.image_generation_tool import ImageGenerationTool
 
 
 def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
@@ -84,6 +85,7 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         SendMessageTool(),
         TeamCreateTool(),
         TeamDeleteTool(),
+        ImageGenerationTool(),
     ):
         registry.register(tool)
     if mcp_manager is not None:

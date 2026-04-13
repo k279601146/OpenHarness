@@ -12,6 +12,7 @@ from typing import AsyncIterator, Awaitable, Callable
 from openharness.api.client import (
     ApiMessageCompleteEvent,
     ApiMessageRequest,
+    ApiReasoningDeltaEvent,
     ApiRetryEvent,
     ApiTextDeltaEvent,
     SupportsStreamingMessages,
@@ -19,6 +20,7 @@ from openharness.api.client import (
 from openharness.api.usage import UsageSnapshot
 from openharness.engine.messages import ConversationMessage, ToolResultBlock
 from openharness.engine.stream_events import (
+    AssistantReasoningDelta,
     AssistantTextDelta,
     AssistantTurnComplete,
     ErrorEvent,
@@ -112,6 +114,9 @@ async def run_query(
             ):
                 if isinstance(event, ApiTextDeltaEvent):
                     yield AssistantTextDelta(text=event.text), None
+                    continue
+                if isinstance(event, ApiReasoningDeltaEvent):
+                    yield AssistantReasoningDelta(text=event.text), None
                     continue
                 if isinstance(event, ApiRetryEvent):
                     yield StatusEvent(
@@ -209,8 +214,12 @@ async def _execute_tool_call(
             is_error=True,
         )
 
+    # Strip globally injected fields before validation
+    tool_input_final = dict(tool_input)
+    tool_input_final.pop("purpose", None)
+
     try:
-        parsed_input = tool.input_model.model_validate(tool_input)
+        parsed_input = tool.input_model.model_validate(tool_input_final)
     except Exception as exc:
         log.warning("invalid input for %s: %s", tool_name, exc)
         return ToolResultBlock(

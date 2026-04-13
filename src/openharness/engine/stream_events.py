@@ -17,6 +17,13 @@ class AssistantTextDelta:
 
 
 @dataclass(frozen=True)
+class AssistantReasoningDelta:
+    """Incremental assistant reasoning (thinking)."""
+
+    text: str
+
+
+@dataclass(frozen=True)
 class AssistantTurnComplete:
     """Completed assistant turn."""
 
@@ -58,6 +65,7 @@ class StatusEvent:
 
 StreamEvent = (
     AssistantTextDelta
+    | AssistantReasoningDelta
     | AssistantTurnComplete
     | ToolExecutionStarted
     | ToolExecutionCompleted
