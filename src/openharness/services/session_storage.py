@@ -11,7 +11,8 @@ from uuid import uuid4
 
 from openharness.api.usage import UsageSnapshot
 from openharness.config.paths import get_sessions_dir
-from openharness.engine.messages import ConversationMessage
+from openharness.engine.messages import ConversationMessage, sanitize_conversation_messages
+from openharness.utils.fs import atomic_write_text
 
 
 _PERSISTED_TOOL_METADATA_KEYS = (
@@ -72,6 +73,7 @@ def save_session_snapshot(
     session_dir = get_project_session_dir(cwd)
     sid = session_id or uuid4().hex[:12]
     now = time.time()
+    messages = sanitize_conversation_messages(messages)
     # Extract a summary from the first user message
     summary = ""
     for msg in messages:
@@ -95,13 +97,26 @@ def save_session_snapshot(
 
     # Save as latest
     latest_path = session_dir / "latest.json"
-    latest_path.write_text(data, encoding="utf-8")
+    atomic_write_text(latest_path, data)
 
     # Save by session ID
     session_path = session_dir / f"session-{sid}.json"
-    session_path.write_text(data, encoding="utf-8")
+    atomic_write_text(session_path, data)
 
     return latest_path
+
+
+def _sanitize_snapshot_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize persisted messages for forward compatibility."""
+    raw_messages = payload.get("messages", [])
+    if isinstance(raw_messages, list):
+        messages = sanitize_conversation_messages(
+            [ConversationMessage.model_validate(item) for item in raw_messages]
+        )
+        payload = dict(payload)
+        payload["messages"] = [message.model_dump(mode="json") for message in messages]
+        payload["message_count"] = len(messages)
+    return payload
 
 
 def load_session_snapshot(cwd: str | Path) -> dict[str, Any] | None:
@@ -109,7 +124,7 @@ def load_session_snapshot(cwd: str | Path) -> dict[str, Any] | None:
     path = get_project_session_dir(cwd) / "latest.json"
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    return _sanitize_snapshot_payload(json.loads(path.read_text(encoding="utf-8")))
 
 
 def list_session_snapshots(cwd: str | Path, limit: int = 20) -> list[dict[str, Any]]:
@@ -181,11 +196,11 @@ def load_session_by_id(cwd: str | Path, session_id: str) -> dict[str, Any] | Non
     # Try named session first
     path = session_dir / f"session-{session_id}.json"
     if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
+        return _sanitize_snapshot_payload(json.loads(path.read_text(encoding="utf-8")))
     # Fallback to latest.json if session_id matches
     latest = session_dir / "latest.json"
     if latest.exists():
-        data = json.loads(latest.read_text(encoding="utf-8"))
+        data = _sanitize_snapshot_payload(json.loads(latest.read_text(encoding="utf-8")))
         if data.get("session_id") == session_id or session_id == "latest":
             return data
     return None
@@ -210,5 +225,5 @@ def export_session_markdown(
         for block in message.content:
             if getattr(block, "type", "") == "tool_result":
                 parts.append(f"\n```tool-result\n{block.content}\n```")
-    path.write_text("\n".join(parts).strip() + "\n", encoding="utf-8")
+    atomic_write_text(path, "\n".join(parts).strip() + "\n")
     return path

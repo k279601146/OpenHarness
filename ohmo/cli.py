@@ -208,10 +208,10 @@ def _prompt_channels(existing: GatewayConfig) -> tuple[list[str], dict[str, dict
         else:
             enabled.append(channel)
         allow_from_raw = _text_prompt(
-            f"{channel} allow_from (comma separated, '*' for everyone)",
-            default=",".join(prior.get("allow_from", ["*"])) or "*",
+            f"{channel} allow_from (comma separated user/chat IDs; leave blank to deny all; '*' for everyone)",
+            default=",".join(prior.get("allow_from", [])),
         )
-        allow_from = [item.strip() for item in allow_from_raw.split(",") if item.strip()] or ["*"]
+        allow_from = [item.strip() for item in allow_from_raw.split(",") if item.strip()]
         config: dict[str, object] = {"allow_from": allow_from}
         if channel == "telegram":
             config["token"] = _text_prompt(
@@ -306,6 +306,22 @@ def _run_gateway_config_wizard(workspace: str | Path) -> GatewayConfig:
         "Send tool hints to channels?",
         default=existing.send_tool_hints,
     )
+    allow_remote_admin_commands = _confirm_prompt(
+        "Allow explicitly listed administrative slash commands from remote channels?",
+        default=existing.allow_remote_admin_commands,
+    )
+    default_allowlist = ", ".join(existing.allowed_remote_admin_commands)
+    allowed_remote_admin_commands: list[str] = []
+    if allow_remote_admin_commands:
+        allowlist_raw = _text_prompt(
+            "Allowed remote admin commands (comma-separated, e.g. permissions, plan)",
+            default=default_allowlist,
+        )
+        allowed_remote_admin_commands = [
+            item.strip().lstrip("/")
+            for item in allowlist_raw.split(",")
+            if item.strip()
+        ]
     config = existing.model_copy(
         update={
             "provider_profile": provider_profile,
@@ -313,6 +329,8 @@ def _run_gateway_config_wizard(workspace: str | Path) -> GatewayConfig:
             "channel_configs": channel_configs,
             "send_progress": send_progress,
             "send_tool_hints": send_tool_hints,
+            "allow_remote_admin_commands": allow_remote_admin_commands,
+            "allowed_remote_admin_commands": allowed_remote_admin_commands,
         }
     )
     save_gateway_config(config, workspace)
@@ -326,8 +344,24 @@ def _print_gateway_config_summary(config: GatewayConfig) -> None:
             + ", ".join(config.enabled_channels)
             + f" | provider_profile={config.provider_profile}"
         )
+        deny_all_channels = [
+            name for name in config.enabled_channels
+            if not list(config.channel_configs.get(name, {}).get("allow_from", []))
+        ]
+        if deny_all_channels:
+            print(
+                "Remote access denied until allow_from is configured for: "
+                + ", ".join(deny_all_channels)
+            )
     else:
         print(f"Configured provider_profile={config.provider_profile}; no channels enabled yet.")
+    if config.allow_remote_admin_commands and config.allowed_remote_admin_commands:
+        print(
+            "Remote admin opt-in enabled for: "
+            + ", ".join(f"/{name}" for name in config.allowed_remote_admin_commands)
+        )
+    else:
+        print("Remote admin commands remain local-only.")
 
 
 def _maybe_restart_gateway(*, cwd: str | Path, workspace: str | Path) -> None:

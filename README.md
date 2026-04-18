@@ -190,18 +190,33 @@ OpenHarness is an open-source Python implementation designed for **researchers, 
 
 ### 1. Install
 
+#### Linux / macOS / WSL
+
 ```bash
-# One-click install (Linux / macOS / WSL)
+# One-click install
 curl -fsSL https://raw.githubusercontent.com/HKUDS/OpenHarness/main/scripts/install.sh | bash
 
 # Or via pip
 pip install openharness-ai
 ```
 
+#### Windows (Native)
+
+```powershell
+# One-click install (PowerShell)
+iex (Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/HKUDS/OpenHarness/main/scripts/install.ps1')
+
+# Or via pip
+pip install openharness-ai
+```
+
+**Note**: Windows support is now native. In PowerShell, use `openh` instead of `oh` because `oh` can resolve to the built-in `Out-Host` alias.
+
 ### 2. Configure
 
 ```bash
 oh setup    # interactive wizard — pick a provider, authenticate, done
+# On Windows PowerShell, use: openh setup
 ```
 
 Supports **Claude / OpenAI / Copilot / Codex / Moonshot(Kimi) / GLM / MiniMax** and any compatible endpoint.
@@ -210,6 +225,7 @@ Supports **Claude / OpenAI / Copilot / Codex / Moonshot(Kimi) / GLM / MiniMax** 
 
 ```bash
 oh
+# On Windows PowerShell, use: openh
 ```
 
 <p align="center">
@@ -310,6 +326,44 @@ oh provider add my-endpoint \
 ```
 
 For custom compatible endpoints, OpenHarness can bind credentials per profile instead of forcing every Anthropic-compatible or OpenAI-compatible backend to share the same API key.
+
+### Ollama (Local Models)
+
+Run local models through Ollama's OpenAI-compatible endpoint:
+
+```bash
+# Add an Ollama provider profile
+oh provider add ollama \
+  --label "Ollama" \
+  --provider Ollama \
+  --api-format openai \
+  --auth-source openai_api_key \
+  --model glm-4.7-flash:q8_0 \
+  --base-url http://localhost:11434/v1
+```
+```
+Saved provider profile: ollama
+```
+
+```bash
+# Activate and verify
+oh provider use ollama
+```
+```
+Activated provider profile: ollama
+```
+
+```bash
+oh provider list
+```
+```
+  claude-api: Anthropic-Compatible API [ready]
+  ...
+  moonshot: Moonshot (Kimi) [missing auth]
+    auth=moonshot_api_key model=kimi-k2.5 base_url=https://api.moonshot.cn/v1
+* ollama: Ollama [ready]
+    auth=openai_api_key model=glm-4.7-flash:q8_0 base_url=http://localhost:11434/v1
+```
 
 ### GitHub Copilot Format (`--api-format copilot`)
 
