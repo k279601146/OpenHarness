@@ -1,0 +1,337 @@
+"""
+底层媒体生成引擎 (Private Engines)
+=====================================
+本模块只负责"如何调用 API"以及"如何将结果推送给前端"。
+不包含任何业务逻辑或模型路由；由上层工具调用。
+"""
+
+import asyncio
+import base64
+import json
+import logging
+import os
+import random
+import uuid
+from pathlib import Path
+from typing import Union
+
+import httpx
+
+from openharness.tools.base import ToolExecutionContext, ToolResult
+
+log = logging.getLogger(__name__)
+
+# --- Mock 数据（仅用于测试环境）---
+_MOCK_IMAGE_URLS = [
+    "https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?w=1024",
+    "https://images.unsplash.com/photo-1614850523459-c2f4c699c52e?w=1024",
+    "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1024",
+    "https://images.unsplash.com/photo-1634017839464-5c339ebe3cb4?w=1024",
+    "https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=1024",
+]
+
+_MOCK_VIDEO_URLS = [
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
+]
+
+
+def _is_mock_mode(api_key: str) -> bool:
+    """判断是否应使用 Mock 模式（环境变量开关 或 API Key 缺失）。"""
+    return os.getenv("MOCK_MEDIA", "false").lower() == "true" or not api_key
+
+
+def load_image_as_base64(file_path: Union[str, Path], api_format: str) -> Union[str, dict]:
+    """
+    读取本地图片并转为 Base64。
+
+    api_format:
+        "doubao" -> 返回 data URI 字符串 "data:image/png;base64,..."
+        "gemini" -> 返回 inlineData dict {"inlineData": {"mimeType": ..., "data": ...}}
+    """
+    str_path = str(file_path).lstrip("/")
+    path = Path(str_path)
+
+    if not path.exists():
+        alt = Path(os.getcwd()) / str_path
+        if alt.exists():
+            path = alt
+        else:
+            raise FileNotFoundError(f"图片未找到: {file_path}")
+
+    encoded = base64.b64encode(path.read_bytes()).decode("utf-8")
+    mime_map = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp", "bmp": "bmp"}
+    mime = mime_map.get(path.suffix.lower().lstrip("."), "png")
+
+    if api_format == "doubao":
+        return f"data:image/{mime};base64,{encoded}"
+    else:
+        return {"inlineData": {"mimeType": f"image/{mime}", "data": encoded}}
+
+
+async def notify_artifact(
+    context: ToolExecutionContext,
+    file_path: Path,
+    prompt: str,
+    artifact_type: str,  # "image" | "video"
+) -> None:
+    """通知前端产物已生成，实现 UI 实时预览。"""
+    hook = context.metadata.get("hook")
+    if not hook:
+        return
+    api_url = os.getenv("NEXT_PUBLIC_API_URL", "http://localhost:8000")
+    preview_url = f"{api_url}/api/v1/tasks/files?path={file_path}"
+    prefix = "Generated image: " if artifact_type == "image" else "Generated video: "
+    await hook.on_artifact(
+        file_path=str(file_path),
+        url=preview_url,
+        reason=f"{prefix}{prompt[:50]}",
+    )
+
+
+# ===================================================================
+# 图片生成引擎
+# ===================================================================
+
+async def run_image_generation(
+    *,
+    task_id: str,
+    prompt: str,
+    provider: str,           # "gemini" | "doubao"
+    api_model: str,          # 实际调用的模型名称
+    payload: dict,           # 根据 provider 构建的请求 body
+    api_key: str,
+    base_url: str,
+    context: ToolExecutionContext,
+) -> ToolResult:
+    """统一图片生成入口，根据 provider 分发到对应的执行逻辑。"""
+    if _is_mock_mode(api_key):
+        return await _mock_image(task_id, prompt, context, count=4 if provider == "doubao" else 1)
+
+    if provider == "gemini":
+        return await _run_gemini_image(task_id, prompt, api_model, payload, api_key, base_url, context)
+    elif provider == "doubao":
+        return await _run_doubao_image(task_id, prompt, payload, api_key, base_url, context)
+    else:
+        return ToolResult(output=f"不支持的图片 provider: {provider}", is_error=True)
+
+
+async def _mock_image(task_id: str, prompt: str, context: ToolExecutionContext, count: int = 1) -> ToolResult:
+    log.info("[MockImageEngine] 使用模拟模式")
+    saved = []
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for i in range(count):
+            url = random.choice(_MOCK_IMAGE_URLS)
+            fname = f"{task_id}_{i}.png" if count > 1 else f"{task_id}.png"
+            dest = context.cwd / fname
+            try:
+                res = await client.get(url)
+                res.raise_for_status()
+                dest.write_bytes(res.content)
+                saved.append(dest)
+                await notify_artifact(context, dest, prompt, "image")
+            except Exception as e:
+                log.warning(f"Mock 图片下载失败: {e}")
+    if not saved:
+        return ToolResult(output="Mock 图片下载失败，请检查网络。", is_error=True)
+    return ToolResult(output=f"SUCCESS: (MOCK) 已模拟生成 {len(saved)} 张图片。")
+
+
+async def _run_gemini_image(
+    task_id: str, prompt: str, api_model: str, payload: dict,
+    api_key: str, base_url: str, context: ToolExecutionContext,
+) -> ToolResult:
+    log.info(f"[GeminiImageEngine] 提交任务 model={api_model}")
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            res = await client.post(
+                f"{base_url}/models/{api_model}:generateContent",
+                json=payload,
+                headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+            )
+            res.raise_for_status()
+            parts = res.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+            b64 = next((p["inlineData"]["data"] for p in parts if "inlineData" in p), None)
+            if not b64:
+                return ToolResult(output="Gemini API 未返回图像数据。", is_error=True)
+            dest = context.cwd / f"{task_id}.png"
+            dest.write_bytes(base64.b64decode(b64))
+            await notify_artifact(context, dest, prompt, "image")
+            return ToolResult(output=f"SUCCESS: 图像生成完毕，任务 ID: {task_id}。")
+    except Exception as e:
+        log.exception("GeminiImageEngine 异常")
+        return ToolResult(output=f"Gemini 图片生成失败: {e}", is_error=True)
+
+
+async def _run_doubao_image(
+    task_id: str, prompt: str, payload: dict,
+    api_key: str, base_url: str, context: ToolExecutionContext,
+) -> ToolResult:
+    base_domain = base_url.split("/v1")[0] if "/v1" in base_url else "https://api.packyapi.com"
+    log.info(f"[DoubaoImageEngine] 提交 SSE 流式任务")
+    saved = []
+    try:
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            async with client.stream("POST", f"{base_domain}/v1/images/generations", json=payload, headers=headers) as res:
+                res.raise_for_status()
+                async for line in res.aiter_lines():
+                    line = line.strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if data_str in ("[DONE]", ""):
+                        continue
+                    try:
+                        event = json.loads(data_str)
+                        if event.get("type") == "image_generation.partial_succeeded":
+                            b64 = event.get("b64_json", "")
+                            idx = event.get("image_index", len(saved))
+                            if b64:
+                                dest = context.cwd / f"{task_id}_{idx}.png"
+                                dest.write_bytes(base64.b64decode(b64))
+                                saved.append(dest)
+                                await notify_artifact(context, dest, prompt, "image")
+                    except Exception:
+                        continue
+        if not saved:
+            return ToolResult(output="Doubao 未生成图像，请检查提示词合规性或 API 额度。", is_error=True)
+        return ToolResult(output=f"SUCCESS: 已生成 {len(saved)} 张图像。")
+    except Exception as e:
+        log.exception("DoubaoImageEngine 异常")
+        return ToolResult(output=f"Doubao 图片生成失败: {e}", is_error=True)
+
+
+# ===================================================================
+# 视频生成引擎
+# ===================================================================
+
+async def run_video_generation(
+    *,
+    task_id: str,
+    prompt: str,
+    provider: str,      # "veo" | "seedance"
+    api_model: str,
+    payload: dict,
+    api_key: str,
+    base_url: str,
+    context: ToolExecutionContext,
+) -> ToolResult:
+    """统一视频生成入口，根据 provider 分发到对应执行逻辑。"""
+    if _is_mock_mode(api_key):
+        return await _mock_video(task_id, prompt, context)
+
+    if provider == "veo":
+        return await _run_veo_video(task_id, prompt, api_model, payload, api_key, base_url, context)
+    elif provider == "seedance":
+        return await _run_seedance_video(task_id, prompt, api_model, payload, api_key, base_url, context)
+    else:
+        return ToolResult(output=f"不支持的视频 provider: {provider}", is_error=True)
+
+
+async def _mock_video(task_id: str, prompt: str, context: ToolExecutionContext) -> ToolResult:
+    log.info("[MockVideoEngine] 使用模拟模式")
+    url = random.choice(_MOCK_VIDEO_URLS)
+    dest = context.cwd / f"{task_id}.mp4"
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            res = await client.get(url)
+            res.raise_for_status()
+            dest.write_bytes(res.content)
+        await notify_artifact(context, dest, prompt, "video")
+        return ToolResult(output=f"SUCCESS: (MOCK) 视频模拟创作完成，任务 ID: {task_id}。")
+    except Exception as e:
+        return ToolResult(output=f"Mock 视频下载失败: {e}", is_error=True)
+
+
+async def _run_veo_video(
+    task_id: str, prompt: str, api_model: str, payload: dict,
+    api_key: str, base_url: str, context: ToolExecutionContext,
+) -> ToolResult:
+    log.info(f"[VeoEngine] 提交长任务 model={api_model}")
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            res = await client.post(
+                f"{base_url}/models/{api_model}:predictLongRunning",
+                json=payload,
+                headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+            )
+            res.raise_for_status()
+            operation_name = res.json().get("name")
+            if not operation_name:
+                return ToolResult(output="Veo API 未返回 operation_name", is_error=True)
+
+            for _ in range(90):
+                await asyncio.sleep(10)
+                poll = await client.get(f"{base_url}/{operation_name}", headers={"x-goog-api-key": api_key})
+                data = poll.json()
+                if data.get("done"):
+                    if "error" in data:
+                        return ToolResult(output=f"Veo 制作失败: {data['error']}", is_error=True)
+                    video_url = data["response"]["generateVideoResponse"]["generatedSamples"][0]["video"]["uri"]
+                    return await _download_video(task_id, prompt, video_url, context)
+
+        return ToolResult(output="Veo 渲染等待超时。", is_error=True)
+    except Exception as e:
+        log.exception("VeoEngine 异常")
+        return ToolResult(output=f"Veo 视频生成失败: {e}", is_error=True)
+
+
+async def _run_seedance_video(
+    task_id: str, prompt: str, api_model: str, payload: dict,
+    api_key: str, base_url: str, context: ToolExecutionContext,
+) -> ToolResult:
+    base_domain = base_url.split("/v1")[0] if "/v1" in base_url else "https://api.packyapi.com"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    log.info(f"[SeedanceEngine] 提交任务 model={api_model}")
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # 提交任务
+            endpoint = f"{base_domain}/v1/contents/generations/tasks"
+            res = await client.post(endpoint, json=payload, headers=headers)
+            if res.status_code == 404:
+                endpoint = f"{base_domain}/api/v3/contents/generations/tasks"
+                res = await client.post(endpoint, json=payload, headers=headers)
+            res.raise_for_status()
+            server_task_id = res.json().get("id")
+
+            # 轮询状态
+            for _ in range(120):
+                await asyncio.sleep(10)
+                poll_url = f"{base_domain}/v1/contents/generations/tasks/{server_task_id}"
+                poll = await client.get(poll_url, headers=headers)
+                if poll.status_code == 404:
+                    poll_url = f"{base_domain}/api/v3/contents/generations/tasks/{server_task_id}"
+                    poll = await client.get(poll_url, headers=headers)
+                data = poll.json()
+                status = data.get("status")
+                if status == "succeeded":
+                    video_url = data.get("content", {}).get("video_url")
+                    return await _download_video(task_id, prompt, video_url, context)
+                elif status in ("failed", "cancelled", "expired"):
+                    return ToolResult(output=f"Seedance 异常终止: {status} | {data.get('error')}", is_error=True)
+
+        return ToolResult(output="Seedance 渲染等待超时。", is_error=True)
+    except Exception as e:
+        log.exception("SeedanceEngine 异常")
+        return ToolResult(output=f"Seedance 视频生成失败: {e}", is_error=True)
+
+
+async def _download_video(task_id: str, prompt: str, video_url: str, context: ToolExecutionContext) -> ToolResult:
+    """通用视频下载函数。"""
+    if not video_url or "http" not in video_url:
+        return ToolResult(output="未获取到有效的视频 URL。", is_error=True)
+    dest = context.cwd / f"{task_id}.mp4"
+    log.info(f"正在下载视频到: {dest}")
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            async with client.stream("GET", video_url) as res:
+                res.raise_for_status()
+                with open(dest, "wb") as f:
+                    async for chunk in res.aiter_bytes():
+                        f.write(chunk)
+        await notify_artifact(context, dest, prompt, "video")
+        return ToolResult(output=f"SUCCESS: 视频创作完成，任务 ID: {task_id}。")
+    except Exception as e:
+        return ToolResult(output=f"视频下载失败: {e}", is_error=True)

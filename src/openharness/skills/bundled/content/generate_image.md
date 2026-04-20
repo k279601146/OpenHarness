@@ -1,26 +1,33 @@
-# generate_image
+---
+name: generate_image
+description: 使用专业的图片模型进行从零创作、局部编辑或参考图特征融合。
+---
 
-Generate images from text descriptions using the `generate_image` tool.
+# 视觉创作专家 (Image Creation Expert)
 
-## When to use
+使用先进的图片模型根据文本描述进行从零生成、编辑或参考特征创作。
 
-Use when the user asks to:
-- Draw, paint, or illustrate something
-- Create, generate, or produce an image or picture
-- Visualize a concept, scene, character, or object
-- Make any kind of visual content
+## 使用场景 (When to use)
+- 用户要求绘制、设计、创作任何静态视觉内容（插画、UI布局、写实照片等）。
+- 需要对已有图片进行局部修改、添删元素或变换风格。
+- 需要保持角色一致性，通过参考图生成新场景。
 
-## Workflow
+## 核心模型矩阵 (Model Strategy)
+根据任务需求选择最合适的模型：
+- **Nano Banana 2**: 极速生成，适合快速创意迭代。
+- **Nano Banana Pro**: 工作室级 4K 品质，适合复杂的排版、精确的文字渲染和高细节场景。
+- **Doubao (Seedream 5.0)**: 极致的写实感与审美，适合要求极高的艺术创作或细腻的人像。
 
-1. Understand the user's visual intent — ask for clarification if the description is vague
-2. Craft a detailed, descriptive prompt in English for best results
-3. Call `generate_image` with the crafted prompt
-4. Report the saved file path to the user
-5. If the result is not satisfactory, refine the prompt and try again
+## 任务流 (Workflow)
+1. **意图确认**：分析用户是需要“从零生成 (gen_creative_image)”、“编辑 (edit_image)”还是“参考生成 (generate_from_reference)”。
+2. **提示词增强**：将用户的口语描述转化为包含：主体、风格、光影、构图的详细英文 Prompt。
+3. **模型分发**：
+   - 若用户追求速度 -> 指定 `model='nano-banana-2'`。
+   - 若涉及文字或精细布局 -> 指定 `model='nano-banana-pro'`。
+   - 若追求极致质感 -> 指定 `model='doubao-seedream-5-0-260128'`。
+4. **结果交付**：调用对应工具后，将产物物理路径同步给用户。
 
-## Rules
-
-- Always write prompts in English for maximum model compatibility
-- Be specific: include style, lighting, composition, colors when relevant
-- Do not attempt to generate images using bash or web_fetch — use `generate_image` only
-- If IMAGE_GEN_API_KEY is missing, inform the user and explain how to set it up
+## 核心规则 (Rules)
+- **提示词规范**：图片提示词必须转化为英文以获得最佳生成效果。
+- **路径敏感**：进行编辑或参考生图时，必须确保输入的图片路径是有效的物理磁盘路径。
+- **原子性执行**：禁止通过 bash 脚本猜测 API，必须使用专门的媒体工具类。
