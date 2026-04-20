@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import os
+import random
 import uuid
 from pathlib import Path
 from typing import List, Optional, Union, Any, Dict
@@ -15,6 +16,21 @@ from pydantic import BaseModel, Field
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
 log = logging.getLogger(__name__)
+
+# --- Mock Data ---
+MOCK_IMAGE_URLS = [
+    "https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?w=1024",
+    "https://images.unsplash.com/photo-1614850523459-c2f4c699c52e?w=1024",
+    "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1024",
+    "https://images.unsplash.com/photo-1634017839464-5c339ebe3cb4?w=1024",
+    "https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=1024"
+]
+
+MOCK_VIDEO_URLS = [
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4"
+]
 
 # --- Helper Functions (Core Engines) ---
 
@@ -54,9 +70,35 @@ async def _execute_image_generation(
     context: ToolExecutionContext
 ) -> ToolResult:
     """抽象出的底层图片生成引擎。支持并列处理不同供应商的参数组合。"""
-    if not api_key:
-        log.warning("PACKY_API_KEY is missing, returning mock image.")
-        return ToolResult(output="API_KEY 缺失，无法生成真实图片。请联系管理员配置环境变量。", is_error=True)
+    is_mock = os.getenv("MOCK_MEDIA", "false").lower() == "true" or not api_key
+    
+    if is_mock:
+        log.info(f"[图片渲染引擎] 使用模拟数据模式 (MOCK_MEDIA={os.getenv('MOCK_MEDIA')}, API_KEY={'Present' if api_key else 'Missing'})")
+        output_dir = context.cwd
+        
+        # 模拟生成 1-3 张图（Doubao 默认 4 张，这里模拟 1-2 张足够测试）
+        num_images = 4 if "doubao" in model.lower() else 1
+        saved_images = []
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for i in range(num_images):
+                img_url = random.choice(MOCK_IMAGE_URLS)
+                filename = f"{task_id}_{i}.png" if num_images > 1 else f"{task_id}.png"
+                physical_path = output_dir / filename
+                
+                try:
+                    res = await client.get(img_url)
+                    res.raise_for_status()
+                    physical_path.write_bytes(res.content)
+                    saved_images.append(physical_path)
+                    await _notify_artifact(context, physical_path, prompt, "image")
+                except Exception as e:
+                    log.error(f"下载模拟图片失败: {e}")
+                    
+        if not saved_images:
+            return ToolResult(output="模拟图片下载失败，请检查网络连接。", is_error=True)
+            
+        return ToolResult(output=f"SUCCESS: (MOCK) 图像已模拟生成 {len(saved_images)} 张并展示。")
 
     output_dir = context.cwd
     
@@ -142,8 +184,26 @@ async def _execute_video_task(
     context: ToolExecutionContext
 ) -> ToolResult:
     """内部通用视频生成轮询引擎。"""
-    if not api_key:
-        return ToolResult(output="API_KEY 缺失，无法调用视频模型。", is_error=True)
+    is_mock = os.getenv("MOCK_MEDIA", "false").lower() == "true" or not api_key
+    
+    if is_mock:
+        log.info(f"[视频渲染引擎] 使用模拟数据模式 (MOCK_MEDIA={os.getenv('MOCK_MEDIA')}, API_KEY={'Present' if api_key else 'Missing'})")
+        output_dir = context.cwd
+        video_url = random.choice(MOCK_VIDEO_URLS)
+        filename = f"{task_id}.mp4"
+        physical_path = output_dir / filename
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            try:
+                log.info(f"正在下载模拟视频: {video_url}")
+                res = await client.get(video_url)
+                res.raise_for_status()
+                physical_path.write_bytes(res.content)
+                await _notify_artifact(context, physical_path, scene_prompt, "video")
+                return ToolResult(output=f"SUCCESS: (MOCK) 视频已模拟创作完成。任务ID: {task_id}。")
+            except Exception as e:
+                log.error(f"下载模拟视频失败: {e}")
+                return ToolResult(output=f"模拟视频下载失败: {e}", is_error=True)
 
     output_dir = context.cwd
     final_video_url = None
