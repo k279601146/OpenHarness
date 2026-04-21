@@ -107,7 +107,14 @@ async def run_image_generation(
 ) -> ToolResult:
     """统一图片生成入口，根据 provider 分发到对应的执行逻辑。"""
     if _is_mock_mode(api_key):
-        return await _mock_image(task_id, prompt, context, count=4 if provider == "doubao" else 1)
+        # 从 payload 中尝试提取 num_images
+        count = 1
+        if provider == "doubao":
+            count = payload.get("sequential_image_generation_options", {}).get("max_images", 1)
+        elif provider == "gemini":
+            # Gemini 目前 payload 中没有多图配置，默认为 1
+            count = 1
+        return await _mock_image(task_id, prompt, context, count=count)
 
     if provider == "gemini":
         return await _run_gemini_image(task_id, prompt, api_model, payload, api_key, base_url, context)

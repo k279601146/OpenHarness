@@ -66,6 +66,12 @@ class CreativeImageInput(BaseModel):
             "doubao-seedream-4-5-251128, doubao-seedream-4-0-250828"
         ),
     )
+    num_images: int = Field(
+        default=1,
+        ge=1,
+        le=8,
+        description="生成的图片数量（1-8）。对于支持多图的模型有效，默认根据用户意图决定。",
+    )
 
 
 class CreativeImageTool(BaseTool):
@@ -89,7 +95,9 @@ class CreativeImageTool(BaseTool):
             "1:1": "2048x2048", "4:3": "2304x1728", "3:4": "1728x2304",
             "16:9": "2848x1600", "9:16": "1600x2848",
         }
-        payload = _build_image_payload(provider, api_model, arguments.prompt, ar, doubao_size_map)
+        payload = _build_image_payload(
+            provider, api_model, arguments.prompt, ar, doubao_size_map, arguments.num_images
+        )
 
         return await run_image_generation(
             task_id=task_id,
@@ -113,6 +121,12 @@ class EditImageInput(BaseModel):
     model: str = Field(
         default=DEFAULT_IMAGE_MODEL,
         description="指定图片模型 ID，同 gen_creative_image。",
+    )
+    num_images: int = Field(
+        default=1,
+        ge=1,
+        le=4,
+        description="生成的图片数量（1-4）。对于支持多图的模型有效。",
     )
 
 
@@ -146,7 +160,8 @@ class EditImageTool(BaseTool):
                 "image": [doubao_img],
                 "stream": True,
                 "response_format": "b64_json",
-                "sequential_image_generation": "disabled",
+                "sequential_image_generation": "auto" if arguments.num_images > 1 else "disabled",
+                "sequential_image_generation_options": {"max_images": arguments.num_images},
             }
 
         return await run_image_generation(
@@ -171,6 +186,12 @@ class ImageFromReferenceInput(BaseModel):
     model: str = Field(
         default=DEFAULT_IMAGE_MODEL,
         description="指定图片模型 ID，同 gen_creative_image。",
+    )
+    num_images: int = Field(
+        default=1,
+        ge=1,
+        le=4,
+        description="生成的图片数量（1-4）。对于支持多图的模型有效。",
     )
 
 
@@ -204,7 +225,8 @@ class ImageFromReferenceTool(BaseTool):
                 "image": doubao_imgs,
                 "stream": True,
                 "response_format": "b64_json",
-                "sequential_image_generation": "auto",
+                "sequential_image_generation": "auto" if arguments.num_images > 1 else "disabled",
+                "sequential_image_generation_options": {"max_images": arguments.num_images},
             }
 
         return await run_image_generation(
@@ -229,6 +251,7 @@ def _build_image_payload(
     prompt: str,
     aspect_ratio: str,
     doubao_size_map: dict,
+    num_images: int = 1,
 ) -> dict:
     if provider == "gemini":
         valid_ar = aspect_ratio if aspect_ratio in ("1:1", "16:9", "9:16", "4:3", "3:4") else "1:1"
@@ -246,6 +269,6 @@ def _build_image_payload(
             "size": doubao_size_map.get(aspect_ratio, "2048x2048"),
             "stream": True,
             "response_format": "b64_json",
-            "sequential_image_generation": "auto",
-            "sequential_image_generation_options": {"max_images": 4},
+            "sequential_image_generation": "auto" if num_images > 1 else "disabled",
+            "sequential_image_generation_options": {"max_images": num_images},
         }
