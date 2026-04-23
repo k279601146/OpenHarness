@@ -22,7 +22,7 @@ class AgentToolInput(BaseModel):
     prompt: str = Field(description="Full prompt for the local agent")
     subagent_type: str | None = Field(
         default=None,
-        description="Agent type for definition lookup (e.g. 'general-purpose', 'Explore', 'worker')",
+        description="Agent type for definition lookup (e.g. 'researcher', 'strategist', 'executor', 'reviewer')",
     )
     model: str | None = Field(default=None)
     command: str | None = Field(default=None, description="Override spawn command")
