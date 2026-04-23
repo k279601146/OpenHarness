@@ -22,9 +22,6 @@ def resolve_shell_command(
     """Return argv for the best available shell on the current platform."""
     resolved_platform = platform_name or get_platform()
     if resolved_platform == "windows":
-        bash = shutil.which("bash")
-        if bash:
-            return [bash, "-lc", command]
         powershell = shutil.which("pwsh") or shutil.which("powershell")
         if powershell:
             return [powershell, "-NoLogo", "-NoProfile", "-Command", command]

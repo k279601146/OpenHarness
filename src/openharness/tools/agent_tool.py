@@ -34,68 +34,104 @@ class AgentToolInput(BaseModel):
 
 
 class AgentTool(BaseTool):
-    """Spawn a local agent subprocess."""
+    """Spawn a local agent subprocess and wait for its completion."""
 
     name = "agent"
-    description = "Spawn a local background agent task."
+    description = "Spawn a local agent task and WAIT for it to finish. The tool will block until the subagent completes, and then return the subagent's final output directly."
     input_model = AgentToolInput
 
     async def execute(self, arguments: AgentToolInput, context: ToolExecutionContext) -> ToolResult:
-        if arguments.mode not in {"local_agent", "remote_agent", "in_process_teammate"}:
-            return ToolResult(
-                output="Invalid mode. Use local_agent, remote_agent, or in_process_teammate.",
-                is_error=True,
-            )
+        import os
+        from openharness.engine.query_engine import QueryEngine
+        from openharness.api.client import AnthropicApiClient
+        from openharness.api.openai_client import OpenAICompatibleClient
+        from openharness.tools import create_mvp_safe_tool_registry
+        from openharness.permissions.checker import PermissionChecker
+        from openharness.config.settings import Settings
+        from openharness.permissions.modes import PermissionMode
 
-        # Look up agent definition if subagent_type is specified
+        logger.info(f"[SaaS AgentTool] Spawning in-process subagent natively: {arguments.subagent_type}")
+        
         agent_def = None
         if arguments.subagent_type:
             agent_def = get_agent_definition(arguments.subagent_type)
 
-        # Resolve team and agent name for the swarm backend
-        team = arguments.team or "default"
         agent_name = arguments.subagent_type or "agent"
 
-        # Use subprocess backend so spawned agents are registered in
-        # BackgroundTaskManager and are pollable by the task tools.
-        # in_process tasks return asyncio-internal IDs that task tools
-        # cannot query, and subprocess is always available on all platforms.
-        registry = get_backend_registry()
-        executor = registry.get_executor("subprocess")
+        # Initialize API Client for the subagent
+        api_key = os.getenv("ARK_API_KEY") or os.getenv("OPENAI_API_KEY")
+        base_url = os.getenv("OPENAI_BASE_URL") or "https://ark.cn-beijing.volces.com/api/v3"
+        
+        settings = Settings()
+        
+        # Handle "inherit" model placeholder from agent_definitions
+        def_model = agent_def.model if agent_def else None
+        if def_model == "inherit":
+            def_model = None
+            
+        settings.model = arguments.model or def_model or os.getenv("DEFAULT_MODEL", "gemini-2.5-flash")
+        if settings.model == "inherit":
+            settings.model = os.getenv("DEFAULT_MODEL", "gemini-2.5-flash")
+            
+        settings.permission.mode = PermissionMode.FULL_AUTO
 
-        config = TeammateSpawnConfig(
-            name=agent_name,
-            team=team,
-            prompt=arguments.prompt,
+        if "claude" in settings.model.lower():
+            api_client = AnthropicApiClient(api_key=api_key, base_url=base_url)
+        else:
+            api_client = OpenAICompatibleClient(api_key=api_key, base_url=base_url)
+
+        tool_registry = create_mvp_safe_tool_registry()
+
+        # Build prompt with runtime environment (date, OS, memory, etc.)
+        from openharness.prompts.context import build_runtime_system_prompt
+        base_prompt = agent_def.system_prompt if agent_def else "You are a helpful sub-agent. Please complete the requested task."
+        settings.system_prompt = base_prompt
+        
+        system_prompt = build_runtime_system_prompt(settings, cwd=str(context.cwd))
+
+        engine = QueryEngine(
+            api_client=api_client,
+            tool_registry=tool_registry,
+            permission_checker=PermissionChecker(settings.permission),
             cwd=str(context.cwd),
-            parent_session_id="main",
-            model=arguments.model or (agent_def.model if agent_def else None),
-            command=arguments.command,
-            system_prompt=agent_def.system_prompt if agent_def else None,
-            permissions=agent_def.permissions if agent_def else [],
-            task_type=arguments.mode,
+            model=settings.model,
+            system_prompt=system_prompt,
+            tool_metadata=getattr(context, 'tool_metadata', {})
         )
 
+        logger.info(f"[SaaS AgentTool] Engine configured. Calling model for task...")
+        
+        final_responses = []
         try:
-            result = await executor.spawn(config)
-        except Exception as exc:
-            logger.error("Failed to spawn agent: %s", exc)
-            return ToolResult(output=str(exc), is_error=True)
+            # Accumulate stream deltas explicitly to catch <think> blocks and all raw text
+            async for event in engine.submit_message(arguments.prompt):
+                event_type = getattr(event, "type", type(event).__name__.lower())
+                if "text_delta" in event_type or "reasoning_delta" in event_type:
+                    if hasattr(event, "text") and event.text:
+                        final_responses.append(event.text)
+                        
+            # Backup collection from messages if stream delta failed to trigger
+            if not final_responses and engine.messages:
+                for msg in engine.messages:
+                    if msg.role == "assistant":
+                        for block in msg.content:
+                            if hasattr(block, "text") and block.text.strip():
+                                final_responses.append(block.text)
 
-        if not result.success:
-            return ToolResult(output=result.error or "Failed to spawn agent", is_error=True)
+        except Exception as e:
+            logger.error(f"[SaaS AgentTool] Native execution failed: {e}", exc_info=True)
+            return ToolResult(output=f"Error running subagent natively: {e}", is_error=True)
 
-        if arguments.team:
-            registry = get_team_registry()
-            try:
-                registry.add_agent(arguments.team, result.task_id)
-            except ValueError:
-                registry.create_team(arguments.team)
-                registry.add_agent(arguments.team, result.task_id)
-
+        if not final_responses:
+            output_str = "(Subagent did not generate any text response)"
+        else:
+            output_str = "\n".join(final_responses)
+            
+        logger.info(f"[SaaS AgentTool] Subagent completed successfully.")
+        
         return ToolResult(
             output=(
-                f"Spawned agent {result.agent_id} "
-                f"(task_id={result.task_id}, backend={result.backend_type})"
+                f"Agent {agent_name} finished.\n"
+                f"--- Subagent Output ---\n{output_str}"
             )
         )
