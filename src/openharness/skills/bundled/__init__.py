@@ -10,59 +10,69 @@ _CONTENT_DIR = Path(__file__).parent / "content"
 
 
 def get_bundled_skills() -> list[SkillDefinition]:
-    """Load all bundled skills from the content/ directory."""
+    """Load all bundled skills from content/ and aesthetics/ directories."""
     skills: list[SkillDefinition] = []
-    if not _CONTENT_DIR.exists():
-        return skills
-    for path in sorted(_CONTENT_DIR.glob("*.md")):
-        content = path.read_text(encoding="utf-8")
-        name, description = _parse_frontmatter(path.stem, content)
-        skills.append(
-            SkillDefinition(
-                name=name,
-                description=description,
-                content=content,
-                source="bundled",
-                path=str(path),
+    
+    # 扫描 content (逻辑技能) 和 aesthetics (审美技能)
+    for sub_dir, s_type in [("content", "logic"), ("aesthetics", "aesthetic")]:
+        target_dir = Path(__file__).parent / sub_dir
+        if not target_dir.exists():
+            continue
+            
+        for path in sorted(target_dir.glob("*.md")):
+            content = path.read_text(encoding="utf-8")
+            info = _parse_full_frontmatter(path.stem, content)
+            skills.append(
+                SkillDefinition(
+                    name=info["name"],
+                    description=info["description"],
+                    content=content,
+                    source="bundled",
+                    path=str(path),
+                    skill_type=s_type,
+                    metadata=info["metadata"],
+                )
             )
-        )
     return skills
 
 
-def _parse_frontmatter(default_name: str, content: str) -> tuple[str, str]:
-    """Extract name and description from a skill markdown file.
-
-    Supports YAML frontmatter (``---`` delimited) and falls back to heading/paragraph parsing.
-    """
-    name = default_name
-    description = ""
+def _parse_full_frontmatter(default_name: str, content: str) -> dict:
+    """全面解析 frontmatter，返回包含 metadata 的字典。"""
+    import yaml
+    
+    res = {
+        "name": default_name,
+        "description": f"Bundled skill: {default_name}",
+        "metadata": {}
+    }
+    
     lines = content.splitlines()
-
-    # Try YAML frontmatter first
     if lines and lines[0].strip() == "---":
+        end_index = -1
         for i, line in enumerate(lines[1:], 1):
             if line.strip() == "---":
-                for fm_line in lines[1:i]:
-                    fm = fm_line.strip()
-                    if fm.startswith("name:"):
-                        val = fm[5:].strip().strip("'\"")
-                        if val:
-                            name = val
-                    elif fm.startswith("description:"):
-                        val = fm[12:].strip().strip("'\"")
-                        if val:
-                            description = val
+                end_index = i
                 break
-        if description:
-            return name, description
-
-    # Fallback: heading + first paragraph
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("# "):
-            name = stripped[2:].strip() or default_name
-            continue
-        if stripped and not stripped.startswith("---") and not stripped.startswith("#"):
-            description = stripped[:200]
-            break
-    return name, description or f"Bundled skill: {name}"
+        
+        if end_index != -1:
+            fm_text = "\n".join(lines[1:end_index])
+            try:
+                metadata = yaml.safe_load(fm_text)
+                if isinstance(metadata, dict):
+                    res["name"] = metadata.get("name", res["name"])
+                    res["description"] = metadata.get("description", res["description"])
+                    res["metadata"] = metadata
+            except Exception:
+                pass
+                
+    if res["description"] == f"Bundled skill: {default_name}":
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("# "):
+                res["name"] = stripped[2:].strip() or res["name"]
+                continue
+            if stripped and not stripped.startswith("---") and not stripped.startswith("#"):
+                res["description"] = stripped[:200]
+                break
+                
+    return res

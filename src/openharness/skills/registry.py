@@ -22,3 +22,13 @@ class SkillRegistry:
     def list_skills(self) -> list[SkillDefinition]:
         """Return all skills sorted by name."""
         return sorted(self._skills.values(), key=lambda skill: skill.name)
+
+    def find_by_trigger(self, query: str) -> list[SkillDefinition]:
+        """按 triggers 匹配技能。"""
+        results = []
+        query_lower = query.lower()
+        for skill in self._skills.values():
+            triggers = skill.metadata.get("triggers", [])
+            if any(t.lower() in query_lower for t in triggers):
+                results.append(skill)
+        return results
