@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from pathlib import Path
 from typing import Iterable
 
@@ -45,7 +46,9 @@ def _build_skills_section(
         "",
     ]
     for skill in skills:
-        lines.append(f"- **{skill.name}**: {skill.description}")
+        # 只保留核心名称和一句话概括，减少 Token 浪费
+        desc = skill.description.split('。')[0] if '。' in skill.description else skill.description
+        lines.append(f"- **{skill.name}**: {desc[:120]}")
     return "\n".join(lines)
 
 
@@ -60,7 +63,7 @@ def _build_delegation_section() -> str:
             "or when the task clearly benefits from splitting off a focused worker.",
             "",
             "Default pattern:",
-            '- Spawn with `agent(description=..., prompt=..., subagent_type=\"worker\")`.',
+            '- Spawn with `agent(description=..., prompt=..., subagent_type="worker")`.',
             "- Inspect running or recorded workers with `/agents`.",
             "- Inspect one worker in detail with `/agents show TASK_ID`.",
             "- Send follow-up instructions with `send_message(task_id=..., message=...)`.",
@@ -69,6 +72,38 @@ def _build_delegation_section() -> str:
             "Prefer a normal direct answer for simple tasks. Use subagents only when they materially help.",
         ]
     )
+
+
+@functools.lru_cache(maxsize=4)
+def _build_static_prompt_skeleton(cwd: str) -> list[str]:
+    """
+    构建系统提示词的「静态骨架」并缓存结果。
+
+    静态骨架包括：核心 Persona、Skills 列表、Delegation 说明、本地规则。
+    这些内容在 Worker 进程存活期间不会变化（不依赖 request），
+    用 lru_cache 避免每次请求重复扫描磁盘。
+
+    按 cwd 字符串哈希缓存，最多缓存 4 个不同项目路径的结果。
+    """
+    sections: list[str] = []
+
+    # 1. 核心 Persona（100% 静态文本）
+    sections.append(build_system_prompt(cwd=cwd))
+
+    # 2. Skills（按 cwd 扫描一次，同 cwd 结果不变）
+    skills_section = _build_skills_section(cwd)
+    if skills_section:
+        sections.append(skills_section)
+
+    # 3. Delegation 说明（完全静态）
+    sections.append(_build_delegation_section())
+
+    # 4. 本地规则（进程级静态）
+    local_rules = load_local_rules()
+    if local_rules:
+        sections.append(f"# Local Environment Rules\n\n{local_rules}")
+
+    return sections
 
 
 def build_runtime_system_prompt(
@@ -81,12 +116,13 @@ def build_runtime_system_prompt(
 ) -> str:
     """Build the runtime system prompt with project instructions and memory."""
     if is_coordinator_mode():
+        # Coordinator 模式走独立路径，不使用缓存骨架
         sections = [get_coordinator_system_prompt()]
     else:
-        sections = [build_system_prompt(custom_prompt=settings.system_prompt, cwd=str(cwd))]
+        # 从缓存中取静态骨架（首次调用会构建并缓存，后续直接命中）
+        sections = list(_build_static_prompt_skeleton(str(cwd)))
 
-    if not is_coordinator_mode() and settings.system_prompt is None:
-        sections[0] = build_system_prompt(cwd=str(cwd))
+    # --- 动态部分：每次请求都需要重新计算 ---
 
     if settings.fast_mode:
         sections.append(
@@ -100,26 +136,12 @@ def build_runtime_system_prompt(
         "Adjust depth and iteration count to match these settings while still completing the task."
     )
 
-    skills_section = _build_skills_section(
-        cwd,
-        extra_skill_dirs=extra_skill_dirs,
-        extra_plugin_roots=extra_plugin_roots,
-        settings=settings,
-    )
-    if skills_section and not is_coordinator_mode():
-        sections.append(skills_section)
-
-    if not is_coordinator_mode():
-        sections.append(_build_delegation_section())
-
+    # claude.md（CWD 下的项目说明文件，空 temp_workspace 通常为空）
     claude_md = load_claude_md_prompt(cwd)
     if claude_md:
         sections.append(claude_md)
 
-    local_rules = load_local_rules()
-    if local_rules:
-        sections.append(f"# Local Environment Rules\n\n{local_rules}")
-
+    # Issue / PR / Repo context（CWD 下的项目上下文文件）
     for title, path in (
         ("Issue Context", get_project_issue_file(cwd)),
         ("Pull Request Comments", get_project_pr_comments_file(cwd)),
@@ -130,6 +152,7 @@ def build_runtime_system_prompt(
             if content:
                 sections.append(f"# {title}\n\n```md\n{content[:12000]}\n```")
 
+    # Memory（依赖 CWD 和当前 prompt，完全动态）
     if settings.memory.enabled:
         memory_section = load_memory_prompt(
             cwd,
