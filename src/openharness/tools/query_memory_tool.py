@@ -69,28 +69,47 @@ class QueryMemoryTool(BaseTool):
             
             try:
                 user_id = viking.user_id
-                # 语义检索退化为关键词检索
+                # Python layer filtering to avoid Postgres JSON error
                 sql = text("""
-                    SELECT t.title, e.type, e.payload, e.created_at
+                    SELECT t.id as thread_id, t.title, e.type, e.payload, e.created_at
                     FROM agent_events e
                     JOIN agent_threads t ON e.thread_id = t.id
                     WHERE t.owner_id = :user_id
-                    AND (e.payload->>'content' ILIKE :q)
                     ORDER BY e.created_at DESC
-                    LIMIT :limit
+                    LIMIT 300
                 """)
                 
-                db_results = db.execute(sql, {"user_id": int(user_id), "q": f"%{query}%", "limit": limit}).fetchall()
+                db_results = db.execute(sql, {"user_id": int(user_id)}).fetchall()
                 
                 if not db_results:
                     return ToolResult(output=f"No relevant sessions found for '{query}' in either memory engine or primary database.")
                 
                 db_entries = []
-                for title, e_type, payload, dt in db_results:
-                    role = "User" if e_type == "user_message" else "Assistant"
-                    content = payload.get("content", "")
-                    db_entries.append(f"[{dt.date()}] Thread: {title}\n  {role}: {content[:200]}")
+                count = 0
+                query_lower = query.lower()
+                seen_threads = set()
                 
+                for tid, title, e_type, payload, dt in db_results:
+                    if count >= limit:
+                        break
+                        
+                    role = "User" if e_type == "user_message" else "Assistant"
+                    # 鲁棒性提取内容
+                    content = ""
+                    if isinstance(payload, dict):
+                        content = str(payload.get("content", ""))
+                    elif isinstance(payload, str):
+                        content = payload
+                        
+                    if query_lower in content.lower() or query_lower in (title or "").lower():
+                        if tid not in seen_threads:
+                            seen_threads.add(tid)
+                            db_entries.append(f"[{dt.date()}] Thread: {title}\n  {role}: {content[:200]}")
+                            count += 1
+                
+                if not db_entries:
+                    return ToolResult(output=f"No relevant sessions found for '{query}' in either memory engine or primary database.")
+                    
                 return ToolResult(output="Retrieved from Primary Database (Fallback Mode):\n" + "\n".join(db_entries))
             finally:
                 db.close()
