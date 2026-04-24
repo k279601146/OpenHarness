@@ -18,6 +18,9 @@ from openharness.personalization.rules import load_local_rules
 from openharness.prompts.claudemd import load_claude_md_prompt
 from openharness.prompts.system_prompt import build_system_prompt
 from openharness.skills.loader import load_skill_registry
+import logging
+
+logger = logging.getLogger("PromptContext")
 
 
 def _build_skills_section(
@@ -75,23 +78,19 @@ def _build_delegation_section() -> str:
 
 
 @functools.lru_cache(maxsize=4)
-def _build_static_prompt_skeleton(cwd: str) -> list[str]:
+def _build_static_prompt_skeleton(base_dir: str) -> list[str]:
     """
     构建系统提示词的「静态骨架」并缓存结果。
-
-    静态骨架包括：核心 Persona、Skills 列表、Delegation 说明、本地规则。
-    这些内容在 Worker 进程存活期间不会变化（不依赖 request），
-    用 lru_cache 避免每次请求重复扫描磁盘。
-
-    按 cwd 字符串哈希缓存，最多缓存 4 个不同项目路径的结果。
     """
+    logger.info(f"--- [Cache MISS] Building system prompt skeleton for: {base_dir} ---")
+    
     sections: list[str] = []
 
-    # 1. 核心 Persona（100% 静态文本）
-    sections.append(build_system_prompt(cwd=cwd))
+    # 1. 核心 Persona（基于基础目录构建）
+    sections.append(build_system_prompt(cwd=base_dir))
 
-    # 2. Skills（按 cwd 扫描一次，同 cwd 结果不变）
-    skills_section = _build_skills_section(cwd)
+    # 2. Skills（按基础目录扫描一次，后续命中缓存）
+    skills_section = _build_skills_section(base_dir)
     if skills_section:
         sections.append(skills_section)
 
@@ -119,8 +118,13 @@ def build_runtime_system_prompt(
         # Coordinator 模式走独立路径，不使用缓存骨架
         sections = [get_coordinator_system_prompt()]
     else:
-        # 从缓存中取静态骨架（首次调用会构建并缓存，后续直接命中）
-        sections = list(_build_static_prompt_skeleton(str(cwd)))
+        # [Optimize] 使用父级目录（通常是 temp_workspaces 或项目根）作为缓存键，
+        # 避免因为 UUID 子目录不同导致缓存失效。
+        cwd_path = Path(cwd).resolve()
+        cache_key = str(cwd_path.parent) if "temp_workspaces" in str(cwd_path) else str(cwd_path)
+        
+        sections = list(_build_static_prompt_skeleton(cache_key))
+        logger.info(f"--- [Prompt Skeleton] Using skeleton for key: {cache_key} ---")
 
     # --- 动态部分：每次请求都需要重新计算 ---
 
