@@ -304,9 +304,11 @@ class OpenAICompatibleClient:
             if not chunk.choices:
                 # Usage-only chunk (some providers send this at the end)
                 if chunk.usage:
+                    prompt_details = getattr(chunk.usage, "prompt_tokens_details", None)
                     usage_data = {
                         "input_tokens": chunk.usage.prompt_tokens or 0,
                         "output_tokens": chunk.usage.completion_tokens or 0,
+                        "cache_read_input_tokens": getattr(prompt_details, "cached_tokens", None) if prompt_details else None,
                     }
                 continue
 
@@ -351,9 +353,11 @@ class OpenAICompatibleClient:
 
             # Usage in chunk (if provider sends it)
             if chunk.usage:
+                prompt_details = getattr(chunk.usage, "prompt_tokens_details", None)
                 usage_data = {
                     "input_tokens": chunk.usage.prompt_tokens or 0,
                     "output_tokens": chunk.usage.completion_tokens or 0,
+                    "cache_read_input_tokens": getattr(prompt_details, "cached_tokens", None) if prompt_details else None,
                 }
 
         # Build the final ConversationMessage
@@ -388,6 +392,7 @@ class OpenAICompatibleClient:
             usage=UsageSnapshot(
                 input_tokens=usage_data.get("input_tokens", 0),
                 output_tokens=usage_data.get("output_tokens", 0),
+                cache_read_input_tokens=usage_data.get("cache_read_input_tokens"),
             ),
             stop_reason=finish_reason,
         )

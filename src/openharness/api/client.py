@@ -42,7 +42,7 @@ class ApiMessageRequest:
 
     model: str
     messages: list[ConversationMessage]
-    system_prompt: str | None = None
+    system_prompt: str | list[dict[str, Any]] | None = None
     max_tokens: int = 4096
     tools: list[dict[str, Any]] = field(default_factory=list)
 
@@ -210,7 +210,10 @@ class AnthropicApiClient:
             "max_tokens": request.max_tokens,
         }
         if request.system_prompt:
-            params["system"] = request.system_prompt
+            if isinstance(request.system_prompt, list):
+                params["system"] = request.system_prompt
+            else:
+                params["system"] = request.system_prompt
         if self._claude_oauth:
             attribution = claude_attribution_header()
             params["system"] = (
@@ -259,6 +262,9 @@ class AnthropicApiClient:
             usage=UsageSnapshot(
                 input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
                 output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+                # 兼容 Anthropic 格式
+                cache_read_input_tokens=getattr(usage, "cache_read_input_tokens", None),
+                cache_creation_input_tokens=getattr(usage, "cache_creation_input_tokens", None),
             ),
             stop_reason=getattr(final_message, "stop_reason", None),
         )

@@ -98,6 +98,5 @@ def build_system_prompt(
         env = get_environment_info(cwd=cwd)
 
     base = custom_prompt if custom_prompt is not None else _BASE_SYSTEM_PROMPT
-    env_sec = _format_environment_section(env)
     
-    return f"{base}\n\n{env_sec}"
+    return base

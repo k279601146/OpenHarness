@@ -27,7 +27,7 @@ class QueryEngine:
         permission_checker: PermissionChecker,
         cwd: str | Path,
         model: str,
-        system_prompt: str,
+        system_prompt: str | list[dict[str, Any]],
         max_tokens: int = 4096,
         context_window_tokens: int | None = None,
         auto_compact_threshold_tokens: int | None = None,
@@ -75,7 +75,7 @@ class QueryEngine:
         return self._model
 
     @property
-    def system_prompt(self) -> str:
+    def system_prompt(self) -> str | list[dict[str, Any]]:
         """Return the active system prompt."""
         return self._system_prompt
 
@@ -94,7 +94,7 @@ class QueryEngine:
         self._messages.clear()
         self._cost_tracker = CostTracker()
 
-    def set_system_prompt(self, prompt: str) -> None:
+    def set_system_prompt(self, prompt: str | list[dict[str, Any]]) -> None:
         """Update the active system prompt for future turns."""
         self._system_prompt = prompt
 

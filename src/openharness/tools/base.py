@@ -85,6 +85,10 @@ class ToolRegistry:
         """Return all registered tools."""
         return list(self._tools.values())
 
-    def to_api_schema(self) -> list[dict[str, Any]]:
+    def to_api_schema(self, *, cache_last: bool = False) -> list[dict[str, Any]]:
         """Return all tool schemas in API format."""
-        return [tool.to_api_schema() for tool in self._tools.values()]
+        schemas = [tool.to_api_schema() for tool in self._tools.values()]
+        if cache_last and schemas:
+            # [Claude Code Pattern 13.2] 为最后一个工具注入缓存标记
+            schemas[-1]["cache_control"] = {"type": "ephemeral"}
+        return schemas

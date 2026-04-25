@@ -86,7 +86,7 @@ class QueryContext:
     permission_checker: PermissionChecker
     cwd: Path
     model: str
-    system_prompt: str
+    system_prompt: str | list[dict[str, Any]]
     max_tokens: int
     context_window_tokens: int | None = None
     auto_compact_threshold_tokens: int | None = None
@@ -475,7 +475,7 @@ async def run_query(
                     messages=messages,
                     system_prompt=context.system_prompt,
                     max_tokens=context.max_tokens,
-                    tools=context.tool_registry.to_api_schema(),
+                    tools=context.tool_registry.to_api_schema(cache_last=True),
                 )
             ):
                 if isinstance(event, ApiTextDeltaEvent):
@@ -516,7 +516,8 @@ async def run_query(
             raise RuntimeError("Model stream finished without a final message")
 
         coordinator_context_message: ConversationMessage | None = None
-        if context.system_prompt.startswith("You are a **coordinator**."):
+        system_text = context.system_prompt[0]["text"] if isinstance(context.system_prompt, list) else context.system_prompt
+        if system_text.startswith("You are a **coordinator**."):
             if messages and messages[-1].role == "user" and messages[-1].text.startswith("# Coordinator User Context"):
                 coordinator_context_message = messages.pop()
 
