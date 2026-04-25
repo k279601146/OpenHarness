@@ -37,7 +37,7 @@ def _build_skills_section(
         extra_plugin_roots=extra_plugin_roots,
         settings=settings,
     )
-    skills = registry.list_skills()
+    skills = sorted(registry.list_skills(), key=lambda s: s.name)
     if not skills:
         return None
     lines = [
