@@ -469,6 +469,10 @@ async def run_query(
         usage = UsageSnapshot()
 
         try:
+            stream_start_time = asyncio.get_event_loop().time()
+            first_token_received = False
+            feedback_sent = False
+            
             async for event in context.api_client.stream_message(
                 ApiMessageRequest(
                     model=context.model,
@@ -478,7 +482,18 @@ async def run_query(
                     tools=context.tool_registry.to_api_schema(cache_last=True),
                 )
             ):
+                if not first_token_received:
+                    # 检查是否等待过久产生反馈
+                    elapsed = asyncio.get_event_loop().time() - stream_start_time
+                    if elapsed > 15.0 and not feedback_sent:
+                        yield StatusEvent(message="⏳ 正在等待模型响应，Prompt 较长或服务繁忙..."), None
+                        feedback_sent = True
+
                 if isinstance(event, ApiTextDeltaEvent):
+                    if not first_token_received:
+                        ttft = asyncio.get_event_loop().time() - stream_start_time
+                        log.info(f"[Metrics] TTFT for {context.model}: {ttft:.3f}s")
+                        first_token_received = True
                     yield AssistantTextDelta(text=event.text), None
                     continue
                 if isinstance(event, ApiReasoningDeltaEvent):
@@ -497,15 +512,30 @@ async def run_query(
                     final_message = event.message
                     usage = event.usage
         except Exception as exc:
+            from openharness.api.errors import FallbackTriggeredError
+            
             error_msg = str(exc)
+            
+            # 处理模型降级 (Model Fallback)
+            if isinstance(exc, FallbackTriggeredError):
+                yield StatusEvent(message=f"⚠️ 模型服务过载，正在自动降级：{exc.original_model} -> {exc.fallback_model}"), None
+                context.model = exc.fallback_model
+                # 不增加 turn_count，重试当前轮次
+                turn_count -= 1
+                continue
+
             if not reactive_compact_attempted and _is_prompt_too_long_error(exc):
+                # ... 原有的 compaction 逻辑
                 reactive_compact_attempted = True
                 yield StatusEvent(message=REACTIVE_COMPACT_STATUS_MESSAGE), None
                 async for event, usage in _stream_compaction(trigger="reactive", force=True):
                     yield event, usage
                 messages, was_compacted = last_compaction_result
                 if was_compacted:
+                    # 重试当前轮次
+                    turn_count -= 1
                     continue
+            
             if "connect" in error_msg.lower() or "timeout" in error_msg.lower() or "network" in error_msg.lower():
                 yield ErrorEvent(message=f"Network error: {error_msg}. Check your internet connection and try again."), None
             else:

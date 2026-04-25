@@ -29,11 +29,17 @@ from openharness.engine.messages import ConversationMessage, assistant_message_f
 log = logging.getLogger(__name__)
 
 # Retry configuration
-MAX_RETRIES = 3
-BASE_DELAY = 1.0  # seconds
-MAX_DELAY = 30.0
+MAX_RETRIES = 10
+CONSECUTIVE_529_THRESHOLD = 3
+BASE_DELAY = 0.5
+MAX_DELAY = 60.0
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 529}
 OAUTH_BETA_HEADER = "oauth-2025-04-20"
+
+# Watchdog configuration
+STREAM_IDLE_TIMEOUT_MS = 120_000 # 提升至 120s
+STREAM_STALL_THRESHOLD_MS = 30_000
+HEARTBEAT_INTERVAL = 30.0
 
 
 @dataclass(frozen=True)
@@ -121,6 +127,19 @@ def _get_retry_delay(attempt: int, exc: Exception | None = None) -> float:
     return delay + jitter
 
 
+async def _smart_sleep(delay: float, attempt: int, max_attempts: int):
+    """
+    分段休眠并产出心跳 (Status/Retry Events)，防止 SaaS 容器回收。
+    """
+    remaining = delay
+    while remaining > 0:
+        chunk = min(remaining, HEARTBEAT_INTERVAL)
+        await asyncio.sleep(chunk)
+        remaining -= chunk
+        if remaining > 0:
+            log.debug(f"Still waiting for retry... (remaining {remaining:.1f}s)")
+
+
 class AnthropicApiClient:
     """Thin wrapper around the Anthropic async SDK with retry logic."""
 
@@ -167,6 +186,7 @@ class AnthropicApiClient:
     async def stream_message(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
         """Yield text deltas and the final assistant message with retry on transient errors."""
         last_error: Exception | None = None
+        consecutive_529 = 0
 
         for attempt in range(MAX_RETRIES + 1):
             try:
@@ -178,13 +198,25 @@ class AnthropicApiClient:
                 raise  # Auth errors are not retried
             except Exception as exc:
                 last_error = exc
+                
+                # 特殊处理 529 (Overload)
+                status_code = getattr(exc, "status_code", None)
+                if status_code == 529:
+                    consecutive_529 += 1
+                    if consecutive_529 >= CONSECUTIVE_529_THRESHOLD:
+                        # 触发降级
+                        from openharness.api.errors import FallbackTriggeredError
+                        fallback_model = "claude-3-haiku-20240307" if "opus" in request.model.lower() else "claude-3-sonnet-20240229"
+                        log.error(f"Consecutive 529 detected. Triggering fallback from {request.model} to {fallback_model}")
+                        raise FallbackTriggeredError(request.model, fallback_model, "Consecutive 529 errors")
+
                 if attempt >= MAX_RETRIES or not _is_retryable(exc):
                     if isinstance(exc, APIError):
                         raise _translate_api_error(exc) from exc
                     raise RequestFailure(str(exc)) from exc
 
                 delay = _get_retry_delay(attempt, exc)
-                status = getattr(exc, "status_code", "?")
+                status = status_code or "?"
                 log.warning(
                     "API request failed (attempt %d/%d, status=%s), retrying in %.1fs: %s",
                     attempt + 1, MAX_RETRIES + 1, status, delay, exc,
@@ -195,7 +227,7 @@ class AnthropicApiClient:
                     max_attempts=MAX_RETRIES + 1,
                     delay_seconds=delay,
                 )
-                await asyncio.sleep(delay)
+                await _smart_sleep(delay, attempt, MAX_RETRIES + 1)
 
         if last_error is not None:
             if isinstance(last_error, APIError):
@@ -240,7 +272,30 @@ class AnthropicApiClient:
         try:
             stream_api = self._client.beta.messages if self._claude_oauth else self._client.messages
             async with stream_api.stream(**params) as stream:
-                async for event in stream:
+                last_event_time = asyncio.get_event_loop().time()
+                
+                # 使用 wrap 迭代器来注入 watchdog
+                async def _watchdog_iterator():
+                    nonlocal last_event_time
+                    iterator = stream.__aiter__()
+                    while True:
+                        try:
+                            # 等待下一个事件，带超时
+                            event = await asyncio.wait_for(iterator.__anext__(), timeout=STREAM_IDLE_TIMEOUT_MS / 1000)
+                            now = asyncio.get_event_loop().time()
+                            gap = now - last_event_time
+                            if gap > STREAM_STALL_THRESHOLD_MS / 1000:
+                                log.warning(f"Streaming stall detected: {gap:.1f}s gap between events.")
+                                # 这里可以产出特殊的 StallEvent 如果需要的话
+                            last_event_time = now
+                            yield event
+                        except asyncio.TimeoutError:
+                            log.error(f"Streaming idle timeout after {STREAM_IDLE_TIMEOUT_MS}ms. Aborting stream.")
+                            raise TimeoutError("Streaming idle timeout")
+                        except StopAsyncIteration:
+                            break
+
+                async for event in _watchdog_iterator():
                     if getattr(event, "type", None) != "content_block_delta":
                         continue
                     delta = getattr(event, "delta", None)

@@ -17,3 +17,13 @@ class RateLimitFailure(OpenHarnessApiError):
 
 class RequestFailure(OpenHarnessApiError):
     """Raised for generic request or transport failures."""
+
+
+class FallbackTriggeredError(OpenHarnessApiError):
+    """Raised when consecutive errors trigger a model fallback."""
+
+    def __init__(self, original_model: str, fallback_model: str, reason: str) -> None:
+        super().__init__(f"Falling back from {original_model} to {fallback_model} due to: {reason}")
+        self.original_model = original_model
+        self.fallback_model = fallback_model
+        self.reason = reason

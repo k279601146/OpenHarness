@@ -35,9 +35,14 @@ from openharness.engine.messages import (
 
 log = logging.getLogger(__name__)
 
-MAX_RETRIES = 3
-BASE_DELAY = 1.0
-MAX_DELAY = 30.0
+MAX_RETRIES = 10
+BASE_DELAY = 0.5
+MAX_DELAY = 60.0
+# Watchdog configuration
+STREAM_IDLE_TIMEOUT_MS = 120_000
+STREAM_STALL_THRESHOLD_MS = 30_000
+HEARTBEAT_INTERVAL = 30.0
+
 _MAX_COMPLETION_TOKEN_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 
@@ -267,7 +272,15 @@ class OpenAICompatibleClient:
                     max_attempts=MAX_RETRIES + 1,
                     delay_seconds=delay,
                 )
-                await asyncio.sleep(delay)
+                
+                # Smart sleep/heartbeat
+                remaining = delay
+                while remaining > 0:
+                    chunk = min(remaining, HEARTBEAT_INTERVAL)
+                    await asyncio.sleep(chunk)
+                    remaining -= chunk
+                    if remaining > 0:
+                        log.debug(f"Still waiting for OpenAI retry... (remaining {remaining:.1f}s)")
 
         if last_error is not None:
             raise self._translate_error(last_error) from last_error
@@ -299,8 +312,29 @@ class OpenAICompatibleClient:
         finish_reason: str | None = None
         usage_data: dict[str, int] = {}
 
-        stream = await self._client.chat.completions.create(**params)
-        async for chunk in stream:
+        response_stream = await self._client.chat.completions.create(**params)
+        
+        last_event_time = asyncio.get_event_loop().time()
+
+        async def _watchdog_iterator():
+            nonlocal last_event_time
+            iterator = response_stream.__aiter__()
+            while True:
+                try:
+                    event = await asyncio.wait_for(iterator.__anext__(), timeout=STREAM_IDLE_TIMEOUT_MS / 1000)
+                    now = asyncio.get_event_loop().time()
+                    gap = now - last_event_time
+                    if gap > STREAM_STALL_THRESHOLD_MS / 1000:
+                        log.warning(f"OpenAI Streaming stall detected: {gap:.1f}s gap.")
+                    last_event_time = now
+                    yield event
+                except asyncio.TimeoutError:
+                    log.error(f"OpenAI Streaming idle timeout after {STREAM_IDLE_TIMEOUT_MS}ms.")
+                    raise TimeoutError("Streaming idle timeout")
+                except StopAsyncIteration:
+                    break
+
+        async for chunk in _watchdog_iterator():
             if not chunk.choices:
                 # Usage-only chunk (some providers send this at the end)
                 if chunk.usage:
