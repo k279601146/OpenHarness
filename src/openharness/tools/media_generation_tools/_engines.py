@@ -38,8 +38,13 @@ _MOCK_VIDEO_URLS = [
 
 
 def _is_mock_mode(api_key: str) -> bool:
-    """判断是否应使用 Mock 模式（环境变量开关 或 API Key 缺失）。"""
-    return os.getenv("MOCK_MEDIA", "false").lower() == "true" or not api_key
+    """判断是否应使用 Mock 模式。必须显式设置 MOCK_MEDIA=true 才会启用。"""
+    is_mock = os.getenv("MOCK_MEDIA", "false").lower() == "true"
+    if is_mock:
+        log.warning("⚠️ 检测到 MOCK_MEDIA=true，正在使用模拟数据模式生成媒体产物。")
+    elif not api_key:
+        log.error("❌ 媒体 API Key 未设置，生成任务将失败。")
+    return is_mock
 
 
 def load_image_as_base64(file_path: Union[str, Path], api_format: str) -> Union[str, dict]:
@@ -114,12 +119,16 @@ async def run_image_generation(
         elif provider == "gemini":
             # Gemini 目前 payload 中没有多图配置，默认为 1
             count = 1
+        elif provider == "openai":
+            count = payload.get("n", 1)
         return await _mock_image(task_id, prompt, context, count=count)
 
     if provider == "gemini":
         return await _run_gemini_image(task_id, prompt, api_model, payload, api_key, base_url, context)
     elif provider == "doubao":
         return await _run_doubao_image(task_id, prompt, payload, api_key, base_url, context)
+    elif provider == "openai":
+        return await _run_openai_image(task_id, prompt, payload, api_key, base_url, context)
     else:
         return ToolResult(output=f"不支持的图片 provider: {provider}", is_error=True)
 
@@ -150,10 +159,15 @@ async def _run_gemini_image(
     api_key: str, base_url: str, context: ToolExecutionContext,
 ) -> ToolResult:
     log.info(f"[GeminiImageEngine] 提交任务 model={api_model}")
+    # 确保 Gemini 使用 v1beta 路径
+    clean_url = base_url.rstrip("/")
+    if "/v1" not in clean_url:  # 如果没有版本号，补上 v1beta
+        clean_url = f"{clean_url}/v1beta"
+    
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             res = await client.post(
-                f"{base_url}/models/{api_model}:generateContent",
+                f"{clean_url}/models/{api_model}:generateContent",
                 json=payload,
                 headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
             )
@@ -175,7 +189,14 @@ async def _run_doubao_image(
     task_id: str, prompt: str, payload: dict,
     api_key: str, base_url: str, context: ToolExecutionContext,
 ) -> ToolResult:
-    base_domain = base_url.split("/v1")[0] if "/v1" in base_url else "https://api.packyapi.com"
+    # 智能识别主体域名
+    if "/v1" in base_url:
+        base_domain = base_url.split("/v1")[0]
+    elif "/v1beta" in base_url:
+        base_domain = base_url.split("/v1beta")[0]
+    else:
+        base_domain = base_url.rstrip("/")
+        
     log.info(f"[DoubaoImageEngine] 提交 SSE 流式任务")
     saved = []
     try:
@@ -208,6 +229,49 @@ async def _run_doubao_image(
     except Exception as e:
         log.exception("DoubaoImageEngine 异常")
         return ToolResult(output=f"Doubao 图片生成失败: {e}", is_error=True)
+
+
+async def _run_openai_image(
+    task_id: str, prompt: str, payload: dict,
+    api_key: str, base_url: str, context: ToolExecutionContext,
+) -> ToolResult:
+    """运行 OpenAI 兼容的图片生成接口。"""
+    log.info(f"[OpenAIImageEngine] 提交任务 model={payload.get('model')}")
+    # 确保 OpenAI 使用 v1 路径
+    clean_url = base_url.rstrip("/")
+    if "/v1" not in clean_url:
+        clean_url = f"{clean_url}/v1"
+        
+    saved = []
+    try:
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            res = await client.post(f"{clean_url}/images/generations", json=payload, headers=headers)
+            res.raise_for_status()
+            data_list = res.json().get("data", [])
+            for idx, item in enumerate(data_list):
+                b64 = item.get("b64_json")
+                url = item.get("url")
+                dest = context.cwd / (f"{task_id}_{idx}.png" if len(data_list) > 1 else f"{task_id}.png")
+
+                if b64:
+                    dest.write_bytes(base64.b64decode(b64))
+                elif url:
+                    img_res = await client.get(url)
+                    img_res.raise_for_status()
+                    dest.write_bytes(img_res.content)
+                else:
+                    continue
+
+                saved.append(dest)
+                await notify_artifact(context, dest, prompt, "image")
+
+        if not saved:
+            return ToolResult(output="OpenAI API 未返回有效的预览图像。", is_error=True)
+        return ToolResult(output=f"SUCCESS: 已生成 {len(saved)} 张图像。")
+    except Exception as e:
+        log.exception("OpenAIImageEngine 异常")
+        return ToolResult(output=f"OpenAI 图片生成失败: {e}", is_error=True)
 
 
 # ===================================================================
@@ -257,10 +321,14 @@ async def _run_veo_video(
     api_key: str, base_url: str, context: ToolExecutionContext,
 ) -> ToolResult:
     log.info(f"[VeoEngine] 提交长任务 model={api_model}")
+    clean_url = base_url.rstrip("/")
+    if "/v1" not in clean_url:
+        clean_url = f"{clean_url}/v1beta"
+        
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             res = await client.post(
-                f"{base_url}/models/{api_model}:predictLongRunning",
+                f"{clean_url}/models/{api_model}:predictLongRunning",
                 json=payload,
                 headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
             )
@@ -289,7 +357,14 @@ async def _run_seedance_video(
     task_id: str, prompt: str, api_model: str, payload: dict,
     api_key: str, base_url: str, context: ToolExecutionContext,
 ) -> ToolResult:
-    base_domain = base_url.split("/v1")[0] if "/v1" in base_url else "https://api.packyapi.com"
+    # 识别域名
+    if "/v1" in base_url:
+        base_domain = base_url.split("/v1")[0]
+    elif "/v1beta" in base_url:
+        base_domain = base_url.split("/v1beta")[0]
+    else:
+        base_domain = base_url.rstrip("/")
+        
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     log.info(f"[SeedanceEngine] 提交任务 model={api_model}")
     try:

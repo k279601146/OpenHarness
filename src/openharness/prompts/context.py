@@ -37,18 +37,25 @@ def _build_skills_section(
         extra_plugin_roots=extra_plugin_roots,
         settings=settings,
     )
-    skills = sorted(registry.list_skills(), key=lambda s: s.name)
-    if not skills:
+    # [Optimize] 只在全局索引中展示 logic 类型技能，避免 aesthetic 技能造成上下文污染
+    all_skills = registry.list_skills()
+    logic_skills = sorted([s for s in all_skills if s.skill_type == "logic"], key=lambda s: s.name)
+    
+    if not logic_skills:
         return None
+        
     lines = [
         "# Available Skills",
         "",
-        "The following skills are available via the `skill` tool. "
-        "When a user's request matches a skill, invoke it with `skill(name=\"<skill_name>\")` "
-        "to load detailed instructions before proceeding.",
+        "The following core skills are available via the `skill` tool. "
+        "Invoke `skill(name=\"<skill_name>\")` to load detailed instructions when requested.",
+        "",
+        "**Note on Aesthetics**: Domain-specific aesthetic guidelines (e.g., logo design, ecommerce standards) "
+        "are not listed here. They are linked within major creative skills like `generate_image`. "
+        "Refer to those core skills to find high-fidelity visual protocols.",
         "",
     ]
-    for skill in skills:
+    for skill in logic_skills:
         # 只保留核心名称和一句话概括，减少 Token 浪费
         desc = skill.description.split('。')[0] if '。' in skill.description else skill.description
         lines.append(f"- **{skill.name}**: {desc[:120]}")
@@ -61,18 +68,15 @@ def _build_delegation_section() -> str:
         [
             "# Delegation And Subagents",
             "",
-            "OpenHarness can delegate background work with the `agent` tool.",
-            "Use it when the user explicitly asks for a subagent, background worker, or parallel investigation, "
-            "or when the task clearly benefits from splitting off a focused worker.",
+            "OpenHarness allows you to delegate complex subtasks using the `agent` tool.",
+            "This creates an isolated, concurrent context to perform parallel investigations or deep specialized work.",
             "",
-            "Default pattern:",
-            '- Spawn with `agent(description=..., prompt=..., subagent_type="worker")`.',
-            "- Inspect running or recorded workers with `/agents`.",
-            "- Inspect one worker in detail with `/agents show TASK_ID`.",
-            "- Send follow-up instructions with `send_message(task_id=..., message=...)`.",
-            "- Read worker output with `task_output(task_id=...)`.",
+            "Usage Pattern:",
+            '- Spawn an agent with `agent(description=..., prompt=..., subagent_type="worker")`.',
+            "- The subagent runs synchronously relative to your current reasoning step. You will naturally WAIt and receive its full output when it completes.",
+            "- Use this feature for deep dives (e.g. extensive code analysis, complex math, heavy data parsing) where splitting off a focused worker improves performance or prevents losing the main context.",
             "",
-            "Prefer a normal direct answer for simple tasks. Use subagents only when they materially help.",
+            "Prefer a normal direct answer or standard tool call for simple tasks. Use the `agent` tool only when a task clearly benefits from cognitive isolation or parallel specialization.",
         ]
     )
 

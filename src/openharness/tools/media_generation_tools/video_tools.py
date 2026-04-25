@@ -26,8 +26,9 @@ from openharness.tools.media_generation_tools._models import (
 
 
 def _get_api_credentials() -> tuple[str, str]:
-    api_key = os.getenv("PACKY_API_KEY", "")
-    base_url = os.getenv("PACKY_BASE_URL", "https://api.packyapi.com/v1beta")
+    """获取视频生成专用的 API Key 和 Base URL。"""
+    api_key = os.getenv("VIDEO_GEN_API_KEY", "")
+    base_url = os.getenv("VIDEO_GEN_BASE_URL", "https://api.packyapi.com")
     return api_key, base_url
 
 

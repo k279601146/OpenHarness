@@ -25,9 +25,9 @@ from openharness.tools.media_generation_tools._models import (
 
 
 def _get_api_credentials() -> tuple[str, str]:
-    """获取 API Key 和 Base URL。"""
-    api_key = os.getenv("PACKY_API_KEY", "")
-    base_url = os.getenv("PACKY_BASE_URL", "https://api.packyapi.com/v1beta")
+    """获取图片生成专用的 API Key 和 Base URL。"""
+    api_key = os.getenv("IMAGE_GEN_API_KEY", "")
+    base_url = os.getenv("IMAGE_GEN_BASE_URL", "https://api.packyapi.com")
     return api_key, base_url
 
 
@@ -61,7 +61,7 @@ class CreativeImageInput(BaseModel):
         default=DEFAULT_IMAGE_MODEL,
         description=(
             "指定要使用的图片生成模型 ID。"
-            "可选值：nano-banana, nano-banana-2, nano-banana-pro, "
+            "可选值：kolors, gpt-image-2, nano-banana, nano-banana-2, nano-banana-pro, "
             "doubao-seedream-5-0-260128, doubao-seedream-5-0-lite-260128, "
             "doubao-seedream-4-5-251128, doubao-seedream-4-0-250828"
         ),
@@ -128,6 +128,10 @@ class EditImageInput(BaseModel):
         le=4,
         description="生成的图片数量（1-4）。对于支持多图的模型有效。",
     )
+    aspect_ratio: str = Field(
+        default="1:1",
+        description="宽高比，务必与原图保持一致。可选：1:1, 16:9, 9:16, 4:3, 3:4",
+    )
 
 
 class EditImageTool(BaseTool):
@@ -148,16 +152,34 @@ class EditImageTool(BaseTool):
         except Exception as e:
             return ToolResult(output=f"加载源图失败: {e}", is_error=True)
 
+        # 构建 payload
+        ar = arguments.aspect_ratio
+        doubao_size_map = {
+            "1:1": "2048x2048", "4:3": "2304x1728", "3:4": "1728x2304",
+            "16:9": "2848x1600", "9:16": "1600x2848",
+        }
+        
         if provider == "gemini":
+            valid_ar = ar if ar in ("1:1", "16:9", "9:16", "4:3", "3:4") else "1:1"
             payload = {
                 "contents": [{"parts": [{"text": arguments.prompt}, gemini_img]}],
-                "generationConfig": {"responseModalities": ["IMAGE"], "imageConfig": {"imageSize": "2K"}},
+                "generationConfig": {"responseModalities": ["IMAGE"], "imageConfig": {"aspectRatio": valid_ar, "imageSize": "2K"}},
+            }
+        elif provider == "openai":
+            openai_size_map = {"1:1": "1024x1024", "16:9": "1792x1024", "9:16": "1024x1792"}
+            payload = {
+                "model": api_model,
+                "prompt": arguments.prompt,
+                "size": openai_size_map.get(ar, "1024x1024"),
+                "n": arguments.num_images,
+                "response_format": "b64_json",
             }
         else:
             payload = {
                 "model": api_model,
                 "prompt": arguments.prompt,
                 "image": [doubao_img],
+                "size": doubao_size_map.get(ar, "2048x2048"),
                 "stream": True,
                 "response_format": "b64_json",
                 "sequential_image_generation": "auto" if arguments.num_images > 1 else "disabled",
@@ -193,6 +215,10 @@ class ImageFromReferenceInput(BaseModel):
         le=4,
         description="生成的图片数量（1-4）。对于支持多图的模型有效。",
     )
+    aspect_ratio: str = Field(
+        default="1:1",
+        description="宽高比，务必与参考图保持一致。可选：1:1, 16:9, 9:16, 4:3, 3:4",
+    )
 
 
 class ImageFromReferenceTool(BaseTool):
@@ -213,16 +239,34 @@ class ImageFromReferenceTool(BaseTool):
         except Exception as e:
             return ToolResult(output=f"加载参考图失败: {e}", is_error=True)
 
+        # 构建参数
+        ar = arguments.aspect_ratio
+        doubao_size_map = {
+            "1:1": "2048x2048", "4:3": "2304x1728", "3:4": "1728x2304",
+            "16:9": "2848x1600", "9:16": "1600x2848",
+        }
+
         if provider == "gemini":
+            valid_ar = ar if ar in ("1:1", "16:9", "9:16", "4:3", "3:4") else "1:1"
             payload = {
                 "contents": [{"parts": [{"text": arguments.prompt}] + gemini_imgs}],
-                "generationConfig": {"responseModalities": ["IMAGE"]},
+                "generationConfig": {"responseModalities": ["IMAGE"], "imageConfig": {"aspectRatio": valid_ar}},
+            }
+        elif provider == "openai":
+            openai_size_map = {"1:1": "1024x1024", "16:9": "1792x1024", "9:16": "1024x1792"}
+            payload = {
+                "model": api_model,
+                "prompt": arguments.prompt,
+                "size": openai_size_map.get(ar, "1024x1024"),
+                "n": arguments.num_images,
+                "response_format": "b64_json",
             }
         else:
             payload = {
                 "model": api_model,
                 "prompt": arguments.prompt,
                 "image": doubao_imgs,
+                "size": doubao_size_map.get(ar, "2048x2048"),
                 "stream": True,
                 "response_format": "b64_json",
                 "sequential_image_generation": "auto" if arguments.num_images > 1 else "disabled",
@@ -261,6 +305,18 @@ def _build_image_payload(
                 "responseModalities": ["IMAGE"],
                 "imageConfig": {"aspectRatio": valid_ar, "imageSize": "2K"},
             },
+        }
+    elif provider == "openai":
+        # 如果是 DALL-E 3 等模型，size 需转换为特定字符串
+        openai_size_map = {
+            "1:1": "1024x1024", "16:9": "1792x1024", "9:16": "1024x1792"
+        }
+        return {
+            "model": api_model,
+            "prompt": prompt,
+            "size": openai_size_map.get(aspect_ratio, "1024x1024"),
+            "n": num_images,
+            "response_format": "b64_json",
         }
     else:  # doubao
         return {

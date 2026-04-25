@@ -13,7 +13,7 @@ provider 枚举值：
 
 from typing import TypedDict, Literal
 
-ProviderType = Literal["gemini", "doubao", "veo", "seedance"]
+ProviderType = Literal["gemini", "doubao", "veo", "seedance", "openai"]
 
 
 class ModelConfig(TypedDict):
@@ -25,6 +25,18 @@ class ModelConfig(TypedDict):
 # 图片模型注册表
 # ===================================================================
 IMAGE_MODEL_REGISTRY: dict[str, ModelConfig] = {
+    # --- SiliconFlow / Kwai-Kolors ---
+    "kolors": {
+        "provider": "openai",
+        "api_model": "Kwai-Kolors/Kolors",
+    },
+
+    # --- OpenAI 系列 ---
+    "gpt-image-2": {
+        "provider": "openai",
+        "api_model": "gpt-image-2",
+    },
+
     # --- Nano Banana 系列 (Google Gemini via PackyAPI) ---
     # 前端展示名: Nano Banana 2
     "nano-banana-2": {
@@ -95,7 +107,7 @@ VIDEO_MODEL_REGISTRY: dict[str, ModelConfig] = {
 # ===================================================================
 # 默认模型（Auto 模式或前端未传值时使用）
 # ===================================================================
-DEFAULT_IMAGE_MODEL = "doubao-seedream-5-0-lite-260128"
+DEFAULT_IMAGE_MODEL = "kolors"
 DEFAULT_VIDEO_MODEL = "doubao-seedance-1-5-pro-251215"
 
 
