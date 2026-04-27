@@ -132,6 +132,17 @@ def build_runtime_system_prompt(
 
     # --- 动态部分：每次请求都需要重新计算 ---
 
+    # 1. 环境动态信息 (放在动态部分开头，确保骨架能被缓存，但 Agent 能拿到最新时间)
+    from openharness.prompts.environment import get_environment_info
+    env_info = get_environment_info(cwd)
+    sections.append(
+        f"# Environment Context\n"
+        f"- Current Date (UTC): {env_info.date}\n"
+        f"- Working Directory: {env_info.cwd}\n"
+        f"- OS: {env_info.os_name} {env_info.os_version}\n"
+        f"- Search Policy: Today is {env_info.date}. ALWAYS prioritize records from {env_info.date[:4]} or {int(env_info.date[:4])-1} when searching to ensure data recency."
+    )
+
     if settings.fast_mode:
         sections.append(
             "# Session Mode\nFast mode is enabled. Prefer concise replies, minimal tool use, and quicker progress over exhaustive exploration."

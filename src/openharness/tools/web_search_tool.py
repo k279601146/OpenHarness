@@ -66,7 +66,10 @@ class WebSearchTool(BaseTool):
             search_llm = _build_search_llm()
 
             # 引导 LLM 触发 google_search 并返回符合旧版格式的文本
+            from datetime import datetime, timezone
+            current_date = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
             prompt = f"""请配合内部工具 Google Search 搜索以下内容，并严格按照指定格式返回不超过 {arguments.max_results} 条的搜索结果。
+今日日期：{current_date}。搜索时请优先寻找最新信息（如 {current_date[:4]} 年的进展）。
 
 搜索查询：{arguments.query}
 
