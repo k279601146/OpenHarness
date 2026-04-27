@@ -95,13 +95,29 @@ def _convert_messages_to_openai(
     """
     openai_messages: list[dict[str, Any]] = []
 
+    # Merge consecutive messages with the same role to satisfy strict provider requirements
+    merged_messages: list[dict[str, Any]] = []
     if system_prompt:
-        openai_messages.append({"role": "system", "content": system_prompt})
+        if isinstance(system_prompt, list):
+            # Flatten block-style system prompt (Anthropic style) into string
+            text_parts = []
+            for block in system_prompt:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+                elif isinstance(block, str):
+                    text_parts.append(block)
+            system_text = "\n\n".join(text_parts)
+        else:
+            system_text = str(system_prompt)
+            
+        if system_text.strip():
+            merged_messages.append({"role": "system", "content": system_text})
 
+    raw_openai_messages: list[dict[str, Any]] = []
     for msg in messages:
         if msg.role == "assistant":
             openai_msg = _convert_assistant_message(msg)
-            openai_messages.append(openai_msg)
+            raw_openai_messages.append(openai_msg)
         elif msg.role == "user":
             # User messages may contain text or tool_result blocks
             tool_results = [b for b in msg.content if isinstance(b, ToolResultBlock)]
@@ -110,7 +126,7 @@ def _convert_messages_to_openai(
             if tool_results:
                 # Each tool result becomes a separate message with role="tool"
                 for tr in tool_results:
-                    openai_messages.append({
+                    raw_openai_messages.append({
                         "role": "tool",
                         "tool_call_id": tr.tool_use_id,
                         "content": tr.content,
@@ -119,14 +135,38 @@ def _convert_messages_to_openai(
                 content = _convert_user_content_to_openai(user_blocks)
                 if isinstance(content, str):
                     if content.strip():
-                        openai_messages.append({"role": "user", "content": content})
+                        raw_openai_messages.append({"role": "user", "content": content})
                 elif content:
-                    openai_messages.append({"role": "user", "content": content})
+                    raw_openai_messages.append({"role": "user", "content": content})
             if not tool_results and not user_blocks:
                 # Empty user message (shouldn't happen, but handle gracefully)
-                openai_messages.append({"role": "user", "content": ""})
+                raw_openai_messages.append({"role": "user", "content": ""})
 
-    return openai_messages
+    # Perform merging
+    for msg in raw_openai_messages:
+        if not merged_messages or merged_messages[-1]["role"] != msg["role"] or msg["role"] == "tool":
+            # Note: role="tool" messages must remain separate in OpenAI spec, 
+            # each corresponding to a tool_call_id.
+            merged_messages.append(msg)
+        else:
+            # Merge content
+            prev = merged_messages[-1]
+            if isinstance(prev["content"], str) and isinstance(msg.get("content"), str):
+                prev["content"] = prev["content"] + "\n\n" + msg["content"]
+            elif isinstance(prev["content"], list) or isinstance(msg.get("content"), list):
+                # Convert both to list if needed
+                p_content = prev["content"] if isinstance(prev["content"], list) else [{"type": "text", "text": prev["content"]}]
+                m_content = msg["content"] if isinstance(msg["content"], list) else [{"type": "text", "text": msg["content"]}]
+                prev["content"] = p_content + m_content
+            
+            # For assistant messages, also merge tool_calls if present
+            if msg["role"] == "assistant":
+                if "tool_calls" in msg:
+                    prev.setdefault("tool_calls", []).extend(msg["tool_calls"])
+                if "reasoning_content" in msg:
+                    prev["reasoning_content"] = (prev.get("reasoning_content") or "") + "\n" + msg["reasoning_content"]
+
+    return merged_messages
 
 
 def _convert_user_content_to_openai(blocks: list[ContentBlock]) -> str | list[dict[str, Any]]:

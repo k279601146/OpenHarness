@@ -60,7 +60,8 @@ class PermissionSettings(BaseModel):
 class MemorySettings(BaseModel):
     """Memory system configuration."""
 
-    enabled: bool = True
+    # [OpenViking Migration] Default to False to prefer OpenViking Semantic OS
+    enabled: bool = False
     max_files: int = 5
     max_entrypoint_lines: int = 200
     context_window_tokens: int | None = None
