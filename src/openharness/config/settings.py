@@ -87,7 +87,7 @@ class SandboxFilesystemSettings(BaseModel):
 class DockerSandboxSettings(BaseModel):
     """Docker-specific sandbox configuration."""
 
-    image: str = "openharness-sandbox:latest"
+    image: str = "openharness-sandbox:v5"
     auto_build_image: bool = True
     cpu_limit: float = 0.0
     memory_limit: str = ""
@@ -98,13 +98,17 @@ class DockerSandboxSettings(BaseModel):
 class SandboxSettings(BaseModel):
     """Sandbox-runtime integration settings."""
 
-    enabled: bool = False
-    backend: str = "srt"
-    fail_if_unavailable: bool = False
+    enabled: bool = True
+    backend: str = "docker"
+    fail_if_unavailable: bool = True
     enabled_platforms: list[str] = Field(default_factory=list)
     network: SandboxNetworkSettings = Field(default_factory=SandboxNetworkSettings)
     filesystem: SandboxFilesystemSettings = Field(default_factory=SandboxFilesystemSettings)
     docker: DockerSandboxSettings = Field(default_factory=DockerSandboxSettings)
+    # 沙箱持久化根目录 (生产: /opt/manus/sandbox-data, 开发: 项目内 sandbox-data)
+    sandbox_data_root: str = ""
+    # 闲置超时自动销毁 (秒)
+    idle_timeout_seconds: int = 300
 
 
 class ProviderProfile(BaseModel):

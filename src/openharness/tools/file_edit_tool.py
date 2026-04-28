@@ -30,14 +30,19 @@ class FileEditTool(BaseTool):
         arguments: FileEditToolInput,
         context: ToolExecutionContext,
     ) -> ToolResult:
-        path = _resolve_path(context.cwd, arguments.path)
+        from openharness.sandbox.session import get_docker_sandbox
+        session = get_docker_sandbox()
 
-        from openharness.sandbox.session import is_docker_sandbox_active
-
-        if is_docker_sandbox_active():
+        if session:
+            # 路径重定向：将容器路径映射回宿主机实际物理路径
+            path = session.map_to_host_path(arguments.path)
+            
             from openharness.sandbox.path_validator import validate_sandbox_path
-
-            allowed, reason = validate_sandbox_path(path, context.cwd)
+            
+            # 在沙箱模式下，允许编辑 workspace 和 user-home
+            extra_allowed = [session.host_workspace, session.host_home]
+            allowed, reason = validate_sandbox_path(path, Path(session.host_workspace), extra_allowed=extra_allowed)
+            
             if not allowed:
                 return ToolResult(output=f"Sandbox: {reason}", is_error=True)
         else:

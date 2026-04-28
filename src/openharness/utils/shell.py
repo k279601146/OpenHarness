@@ -54,17 +54,35 @@ async def create_shell_subprocess(
     stdout: int | None = None,
     stderr: int | None = None,
     env: Mapping[str, str] | None = None,
+    user_id: int | None = None,
+    thread_id: str | None = None,
+    db_session=None,
 ) -> asyncio.subprocess.Process:
-    """Spawn a shell command with platform-aware shell selection and sandboxing."""
+    """Spawn a shell command with platform-aware shell selection and sandboxing.
+
+    重构后新增 user_id / thread_id / db_session 参数，
+    用于驱动新版沙箱管理器的复用/隔离逻辑。
+    """
     resolved_settings = settings or load_settings()
 
     # Docker backend: route through docker exec
     if resolved_settings.sandbox.enabled and resolved_settings.sandbox.backend == "docker":
-        from openharness.sandbox.session import get_docker_sandbox
+        from openharness.sandbox.session import get_or_start_sandbox
 
-        session = get_docker_sandbox()
+        # 确定 user_id 和 thread_id
+        resolved_user_id = user_id or 0
+        resolved_thread_id = thread_id or Path(cwd).resolve().name
+
+        session = await get_or_start_sandbox(
+            resolved_settings,
+            resolved_user_id,
+            resolved_thread_id,
+            db_session=db_session,
+        )
+
         if session is not None and session.is_running:
-            argv = resolve_shell_command(command)
+            # 在 Linux 容器中始终使用 POSIX shell
+            argv = ["/bin/bash", "-lc", command]
             return await session.exec_command(
                 argv,
                 cwd=cwd,
@@ -76,7 +94,7 @@ async def create_shell_subprocess(
         if resolved_settings.sandbox.fail_if_unavailable:
             from openharness.sandbox import SandboxUnavailableError
 
-            raise SandboxUnavailableError("Docker sandbox session is not running")
+            raise SandboxUnavailableError("Docker sandbox session could not be started")
 
     # Existing srt path
     argv = resolve_shell_command(command, prefer_pty=prefer_pty)

@@ -29,7 +29,18 @@ class BashTool(BaseTool):
     input_model = BashToolInput
 
     async def execute(self, arguments: BashToolInput, context: ToolExecutionContext) -> ToolResult:
-        cwd = Path(arguments.cwd).expanduser() if arguments.cwd else context.cwd
+        cwd = context.cwd
+        
+        from openharness.sandbox.session import get_docker_sandbox
+        session = get_docker_sandbox()
+        
+        if session and arguments.cwd:
+            # 如果提供了自定义 cwd，将其按照沙箱映射逻辑转换
+            cwd = session.map_to_host_path(arguments.cwd)
+        elif arguments.cwd:
+            cwd = Path(arguments.cwd).expanduser()
+            if not cwd.is_absolute():
+                cwd = context.cwd / cwd
         preflight_error = _preflight_interactive_command(arguments.command)
         if preflight_error is not None:
             return ToolResult(
@@ -42,9 +53,13 @@ class BashTool(BaseTool):
             process = await create_shell_subprocess(
                 arguments.command,
                 cwd=cwd,
+                settings=context.metadata.get("settings"),
                 prefer_pty=True,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                user_id=context.metadata.get("user_id"),
+                thread_id=context.metadata.get("thread_id"),
+                db_session=context.metadata.get("db_session"),
             )
         except SandboxUnavailableError as exc:
             return ToolResult(output=str(exc), is_error=True)

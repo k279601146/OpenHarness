@@ -72,8 +72,8 @@ def get_platform_capabilities(platform_name: PlatformName | None = None) -> Plat
             supports_native_windows_shell=True,
             supports_tmux=False,
             supports_swarm_mailbox=False,
-            supports_sandbox_runtime=False,
-            supports_docker_sandbox=False,
+            supports_sandbox_runtime=True,
+            supports_docker_sandbox=True,
         )
     return PlatformCapabilities(
         name=name,

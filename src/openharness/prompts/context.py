@@ -58,7 +58,7 @@ def _build_skills_section(
     for skill in logic_skills:
         # 只保留核心名称和一句话概括，减少 Token 浪费
         desc = skill.description.split('。')[0] if '。' in skill.description else skill.description
-        lines.append(f"- **{skill.name}**: {desc[:120]}")
+        lines.append(f"- **{skill.name}**: {desc[:200]}")
     return "\n".join(lines)
 
 
@@ -134,12 +134,13 @@ def build_runtime_system_prompt(
 
     # 1. 环境动态信息 (放在动态部分开头，确保骨架能被缓存，但 Agent 能拿到最新时间)
     from openharness.prompts.environment import get_environment_info
-    env_info = get_environment_info(cwd)
+    env_info = get_environment_info(cwd, is_sandbox=settings.sandbox.enabled)
     sections.append(
         f"# Environment Context\n"
         f"- Current Date (UTC): {env_info.date}\n"
         f"- Working Directory: {env_info.cwd}\n"
         f"- OS: {env_info.os_name} {env_info.os_version}\n"
+        f"- Sudo: {env_info.extra.get('sudo', 'Not available')}\n"
         f"- Search Policy: Today is {env_info.date}. ALWAYS prioritize records from {env_info.date[:4]} or {int(env_info.date[:4])-1} when searching to ensure data recency."
     )
 

@@ -10,9 +10,13 @@ from openharness.sandbox.adapter import (
 from openharness.sandbox.docker_backend import DockerSandboxSession, get_docker_availability
 from openharness.sandbox.path_validator import validate_sandbox_path
 from openharness.sandbox.session import (
+    get_active_sandbox,
     get_docker_sandbox,
+    get_or_start_sandbox,
     is_docker_sandbox_active,
-    start_docker_sandbox,
+    is_docker_sandbox_active_for,
+    suspend_sandbox,
+    destroy_sandbox,
     stop_docker_sandbox,
 )
 
@@ -21,13 +25,15 @@ __all__ = [
     "SandboxAvailability",
     "SandboxUnavailableError",
     "build_sandbox_runtime_config",
+    "get_active_sandbox",
     "get_docker_availability",
-    "get_docker_sandbox",
+    "get_or_start_sandbox",
     "get_sandbox_availability",
     "is_docker_sandbox_active",
-    "start_docker_sandbox",
+    "is_docker_sandbox_active_for",
+    "suspend_sandbox",
+    "destroy_sandbox",
     "stop_docker_sandbox",
     "validate_sandbox_path",
     "wrap_command_for_sandbox",
 ]
-

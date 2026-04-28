@@ -36,6 +36,23 @@ class GrepTool(BaseTool):
 
     async def execute(self, arguments: GrepToolInput, context: ToolExecutionContext) -> ToolResult:
         root = _resolve_path(context.cwd, arguments.root) if arguments.root else context.cwd
+
+        from openharness.sandbox.session import is_docker_sandbox_active
+
+        if is_docker_sandbox_active():
+            from openharness.sandbox.path_validator import validate_sandbox_path
+
+            allowed, reason = validate_sandbox_path(root, context.cwd)
+            if not allowed:
+                return ToolResult(output=f"Sandbox: {reason}", is_error=True)
+        else:
+            # MVP 安全限制：禁止访问工作区外
+            if not str(root.resolve()).startswith(str(context.cwd.resolve())):
+                return ToolResult(
+                    output=f"❌ 安全限制：不允许访问工作区外的目录 ({root})", 
+                    is_error=True
+                )
+
         if root.is_file():
             display_base = _display_base(root, context.cwd)
             matches = await _rg_grep_file(

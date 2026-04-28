@@ -118,6 +118,10 @@ def create_mvp_safe_tool_registry(mcp_manager=None) -> ToolRegistry:
     5. 外部生态系统打通 (MCP)
     """
     registry = ToolRegistry()
+
+    # 在 create_mvp_safe_tool_registry 中添加：
+    registry.register(BashTool()) # 已受 Docker Sandbox 保护
+
     
     # === 1. 超级网联能力 ===
     registry.register(WebSearchTool())

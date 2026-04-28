@@ -101,7 +101,7 @@ def detect_git_info(cwd: str) -> tuple[bool, str | None]:
     return True, branch
 
 
-def get_environment_info(cwd: str | None = None) -> EnvironmentInfo:
+def get_environment_info(cwd: str | None = None, is_sandbox: bool = False) -> EnvironmentInfo:
     """Gather all environment information into an EnvironmentInfo snapshot."""
     if cwd is None:
         cwd = os.getcwd()
@@ -114,7 +114,14 @@ def get_environment_info(cwd: str | None = None) -> EnvironmentInfo:
         if executable_path.parent.name in {"bin", "Scripts"} and (candidate / "pyvenv.cfg").exists():
             virtual_env = str(candidate)
 
-    os_name, os_version = detect_os()
+    from openharness.sandbox.session import is_docker_sandbox_active
+    sandbox_active = is_docker_sandbox_active() or is_sandbox
+    
+    if sandbox_active:
+        os_name, os_version = "Linux (Docker Sandbox)", "latest"
+    else:
+        os_name, os_version = detect_os()
+    
     shell = detect_shell()
     is_git, branch = detect_git_info(cwd)
 
@@ -122,14 +129,15 @@ def get_environment_info(cwd: str | None = None) -> EnvironmentInfo:
         os_name=os_name,
         os_version=os_version,
         platform_machine=platform.machine(),
-        shell=shell,
-        cwd=cwd,
-        home_dir=str(Path.home()),
+        shell="bash" if sandbox_active else shell,
+        cwd="/workspace" if sandbox_active else cwd,
+        home_dir="/home/sandbox" if sandbox_active else str(Path.home()),
         date=datetime.now(tz=timezone.utc).strftime("%Y-%m-%d"),
         python_version=platform.python_version(),
         python_executable=python_executable,
         virtual_env=virtual_env,
         is_git_repo=is_git,
         git_branch=branch,
-        hostname=platform.node(),
+        hostname="sandbox" if sandbox_active else platform.node(),
+        extra={"sudo": "Passwordless sudo available (ohuser)", "persistence": "Three-layer: /workspace + /home/sandbox + /usr/local/sandbox-bin"} if sandbox_active else {}
     )

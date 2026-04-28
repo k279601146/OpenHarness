@@ -18,17 +18,18 @@ def validate_sandbox_path(
     resolved = path.resolve()
     resolved_cwd = cwd.resolve()
 
-    # Primary check: path must be within the project directory
+    # Primary check: path must be within the project directory (workspace)
     try:
         resolved.relative_to(resolved_cwd)
         return True, ""
     except ValueError:
         pass
-
-    # Secondary: check extra allowed paths (from filesystem settings)
+    
+    # [Enhancement] 如果提供了 extra_allowed，检查是否属于其他持久化层
+    # 比如在 Docker 沙箱模式下，允许访问 user-home 和 local-bin
     for allowed in extra_allowed or []:
-        allowed_path = Path(allowed).expanduser().resolve()
         try:
+            allowed_path = Path(allowed).resolve()
             resolved.relative_to(allowed_path)
             return True, ""
         except ValueError:

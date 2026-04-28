@@ -41,6 +41,7 @@ class RemoteTriggerTool(BaseTool):
             process = await create_shell_subprocess(
                 str(job["command"]),
                 cwd=cwd,
+                settings=context.metadata.get("settings"),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
