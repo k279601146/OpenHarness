@@ -122,10 +122,20 @@ def build_runtime_system_prompt(
         # Coordinator 模式走独立路径，不使用缓存骨架
         sections = [get_coordinator_system_prompt()]
     else:
-        # [Optimize] 使用父级目录（通常是 temp_workspaces 或项目根）作为缓存键，
-        # 避免因为 UUID 子目录不同导致缓存失效。
+        # [Optimize] 动态提取稳定级别的 cache_key
+        # SaaS 下，同一个 User 的 Session 应该共享 System Prompt Skeleton 骨架，提升 Cache 命中率
         cwd_path = Path(cwd).resolve()
-        cache_key = str(cwd_path.parent) if "temp_workspaces" in str(cwd_path) else str(cwd_path)
+        cache_key = str(cwd_path)
+        
+        parts = cwd_path.parts
+        if "sandbox-data" in parts:
+            idx = parts.index("sandbox-data")
+            if len(parts) > idx + 1:
+                # 定位到 .../sandbox-data/{user_id} 级别
+                cache_key = str(Path(*parts[:idx+2]))
+        elif "temp_workspaces" in parts:
+            idx = parts.index("temp_workspaces")
+            cache_key = str(Path(*parts[:idx+1]))
         
         sections = list(_build_static_prompt_skeleton(cache_key))
         logger.info(f"--- [Prompt Skeleton] Using skeleton for key: {cache_key} ---")
