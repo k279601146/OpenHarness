@@ -17,7 +17,11 @@ class ToolSearchTool(BaseTool):
     """Search tool registry contents."""
 
     name = "tool_search"
-    description = "Search the available tool list by name or description."
+    description = (
+        "Search the registered internal atomic tool list (e.g. read_file, web_fetch). "
+        "Strictly DO NOT use this for searching specialized domain expertise (e.g. PPT, SEO, Design); "
+        "always use the `find-skills` skill for those instead."
+    )
     input_model = ToolSearchToolInput
 
     def is_read_only(self, arguments: ToolSearchToolInput) -> bool:

@@ -18,13 +18,13 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from openharness.config import Settings
-    from openharness.sandbox.docker_backend import DockerSandboxSession
+    from openharness.sandbox.e2b_backend import E2BSandboxSession
 
 logger = logging.getLogger(__name__)
 
 # ═══ 进程级沙箱注册表 ═══
-# key = "user_id:thread_id", value = DockerSandboxSession
-_sandbox_registry: dict[str, DockerSandboxSession] = {}
+# key = "user_id:thread_id", value = E2BSandboxSession
+_sandbox_registry: dict[str, E2BSandboxSession] = {}
 _registry_lock = asyncio.Lock()
 
 
@@ -32,7 +32,7 @@ def _registry_key(user_id: int, thread_id: str) -> str:
     return f"{user_id}:{thread_id}"
 
 
-def get_active_sandbox(user_id: int, thread_id: str) -> DockerSandboxSession | None:
+def get_active_sandbox(user_id: int, thread_id: str) -> E2BSandboxSession | None:
     """从进程内存注册表获取活跃的沙箱会话。"""
     key = _registry_key(user_id, thread_id)
     session = _sandbox_registry.get(key)
@@ -51,21 +51,23 @@ def is_docker_sandbox_active() -> bool:
     return any(s.is_running for s in _sandbox_registry.values())
 
 
-def get_docker_sandbox() -> DockerSandboxSession | None:
-    """兼容旧接口：自动获取当前上下文的活跃沙箱。"""
+def get_sandbox_session() -> E2BSandboxSession | None:
+    """自动获取当前上下文的活跃沙箱(兼任原有的 get_docker_sandbox)。"""
     try:
         # 尝试从 Engine 上下文中自动获取 UID/TID
         # 这种设计允许工具层无需显式传递上下文也能透明路由到沙箱
-        import sys
-        # 检查是否在 api 路径下，如果是则可以导入 engine_adapter
-        from engine_adapter import active_user_id, active_thread_id
+        from openharness.contextvars import active_user_id, active_thread_id
         uid = active_user_id.get()
         tid = active_thread_id.get()
         if uid and tid:
-            return get_active_sandbox(int(uid), tid)
+            return get_active_sandbox(uid, tid)
     except (ImportError, Exception):
         pass
     return None
+
+
+# Alias for backward compatibility during refactoring
+get_docker_sandbox = get_sandbox_session
 
 
 def _resolve_sandbox_data_root(settings: Settings) -> Path:
@@ -95,11 +97,17 @@ def _resolve_sandbox_data_root(settings: Settings) -> Path:
 
 
 def _ensure_persistent_dirs(data_root: Path, user_id: int, space_id: str) -> tuple[str, str, str]:
-    """创建三层持久化目录，返回 (workspace_path, home_path, bin_path)。"""
-    base = data_root / str(user_id) / space_id
-    workspace = base / "workspace"
-    home = base / "user-home"
-    local_bin = base / "local-bin"
+    """创建三层持久化目录，返回 (workspace_path, home_path, bin_path)。
+    
+    重构：workspace 与 thread 绑定，home 与 bin 与 user 绑定以实现跨任务持久性。
+    """
+    user_base = data_root / str(user_id)
+    thread_base = user_base / space_id
+    
+    workspace = thread_base / "workspace"
+    # 变更为用户全局共享资源区，实现跨 thread 可用
+    home = user_base / "shared_assets" / "user-home"
+    local_bin = user_base / "shared_assets" / "local-bin"
 
     for d in (workspace, home, local_bin):
         d.mkdir(parents=True, exist_ok=True)
@@ -107,32 +115,33 @@ def _ensure_persistent_dirs(data_root: Path, user_id: int, space_id: str) -> tup
     return str(workspace), str(home), str(local_bin)
 
 
+
 async def get_or_start_sandbox(
     settings: Settings,
     user_id: int,
     thread_id: str,
     db_session=None,
-) -> DockerSandboxSession | None:
+) -> E2BSandboxSession | None:
     """获取或启动沙箱。核心复用逻辑：
 
     1. 内存注册表命中 → 直接复用
-    2. DB 中有 suspended 记录 → 尝试恢复容器
-    3. 无记录 → 新建沙箱空间 + 启动容器
+    2. DB 中有 suspended 记录 → 尝试重连会话
+    3. 无记录 → 新建沙箱空间 + 启动 E2B 实例
     """
-    from openharness.sandbox.docker_backend import (
-        DockerSandboxSession,
-        get_docker_availability,
+    from openharness.sandbox.e2b_backend import (
+        E2BSandboxSession,
+        get_e2b_availability,
     )
 
-    # 前置检查：Docker 是否可用
-    availability = get_docker_availability(settings)
+    # 前置检查：E2B 是否可用
+    availability = get_e2b_availability(settings)
     if not availability.available:
         if settings.sandbox.fail_if_unavailable:
             from openharness.sandbox.adapter import SandboxUnavailableError
             raise SandboxUnavailableError(
-                availability.reason or "Docker sandbox is unavailable"
+                availability.reason or "E2B sandbox is unavailable"
             )
-        logger.warning("Docker sandbox unavailable: %s", availability.reason)
+        logger.warning("E2B sandbox unavailable: %s", availability.reason)
         return None
 
     key = _registry_key(user_id, thread_id)
@@ -141,7 +150,7 @@ async def get_or_start_sandbox(
         # ── 路径 1: 内存命中 ──
         existing = _sandbox_registry.get(key)
         if existing is not None and existing.is_running:
-            logger.info("Sandbox reused from registry: %s", existing.container_name)
+            logger.info("Sandbox reused from registry: %s", existing.sandbox_id)
             _touch_last_active(db_session, thread_id)
             return existing
 
@@ -157,19 +166,19 @@ async def get_or_start_sandbox(
                 logger.warning("Failed to query SandboxSpace: %s", e)
 
         data_root = _resolve_sandbox_data_root(settings)
+        from openharness.skills.loader import get_community_skills_dir
+        community_skills = str(get_community_skills_dir())
 
         if space is not None:
             # 有历史记录
-            container_name = space.container_name or f"oh-sandbox-{user_id}-{space.id}"
-
+            # 将 container_name 重构为考虑复用 e2b session 逻辑
+            
             if space.status == "suspended":
                 # 尝试恢复挂起的容器
-                session = DockerSandboxSession(
+                session = E2BSandboxSession(
                     settings=settings,
-                    container_name=container_name,
-                    host_workspace=space.host_workspace_path,
-                    host_home=space.host_home_path,
-                    host_bin=space.host_bin_path,
+                    template_id=settings.sandbox.template_id,
+                    sandbox_id=space.container_name, # E2B 把 container_name 用作 sandbox_id 存储
                 )
                 try:
                     await session.resume()
@@ -178,86 +187,89 @@ async def get_or_start_sandbox(
                     space.last_active_at = datetime.datetime.utcnow()
                     if db_session:
                         db_session.commit()
-                    logger.info("Sandbox resumed: %s", container_name)
+                    logger.info("Sandbox resumed: %s", space.container_name)
                     return session
                 except Exception as e:
                     logger.warning("Resume failed, will recreate: %s", e)
-                    # 恢复失败，销毁旧容器后重新创建
-                    await session.destroy()
+                    # 恢复失败，新建
+                    session = E2BSandboxSession(
+                        settings=settings,
+                        template_id=settings.sandbox.template_id
+                    )
+                    await session.start()
+                    space.container_name = session.sandbox_id
+                    space.status = "running"
+                    space.last_active_at = datetime.datetime.utcnow()
+                    _sandbox_registry[key] = session
+                    if db_session:
+                        db_session.commit()
+                    return session
 
             elif space.status == "running":
-                # DB 说运行中但内存没有 → Worker 可能重启过，尝试连接
-                session = DockerSandboxSession(
+                session = E2BSandboxSession(
                     settings=settings,
-                    container_name=container_name,
-                    host_workspace=space.host_workspace_path,
-                    host_home=space.host_home_path,
-                    host_bin=space.host_bin_path,
+                    template_id=settings.sandbox.template_id,
+                    sandbox_id=space.container_name,
                 )
-                # 检查容器是否真的在运行
-                if await _is_container_running(container_name):
-                    session._running = True
+                try:
+                    await session.resume() # E2B 支持用 reconnect
                     _sandbox_registry[key] = session
                     _touch_last_active(db_session, thread_id)
-                    logger.info("Sandbox reconnected: %s", container_name)
+                    logger.info("Sandbox reconnected: %s", space.container_name)
                     return session
-                else:
-                    # 容器已不在，需要重建
-                    await session.destroy()
+                except Exception:
+                    # 重建
+                    session = E2BSandboxSession(
+                        settings=settings,
+                        template_id=settings.sandbox.template_id
+                    )
+                    await session.start()
+                    space.container_name = session.sandbox_id
+                    space.status = "running"
+                    space.last_active_at = datetime.datetime.utcnow()
+                    _sandbox_registry[key] = session
+                    if db_session:
+                        db_session.commit()
+                    return session
 
-            # 空间存在但容器需要重建
-            workspace_path = space.host_workspace_path
-            home_path = space.host_home_path
-            bin_path = space.host_bin_path
             space_id = space.id
         else:
-            # ── 路径 3: 全新空间 ──
+            # 全新空间
             space_id = uuid.uuid4().hex[:16]
-            workspace_path, home_path, bin_path = _ensure_persistent_dirs(
-                data_root, user_id, space_id
+            session = E2BSandboxSession(
+                settings=settings,
+                template_id=settings.sandbox.template_id
             )
+            await session.start()
 
-        container_name = f"oh-sandbox-{user_id}-{space_id}"
+            # 解析持久化映射路径 (即使是 E2B 也维持本地镜像目录，用于加速读取和 API 导出)
+            data_root = _resolve_sandbox_data_root(settings)
+            ws_path, hm_path, bin_path = _ensure_persistent_dirs(data_root, user_id, space_id)
 
-        # 创建或更新 DB 记录
-        if db_session is not None:
-            try:
-                from models import SandboxSpace
-                if space is None:
+            # 创建或更新 DB 记录
+            if db_session is not None:
+                try:
+                    from models import SandboxSpace
                     space = SandboxSpace(
                         id=space_id,
                         user_id=user_id,
                         thread_id=thread_id,
-                        host_workspace_path=workspace_path,
-                        host_home_path=home_path,
-                        host_bin_path=bin_path,
-                        container_name=container_name,
+                        container_name=session.sandbox_id,
                         status="running",
+                        host_workspace_path=ws_path,
+                        host_home_path=hm_path,
+                        host_bin_path=bin_path,
                     )
                     db_session.add(space)
-                else:
-                    space.container_name = container_name
-                    space.status = "running"
-                    space.last_active_at = datetime.datetime.utcnow()
-                db_session.commit()
-            except Exception as e:
-                logger.warning("Failed to persist SandboxSpace: %s", e)
-                db_session.rollback()
-
-        # 确保持久化目录存在
-        _ensure_persistent_dirs(data_root, user_id, space_id)
-
-        # 启动容器
-        session = DockerSandboxSession(
-            settings=settings,
-            container_name=container_name,
-            host_workspace=workspace_path,
-            host_home=home_path,
-            host_bin=bin_path,
-        )
-        await session.start()
-        _sandbox_registry[key] = session
-        logger.info("Sandbox created: %s (space=%s)", container_name, space_id)
+                    db_session.commit()
+                except Exception as e:
+                    logger.warning("Failed to persist SandboxSpace: %s", e)
+                    db_session.rollback()
+                    
+            _sandbox_registry[key] = session
+            logger.info("Sandbox created: %s (space=%s)", session.sandbox_id, space_id)
+            return session
+            
         return session
 
 
@@ -309,15 +321,13 @@ async def destroy_sandbox(user_id: int, thread_id: str, db_session=None) -> None
             db_session.rollback()
 
 
-# ═══ 兼容旧接口 (供 environment.py 等模块使用) ═══
-
 async def stop_docker_sandbox() -> None:
-    """旧接口兼容：不做任何事。生命周期现在由 suspend_sandbox 管理。"""
+    """Legacy no-op function."""
     pass
 
 
 def _touch_last_active(db_session, thread_id: str) -> None:
-    """更新 SandboxSpace 的 last_active_at 时间戳。"""
+    """Update last_active_at timestamp for the sandbox space."""
     if db_session is None:
         return
     try:
@@ -328,19 +338,3 @@ def _touch_last_active(db_session, thread_id: str) -> None:
             db_session.commit()
     except Exception:
         pass
-
-
-async def _is_container_running(container_name: str) -> bool:
-    """检查 Docker 容器是否正在运行。"""
-    import shutil
-    docker = shutil.which("docker") or "docker"
-    try:
-        process = await asyncio.create_subprocess_exec(
-            docker, "inspect", "-f", "{{.State.Running}}", container_name,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=5)
-        return stdout.decode().strip() == "true"
-    except Exception:
-        return False

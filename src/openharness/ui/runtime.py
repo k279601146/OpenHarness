@@ -313,11 +313,10 @@ async def build_runtime(
         )
         engine.load_messages(restored)
 
-    # Start Docker sandbox if configured
-    if settings.sandbox.enabled and settings.sandbox.backend == "docker":
-        from openharness.sandbox.session import start_docker_sandbox
-
-        await start_docker_sandbox(settings, session_id, Path(cwd))
+    # Start Cloud sandbox if configured
+    if settings.sandbox.enabled:
+        from openharness.sandbox.session import get_or_start_sandbox
+        await get_or_start_sandbox(settings, 0, session_id)
 
     return RuntimeBundle(
         api_client=resolved_api_client,

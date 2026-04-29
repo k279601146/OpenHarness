@@ -65,13 +65,19 @@ async def create_shell_subprocess(
     """
     resolved_settings = settings or load_settings()
 
-    # Docker backend: route through docker exec
-    if resolved_settings.sandbox.enabled and resolved_settings.sandbox.backend == "docker":
+    # Cloud backend (E2B): route through e2b exec
+    if resolved_settings.sandbox.enabled and (resolved_settings.sandbox.backend == "e2b"):
         from openharness.sandbox.session import get_or_start_sandbox
 
-        # 确定 user_id 和 thread_id
+        # 彻底的路径脱敏：在发送给沙箱前，强制转换为标准 Linux 字符串
+        # 杜绝 Path() 在 Windows 宿主机上的反斜杠污染
+        safe_cwd = str(cwd).replace('\\', '/')
+        if not safe_cwd.startswith('/'):
+            safe_cwd = '/' + safe_cwd
+
+        # 确定 user_id 和 thread_id，避免使用 Path(cwd).resolve()
         resolved_user_id = user_id or 0
-        resolved_thread_id = thread_id or Path(cwd).resolve().name
+        resolved_thread_id = thread_id or safe_cwd.split('/')[-1]
 
         session = await get_or_start_sandbox(
             resolved_settings,
@@ -81,11 +87,11 @@ async def create_shell_subprocess(
         )
 
         if session is not None and session.is_running:
-            # 在 Linux 容器中始终使用 POSIX shell
-            argv = ["/bin/bash", "-lc", command]
+            # E2B 模式下，直接传递原始 command 字符串，不再包装 bash -lc
+            # 这能彻底避免 -c 参数引起的位置参数解析错误（如 $0, $1 等）
             return await session.exec_command(
-                argv,
-                cwd=cwd,
+                command,
+                cwd=safe_cwd,
                 stdin=stdin,
                 stdout=stdout,
                 stderr=stderr,
@@ -94,7 +100,7 @@ async def create_shell_subprocess(
         if resolved_settings.sandbox.fail_if_unavailable:
             from openharness.sandbox import SandboxUnavailableError
 
-            raise SandboxUnavailableError("Docker sandbox session could not be started")
+            raise SandboxUnavailableError("E2B sandbox session could not be started")
 
     # Existing srt path
     argv = resolve_shell_command(command, prefer_pty=prefer_pty)

@@ -1,6 +1,7 @@
 ---
 name: find-skills
-description: Helps users discover and install agent skills when they ask questions like "how do I do X", "find a skill for X", "is there a skill that can...", or express interest in extending capabilities. This skill should be used when the user is looking for functionality that might exist as an installable skill.
+description: 技能发现与安装专家。支持通过关键词、领域、任务类型（如 PPT 制作、自动化测试、调研报告、深度翻译）在 Marketplace 和全球生态中发现并安装新的 Agent 技能，极大扩展代理的核心能力。
+keywords: find, search, install, marketplace, ppt, extension, research, capability, ecosystem, npx skills
 ---
 
 # Find Skills
@@ -84,15 +85,29 @@ npx skills add vercel-labs/agent-skills@vercel-react-best-practices
 Learn more: https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices
 ```
 
-### Step 4: Offer to Install
+### Step 4: 安装技能 (Execute Installation)
 
-If the user wants to proceed, you can install the skill for them:
+If the user wants to proceed, install the skill. **Must use `-g` flag for global persistence in sandbox.**
 
 ```bash
 npx skills add <owner/repo@skill> -g -y
 ```
 
-The `-g` flag installs globally (user-level) and `-y` skips confirmation prompts.
+### Step 5: 结果反馈校验 (Verify & Validate)
+
+**CRITICAL**: NEVER assume installation succeeded just because the command finished. You MUST parse the output and perform secondary verification.
+
+1.  **检查输出关键字 (Parse Output)**:
+    - 成功标识：Look for `Successfully installed`, `Added skill`, or `Done`.
+    - 失败标识：`Error:`, `Failed to fetch`, `Skill not found`.
+2.  **原子化二次核验 (Secondary Check)**:
+    - **方式 A (推荐)**: 检查 `~/.skills/` 目录下是否存在对应文件夹及 `SKILL.md`。
+    - **方式 B**: 使用 `list` 命令确认。
+
+3.  **确认就绪 (Final Confirmation)**: 只有在核验通过后，才告知用户“安装成功”，并立即调用 `skill(name='...')` 加载指令。
+
+
+
 
 ## Common Skill Categories
 

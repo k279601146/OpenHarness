@@ -33,23 +33,32 @@ class FileReadTool(BaseTool):
         arguments: FileReadToolInput,
         context: ToolExecutionContext,
     ) -> ToolResult:
-        from openharness.sandbox.session import get_docker_sandbox
-        session = get_docker_sandbox()
+        from openharness.sandbox.session import get_sandbox_session
+        session = get_sandbox_session()
 
         if session:
-            # 路径重定向：将容器路径映射回宿主机实际物理路径
-            path = session.map_to_host_path(arguments.path)
-            
-            from openharness.sandbox.path_validator import validate_sandbox_path
-            
-            # 在沙箱模式下，允许访问 workspace, user-home 和 local-bin
-            extra_allowed = [session.host_workspace, session.host_home, session.host_bin]
-            allowed, reason = validate_sandbox_path(path, Path(session.host_workspace), extra_allowed=extra_allowed)
-            
-            if not allowed:
-                return ToolResult(output=f"Sandbox: {reason}", is_error=True)
+            # E2B 沙箱模式：直接使用 sandbox.files API 读文件
+            try:
+                # 确保相对路径相对于 context.cwd (/home/user) 解析
+                container_path = arguments.path.replace("\\", "/")
+                if not container_path.startswith("/"):
+                    base_cwd = str(context.cwd).replace("\\", "/")
+                    container_path = f"{base_cwd}/{container_path}".replace("//", "/")
+                
+                # E2B 的 python sdk 默认读出可能是 str/bytes
+                text = await session.read_file(container_path)
+            except Exception as e:
+                return ToolResult(output=f"Sandbox file read error: {e}", is_error=True)
+                
+            if isinstance(text, bytes):
+                if b"\x00" in text:
+                    return ToolResult(output=f"Binary file cannot be read as text: {arguments.path}", is_error=True)
+                text = text.decode("utf-8", errors="replace")
+                
+            lines = text.splitlines()
         else:
-            # MVP 安全模式：使用白名单验证
+            # MVP 安全模式：使用白名单验证本地文件系统
+            path = _resolve_path(Path(context.cwd), arguments.path)
             from openharness.tools.safe_file_validator import validate_safe_file_operation
             
             is_safe, error_msg = validate_safe_file_operation(
@@ -60,17 +69,18 @@ class FileReadTool(BaseTool):
             if not is_safe:
                 return ToolResult(output=error_msg, is_error=True)
 
-        if not path.exists():
-            return ToolResult(output=f"File not found: {path}", is_error=True)
-        if path.is_dir():
-            return ToolResult(output=f"Cannot read directory: {path}", is_error=True)
+            if not path.exists():
+                return ToolResult(output=f"File not found: {path}", is_error=True)
+            if path.is_dir():
+                return ToolResult(output=f"Cannot read directory: {path}", is_error=True)
 
-        raw = path.read_bytes()
-        if b"\x00" in raw:
-            return ToolResult(output=f"Binary file cannot be read as text: {path}", is_error=True)
+            raw = path.read_bytes()
+            if b"\x00" in raw:
+                return ToolResult(output=f"Binary file cannot be read as text: {path}", is_error=True)
 
-        text = raw.decode("utf-8", errors="replace")
-        lines = text.splitlines()
+            text = raw.decode("utf-8", errors="replace")
+            lines = text.splitlines()
+
         selected = lines[arguments.offset : arguments.offset + arguments.limit]
         numbered = [
             f"{arguments.offset + index + 1:>6}\t{line}"

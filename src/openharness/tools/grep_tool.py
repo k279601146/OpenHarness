@@ -37,14 +37,12 @@ class GrepTool(BaseTool):
     async def execute(self, arguments: GrepToolInput, context: ToolExecutionContext) -> ToolResult:
         root = _resolve_path(context.cwd, arguments.root) if arguments.root else context.cwd
 
-        from openharness.sandbox.session import is_docker_sandbox_active
+        from openharness.sandbox.session import get_sandbox_session
+        session = get_sandbox_session()
 
-        if is_docker_sandbox_active():
-            from openharness.sandbox.path_validator import validate_sandbox_path
-
-            allowed, reason = validate_sandbox_path(root, context.cwd)
-            if not allowed:
-                return ToolResult(output=f"Sandbox: {reason}", is_error=True)
+        if session and session.is_running:
+            # E2B 模式下沙箱是隔离的，通常我们只关心从根目录去查文件
+            pass
         else:
             # MVP 安全限制：禁止访问工作区外
             if not str(root.resolve()).startswith(str(context.cwd.resolve())):
@@ -195,15 +193,13 @@ async def _rg_grep(
     # `--` ensures patterns like `-foo` aren't parsed as flags.
     cmd.extend(["--", pattern, "."])
 
-    from openharness.sandbox.session import get_docker_sandbox
+    from openharness.sandbox.session import get_sandbox_session
 
-    session = get_docker_sandbox()
+    session = get_sandbox_session()
     if session is not None and session.is_running:
         process = await session.exec_command(
             cmd,
-            cwd=root,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            cwd=str(root).replace("\\", "/"),
         )
     else:
         process = await asyncio.create_subprocess_exec(
@@ -263,15 +259,13 @@ async def _rg_grep_file(
         cmd.append("-i")
     cmd.extend(["--", pattern, path.name])
 
-    from openharness.sandbox.session import get_docker_sandbox
+    from openharness.sandbox.session import get_sandbox_session
 
-    session = get_docker_sandbox()
+    session = get_sandbox_session()
     if session is not None and session.is_running:
         process = await session.exec_command(
             cmd,
-            cwd=path.parent,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            cwd=str(path.parent).replace("\\", "/"),
         )
     else:
         process = await asyncio.create_subprocess_exec(

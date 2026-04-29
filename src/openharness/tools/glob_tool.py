@@ -31,24 +31,20 @@ class GlobTool(BaseTool):
         return True
 
     async def execute(self, arguments: GlobToolInput, context: ToolExecutionContext) -> ToolResult:
-        from openharness.sandbox.session import get_docker_sandbox
-        session = get_docker_sandbox()
+        from openharness.sandbox.session import get_sandbox_session
+        session = get_sandbox_session()
 
         if session:
-            # 路径重定向：将容器路径映射回宿主机实际物理路径
-            root = session.map_to_host_path(arguments.root or ".")
-            
-            from openharness.sandbox.path_validator import validate_sandbox_path
-            
-            # 在沙箱模式下，允许在 workspace, user-home 和 local-bin 根目录下进行查找
-            extra_allowed = [session.host_workspace, session.host_home, session.host_bin]
-            allowed, reason = validate_sandbox_path(root, Path(session.host_workspace), extra_allowed=extra_allowed)
-            
-            if not allowed:
-                return ToolResult(output=f"Sandbox: {reason}", is_error=True)
+            # E2B 沙箱模式下直接在给定的容器容器目录上 glob
+            root_path = arguments.root or str(context.cwd) or "/home/user"
+            root_path = root_path.replace("\\", "/")
+            if not root_path.startswith("/"):
+                base_cwd = str(context.cwd).replace("\\", "/")
+                root_path = f"{base_cwd}/{root_path}".replace("//", "/")
+            root = Path(root_path)
         else:
-            # 对于 glob，我们主要验证根目录是否在工作区内
-            # 由于 glob 可能涉及多个文件，这里仅验证 root 边界
+            # MVP 安全模式：使用白名单验证本地文件系统
+            root = _resolve_path(context.cwd, arguments.root)
             if not str(root.resolve()).startswith(str(context.cwd.resolve())):
                 return ToolResult(
                     output=f"❌ 安全限制：不允许访问工作区外的目录 ({root})", 
@@ -107,15 +103,13 @@ async def _glob(root: Path, pattern: str, *, limit: int) -> list[str]:
             cmd.append("--hidden")
         cmd.extend(["--glob", clean_pattern, "."])
 
-        from openharness.sandbox.session import get_docker_sandbox
+        from openharness.sandbox.session import get_sandbox_session
 
-        session = get_docker_sandbox()
+        session = get_sandbox_session()
         if session is not None and session.is_running:
             process = await session.exec_command(
                 cmd,
-                cwd=root,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                cwd=str(root).replace("\\", "/"),
             )
         else:
             process = await asyncio.create_subprocess_exec(

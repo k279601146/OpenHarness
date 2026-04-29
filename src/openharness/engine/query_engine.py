@@ -40,7 +40,12 @@ class QueryEngine:
         self._api_client = api_client
         self._tool_registry = tool_registry
         self._permission_checker = permission_checker
-        self._cwd = Path(cwd).resolve()
+        
+        # 彻底的路径脱敏：放弃使用平台相关的 Path，强制使用 PurePosixPath。
+        # 这样无论在什么操作系统上运行，cwd 都会被当做纯粹的 Linux 路径处理，永远不会出现反斜杠或盘符污染。
+        from pathlib import PurePosixPath
+        self._cwd = PurePosixPath(str(cwd).replace('\\', '/'))
+        
         self._model = model
         self._system_prompt = system_prompt
         self._max_tokens = max_tokens

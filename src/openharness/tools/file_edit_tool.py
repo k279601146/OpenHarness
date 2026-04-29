@@ -30,23 +30,44 @@ class FileEditTool(BaseTool):
         arguments: FileEditToolInput,
         context: ToolExecutionContext,
     ) -> ToolResult:
-        from openharness.sandbox.session import get_docker_sandbox
-        session = get_docker_sandbox()
+        from openharness.sandbox.session import get_sandbox_session
+        session = get_sandbox_session()
 
         if session:
-            # 路径重定向：将容器路径映射回宿主机实际物理路径
-            path = session.map_to_host_path(arguments.path)
-            
-            from openharness.sandbox.path_validator import validate_sandbox_path
-            
-            # 在沙箱模式下，允许编辑 workspace 和 user-home
-            extra_allowed = [session.host_workspace, session.host_home]
-            allowed, reason = validate_sandbox_path(path, Path(session.host_workspace), extra_allowed=extra_allowed)
-            
-            if not allowed:
-                return ToolResult(output=f"Sandbox: {reason}", is_error=True)
+            try:
+                # 确保相对路径相对于 context.cwd (/home/user) 解析
+                container_path = arguments.path.replace("\\", "/")
+                if not container_path.startswith("/"):
+                    base_cwd = str(context.cwd).replace("\\", "/")
+                    container_path = f"{base_cwd}/{container_path}".replace("//", "/")
+
+                original = await session.read_file(container_path)
+            except Exception as e:
+                return ToolResult(output=f"Error reading file {arguments.path}: {e}", is_error=True)
+                
+            if isinstance(original, bytes):
+                try:
+                    original = original.decode("utf-8")
+                except UnicodeDecodeError:
+                    return ToolResult(output="Cannot edit binary file", is_error=True)
+
+            if arguments.old_str not in original:
+                return ToolResult(output="old_str was not found in the file", is_error=True)
+
+            if arguments.replace_all:
+                updated = original.replace(arguments.old_str, arguments.new_str)
+            else:
+                updated = original.replace(arguments.old_str, arguments.new_str, 1)
+
+            try:
+                await session.write_file(container_path, updated)
+            except Exception as e:
+                return ToolResult(output=f"Error writing file {container_path}: {e}", is_error=True)
+                
+            return ToolResult(output=f"Updated {container_path}")
         else:
             # MVP 安全模式：使用白名单验证
+            path = _resolve_path(Path(context.cwd), arguments.path)
             from openharness.tools.safe_file_validator import validate_safe_file_operation
             
             is_safe, error_msg = validate_safe_file_operation(
@@ -57,21 +78,20 @@ class FileEditTool(BaseTool):
             if not is_safe:
                 return ToolResult(output=error_msg, is_error=True)
 
-        if not path.exists():
-            return ToolResult(output=f"File not found: {path}", is_error=True)
+            if not path.exists():
+                return ToolResult(output=f"File not found: {path}", is_error=True)
 
-        original = path.read_text(encoding="utf-8")
-        if arguments.old_str not in original:
-            return ToolResult(output="old_str was not found in the file", is_error=True)
+            original = path.read_text(encoding="utf-8")
+            if arguments.old_str not in original:
+                return ToolResult(output="old_str was not found in the file", is_error=True)
 
-        if arguments.replace_all:
-            updated = original.replace(arguments.old_str, arguments.new_str)
-        else:
-            updated = original.replace(arguments.old_str, arguments.new_str, 1)
+            if arguments.replace_all:
+                updated = original.replace(arguments.old_str, arguments.new_str)
+            else:
+                updated = original.replace(arguments.old_str, arguments.new_str, 1)
 
-        path.write_text(updated, encoding="utf-8")
-        return ToolResult(output=f"Updated {path}")
-
+            path.write_text(updated, encoding="utf-8")
+            return ToolResult(output=f"Updated {path}")
 
 def _resolve_path(base: Path, candidate: str) -> Path:
     path = Path(candidate).expanduser()

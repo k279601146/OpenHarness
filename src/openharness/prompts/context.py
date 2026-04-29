@@ -37,9 +37,12 @@ def _build_skills_section(
         extra_plugin_roots=extra_plugin_roots,
         settings=settings,
     )
-    # [Optimize] 只在全局索引中展示 logic 类型技能，避免 aesthetic 技能造成上下文污染
     all_skills = registry.list_skills()
-    logic_skills = sorted([s for s in all_skills if s.skill_type == "logic"], key=lambda s: s.name)
+    # [Optimize] 只在系统提示词索引中展示核心内置逻辑技能 (Bundled Logic)，避免 User/Plugin 技能导致上下文膨胀
+    logic_skills = sorted(
+        [s for s in all_skills if (s.skill_type == "logic" and s.source == "bundled") or s.name == "find-skills"],
+        key=lambda s: s.name
+    )
     
     if not logic_skills:
         return None
@@ -47,12 +50,18 @@ def _build_skills_section(
     lines = [
         "# Available Skills",
         "",
-        "The following core skills are available via the `skill` tool. "
-        "Invoke `skill(name=\"<skill_name>\")` to load detailed instructions when requested.",
+        "The following core skills are available via the `skill` tool. ",
+        "Invoke `skill(name=\"<skill_name>\")` to load detailed instructions (SOP).",
+        "",
+        "**原子技能消费协议 (Atomic Skill Consumption Protocol)**:",
+        "1. **发现与安装 (Discovery)**: 如果任务需要专业领域能力（如 PPT, SEO, 数据可视化），先使用 `npx skills find` 查找并 `npx skills add` 安装到沙箱。",
+        "2. **激活与阅读 (Activation)**: 安装成功后，**必须立即**使用 `skill(name=\"<skill_name>\")` 读取其 `SKILL.md`。如果 `skill` 工具提示找不到，请直接 `ls` 技能目录并 `read_file` 其中的文档。",
+        "3. **理解协议 (Understanding)**: **重要提示**：技能不是一个 API 函数。它们通常是文档、示例和脚本的集合。",
+        "4. **原生执行 (Execution)**: 严禁猜测名为 `skill_name()` 的魔法工具。请根据技能文档指引，通过 `bash` 或 `python` 执行该技能目录下的具体脚本（如 `python scripts/xxx.py`）。",
+        "5. **工作区位置**: 技能通常位于 `./skills/` 或 `./.agents/skills/` 目录下。操作前请先 `ls` 确认路径。",
         "",
         "**Note on Aesthetics**: Domain-specific aesthetic guidelines (e.g., logo design, ecommerce standards) "
-        "are not listed here. They are linked within major creative skills like `generate_image`. "
-        "Refer to those core skills to find high-fidelity visual protocols.",
+        "are not listed here but are linked within major creative skills like `generate_image`.",
         "",
     ]
     for skill in logic_skills:

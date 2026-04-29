@@ -31,12 +31,12 @@ class BashTool(BaseTool):
     async def execute(self, arguments: BashToolInput, context: ToolExecutionContext) -> ToolResult:
         cwd = context.cwd
         
-        from openharness.sandbox.session import get_docker_sandbox
-        session = get_docker_sandbox()
+        from openharness.sandbox.session import get_sandbox_session
+        session = get_sandbox_session()
         
         if session and arguments.cwd:
-            # 如果提供了自定义 cwd，将其按照沙箱映射逻辑转换
-            cwd = session.map_to_host_path(arguments.cwd)
+            # E2B 模式下，直接使用给定的容器目录
+            cwd = arguments.cwd.replace("\\", "/")
         elif arguments.cwd:
             cwd = Path(arguments.cwd).expanduser()
             if not cwd.is_absolute():

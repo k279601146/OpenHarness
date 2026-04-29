@@ -118,7 +118,7 @@ def get_environment_info(cwd: str | None = None, is_sandbox: bool = False) -> En
     sandbox_active = is_docker_sandbox_active() or is_sandbox
     
     if sandbox_active:
-        os_name, os_version = "Linux (Docker Sandbox)", "latest"
+        os_name, os_version = "Linux (Cloud Sandbox)", "latest"
     else:
         os_name, os_version = detect_os()
     
@@ -130,8 +130,8 @@ def get_environment_info(cwd: str | None = None, is_sandbox: bool = False) -> En
         os_version=os_version,
         platform_machine=platform.machine(),
         shell="bash" if sandbox_active else shell,
-        cwd="/workspace" if sandbox_active else cwd,
-        home_dir="/home/sandbox" if sandbox_active else str(Path.home()),
+        cwd="/home/user" if sandbox_active else cwd,
+        home_dir="/home/user" if sandbox_active else str(Path.home()),
         date=datetime.now(tz=timezone.utc).strftime("%Y-%m-%d"),
         python_version=platform.python_version(),
         python_executable=python_executable,
@@ -139,5 +139,5 @@ def get_environment_info(cwd: str | None = None, is_sandbox: bool = False) -> En
         is_git_repo=is_git,
         git_branch=branch,
         hostname="sandbox" if sandbox_active else platform.node(),
-        extra={"sudo": "Passwordless sudo available (ohuser)", "persistence": "Three-layer: /workspace + /home/sandbox + /usr/local/sandbox-bin"} if sandbox_active else {}
+        extra={"sudo": "Passwordless sudo available (user)", "persistence": "Standardized: /home/user (Native Root)"} if sandbox_active else {}
     )

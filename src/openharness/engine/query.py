@@ -18,7 +18,7 @@ from openharness.api.client import (
     SupportsStreamingMessages,
 )
 from openharness.api.usage import UsageSnapshot
-from openharness.engine.messages import ConversationMessage, ToolResultBlock
+from openharness.engine.messages import ConversationMessage, TextBlock, ToolResultBlock
 from openharness.engine.stream_events import (
     AssistantReasoningDelta,
     AssistantTextDelta,
@@ -552,14 +552,24 @@ async def run_query(
                 coordinator_context_message = messages.pop()
 
         if final_message.role == "assistant" and final_message.is_effectively_empty():
-            log.warning("dropping empty assistant message from provider response")
-            yield ErrorEvent(
-                message=(
-                    "Model returned an empty assistant message. "
-                    "The turn was ignored to keep the session healthy."
-                )
-            ), usage
-            return
+            log.warning("Model returned empty assistant message. Triggering nudge/retry.")
+            
+            # 如果尚未尝试过反应式压缩，且看起来是由于上下文过长导致的空回复（Gemini 常见现象）
+            if not reactive_compact_attempted:
+                reactive_compact_attempted = True
+                yield StatusEvent(message="Model returned empty response; compacting context and retrying..."), None
+                async for event, usage in _stream_compaction(trigger="reactive", force=True):
+                    yield event, usage
+                messages, was_compacted = last_compaction_result
+                turn_count -= 1 # 重试本轮
+                continue
+
+            # 如果已经尝试过压缩还是空回复，发送一个明确的指令 (Nudge)
+            messages.append(ConversationMessage(role="user", content=[
+                TextBlock(text="[SYSTEM_NUDGE] It looks like your last response was empty. Please continue the task. If you are stuck, please think step-by-step or use a tool to proceed.")
+            ]))
+            turn_count -= 1
+            continue
 
         messages.append(final_message)
         yield AssistantTurnComplete(message=final_message, usage=usage), usage
@@ -751,21 +761,35 @@ def _resolve_permission_file_path(
     raw_input: dict[str, object],
     parsed_input: object,
 ) -> str | None:
+    import ntpath
+    import posixpath
+    from pathlib import PurePosixPath
+
+    # 根据 cwd 类型选择路径处理器，彻底解耦宿主机系统差异
+    is_posix = isinstance(cwd, PurePosixPath) or cwd.as_posix().startswith('/')
+    path_module = posixpath if is_posix else ntpath
+
     for key in ("file_path", "path", "root"):
         value = raw_input.get(key)
         if isinstance(value, str) and value.strip():
-            path = Path(value).expanduser()
-            if not path.is_absolute():
-                path = cwd / path
-            return str(path.resolve())
+            # 基础路径拼接逻辑
+            p_str = value.replace('\\', '/') if is_posix else value
+            if not path_module.isabs(p_str):
+                # 显式拼接，避免 Path() 对象在 Windows 上的自动转换
+                full_path = path_module.join(str(cwd).replace('\\', '/'), p_str)
+            else:
+                full_path = p_str
+            return path_module.normpath(full_path)
 
     for attr in ("file_path", "path", "root"):
         value = getattr(parsed_input, attr, None)
         if isinstance(value, str) and value.strip():
-            path = Path(value).expanduser()
-            if not path.is_absolute():
-                path = cwd / path
-            return str(path.resolve())
+            p_str = value.replace('\\', '/') if is_posix else value
+            if not path_module.isabs(p_str):
+                full_path = path_module.join(str(cwd).replace('\\', '/'), p_str)
+            else:
+                full_path = p_str
+            return path_module.normpath(full_path)
 
     return None
 

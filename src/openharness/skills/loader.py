@@ -18,10 +18,24 @@ logger = logging.getLogger(__name__)
 
 
 def get_user_skills_dir() -> Path:
-    """Return the user skills directory."""
+    """Return the primary user skills directory (~/.openharness/skills)."""
     path = get_config_dir() / "skills"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def get_community_skills_dir() -> Path:
+    """Return the community standard skills directory (~/.agents/skills)."""
+    return Path.home() / ".agents" / "skills"
+
+
+def get_saas_skill_dirs(data_root: str | Path, user_id: str | int) -> list[Path]:
+    """Return the list of skill directories for a SaaS user based on their data root."""
+    base = Path(data_root) / str(user_id) / "shared_assets" / "user-home"
+    return [
+        base / ".skills",
+        base / ".agents" / "skills",
+    ]
 
 
 def load_skill_registry(
@@ -30,14 +44,15 @@ def load_skill_registry(
     extra_skill_dirs: Iterable[str | Path] | None = None,
     extra_plugin_roots: Iterable[str | Path] | None = None,
     settings=None,
+    normalize_path_func: callable | None = None,
 ) -> SkillRegistry:
     """Load bundled and user-defined skills."""
     registry = SkillRegistry()
     for skill in get_bundled_skills():
         registry.register(skill)
-    for skill in load_user_skills():
+    for skill in load_user_skills(normalize_path_func=normalize_path_func):
         registry.register(skill)
-    for skill in load_skills_from_dirs(extra_skill_dirs):
+    for skill in load_skills_from_dirs(extra_skill_dirs, normalize_path_func=normalize_path_func):
         registry.register(skill)
     if cwd is not None:
         from openharness.plugins.loader import load_plugins
@@ -51,15 +66,17 @@ def load_skill_registry(
     return registry
 
 
-def load_user_skills() -> list[SkillDefinition]:
-    """Load markdown skills from the user config directory."""
-    return load_skills_from_dirs([get_user_skills_dir()], source="user")
+def load_user_skills(normalize_path_func: callable | None = None) -> list[SkillDefinition]:
+    """Load markdown skills from all standard user config directories."""
+    dirs = [get_user_skills_dir(), get_community_skills_dir()]
+    return load_skills_from_dirs(dirs, source="user", normalize_path_func=normalize_path_func)
 
 
 def load_skills_from_dirs(
     directories: Iterable[str | Path] | None,
     *,
     source: str = "user",
+    normalize_path_func: callable | None = None,
 ) -> list[SkillDefinition]:
     """Load markdown skills from one or more directories.
 
@@ -86,13 +103,19 @@ def load_skills_from_dirs(
             content = path.read_text(encoding="utf-8")
             default_name = path.parent.name
             name, description = _parse_skill_markdown(default_name, content)
+            
+            # 路径脱敏：如果在沙箱模式下，将宿主机物理路径转换为容器内路径
+            reported_path = str(path)
+            if normalize_path_func:
+                reported_path = normalize_path_func(path)
+                
             skills.append(
                 SkillDefinition(
                     name=name,
                     description=description,
                     content=content,
                     source=source,
-                    path=str(path),
+                    path=reported_path,
                 )
             )
     return skills

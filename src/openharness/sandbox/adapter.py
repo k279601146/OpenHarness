@@ -109,7 +109,7 @@ def wrap_command_for_sandbox(
 ) -> tuple[list[str], Path | None]:
     """Wrap an argv list with ``srt`` when sandboxing is active."""
     resolved_settings = settings or load_settings()
-    if resolved_settings.sandbox.backend == "docker":
+    if resolved_settings.sandbox.backend == "e2b":
         return command, None
     availability = get_sandbox_availability(resolved_settings)
     if not availability.active:

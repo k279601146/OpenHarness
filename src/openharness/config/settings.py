@@ -84,28 +84,20 @@ class SandboxFilesystemSettings(BaseModel):
     deny_write: list[str] = Field(default_factory=list)
 
 
-class DockerSandboxSettings(BaseModel):
-    """Docker-specific sandbox configuration."""
-
-    image: str = "openharness-sandbox:v5"
-    auto_build_image: bool = True
-    cpu_limit: float = 0.0
-    memory_limit: str = ""
-    extra_mounts: list[str] = Field(default_factory=list)
-    extra_env: dict[str, str] = Field(default_factory=dict)
 
 
 class SandboxSettings(BaseModel):
     """Sandbox-runtime integration settings."""
 
     enabled: bool = True
-    backend: str = "docker"
+    backend: str = "e2b"
     fail_if_unavailable: bool = True
     enabled_platforms: list[str] = Field(default_factory=list)
     network: SandboxNetworkSettings = Field(default_factory=SandboxNetworkSettings)
     filesystem: SandboxFilesystemSettings = Field(default_factory=SandboxFilesystemSettings)
-    docker: DockerSandboxSettings = Field(default_factory=DockerSandboxSettings)
-    # 沙箱持久化根目录 (生产: /opt/manus/sandbox-data, 开发: 项目内 sandbox-data)
+    # E2B 模板 ID
+    template_id: str = "nlhz8vlwyupq845jsdg9"
+    # 沙箱持久化根目录 (Legacy / mapping)
     sandbox_data_root: str = ""
     # 闲置超时自动销毁 (秒)
     idle_timeout_seconds: int = 300
@@ -826,7 +818,8 @@ def _apply_env_overrides(settings: Settings) -> Settings:
     sandbox_enabled = os.environ.get("OPENHARNESS_SANDBOX_ENABLED")
     sandbox_fail = os.environ.get("OPENHARNESS_SANDBOX_FAIL_IF_UNAVAILABLE")
     sandbox_backend = os.environ.get("OPENHARNESS_SANDBOX_BACKEND")
-    sandbox_docker_image = os.environ.get("OPENHARNESS_SANDBOX_DOCKER_IMAGE")
+    sandbox_template = os.environ.get("E2B_TEMPLATE_ID")
+    
     sandbox_updates: dict[str, Any] = {}
     if sandbox_enabled is not None:
         sandbox_updates["enabled"] = _parse_bool_env(sandbox_enabled)
@@ -834,10 +827,9 @@ def _apply_env_overrides(settings: Settings) -> Settings:
         sandbox_updates["fail_if_unavailable"] = _parse_bool_env(sandbox_fail)
     if sandbox_backend is not None:
         sandbox_updates["backend"] = sandbox_backend
-    if sandbox_docker_image is not None:
-        sandbox_updates["docker"] = settings.sandbox.docker.model_copy(
-            update={"image": sandbox_docker_image}
-        )
+    if sandbox_template is not None:
+        sandbox_updates["template_id"] = sandbox_template
+        
     if sandbox_updates:
         updates["sandbox"] = settings.sandbox.model_copy(update=sandbox_updates)
 
