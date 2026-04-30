@@ -653,8 +653,8 @@ class ReactBackendHost:
         elif provider_name == "gemini":
             families.extend(
                 [
-                    ("gemini-2.5-pro", "Gemini Pro"),
-                    ("gemini-2.5-pro", "Gemini Flash"),
+                    ("gemini-2.5-flash", "Gemini Pro"),
+                    ("gemini-2.5-flash", "Gemini Flash"),
                 ]
             )
         elif provider_name == "minimax":

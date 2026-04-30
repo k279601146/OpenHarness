@@ -38,8 +38,13 @@ class FileWriteTool(BaseTool):
                 # 确保相对路径相对于 context.cwd (/home/user) 解析
                 container_path = arguments.path.replace("\\", "/")
                 if not container_path.startswith("/"):
-                    # 使用 Posix 风格拼接
-                    base_cwd = str(context.cwd).replace("\\", "/")
+                    # E2B 沙箱内的工作目录固定为 /home/user
+                    # context.cwd 可能是 Windows 宿主机路径，不能直接用于容器路径拼接
+                    raw_cwd = str(context.cwd).replace("\\", "/")
+                    if raw_cwd.startswith("/") and ":" not in raw_cwd:
+                        base_cwd = raw_cwd
+                    else:
+                        base_cwd = "/home/user"
                     container_path = f"{base_cwd}/{container_path}".replace("//", "/")
 
                 if arguments.create_directories:

@@ -101,6 +101,8 @@ class SandboxSettings(BaseModel):
     sandbox_data_root: str = ""
     # 闲置超时自动销毁 (秒)
     idle_timeout_seconds: int = 300
+    # E2B 自动恢复 (仅当后端支持且配置了暂停时有效)
+    auto_resume: bool = True
 
 
 class ProviderProfile(BaseModel):
@@ -226,7 +228,7 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             provider="gemini",
             api_format="openai",
             auth_source="gemini_api_key",
-            default_model="gemini-2.5-pro",
+            default_model="gemini-2.5-flash",
             base_url="https://generativelanguage.googleapis.com/v1beta/openai",
         ),
         "minimax": ProviderProfile(

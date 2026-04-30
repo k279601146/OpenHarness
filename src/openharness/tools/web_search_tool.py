@@ -20,7 +20,7 @@ def _build_search_llm() -> ChatGoogleGenerativeAI:
     """
     base_url = os.getenv("OPENAI_BASE_URL")
     api_key = os.getenv("OPENAI_API_KEY")
-    model_name = os.getenv("MODEL_NAME", "gemini-2.5-pro")
+    model_name = os.getenv("MODEL_NAME", "gemini-2.5-flash")
 
     # 剥离 /v1 或 /v1beta 后缀
     if base_url:

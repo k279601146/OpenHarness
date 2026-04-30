@@ -63,7 +63,14 @@ class E2BSandboxSession:
                 # E2B SDK 的创键操作是阻塞的，使用 executor 避免阻塞事件循环
                 self._sandbox = await loop.run_in_executor(
                     None, 
-                    lambda: Sandbox.create(self.template_id, timeout=3600)
+                    lambda: Sandbox.create(
+                        self.template_id, 
+                        timeout=self.settings.sandbox.idle_timeout_seconds,
+                        lifecycle={
+                            "on_timeout": "pause",
+                            "auto_resume": self.settings.sandbox.auto_resume,
+                        }
+                    )
                 )
                 self.sandbox_id = self._sandbox.sandbox_id
                 logger.info(f"E2B sandbox started: {self.sandbox_id}")
@@ -98,7 +105,7 @@ class E2BSandboxSession:
             try:
                 self._sandbox = await loop.run_in_executor(
                     None,
-                    lambda: Sandbox.reconnect(self.sandbox_id)
+                    lambda: Sandbox.connect(self.sandbox_id)
                 )
                 logger.info(f"E2B sandbox resumed: {self.sandbox_id}")
                 return
@@ -118,7 +125,7 @@ class E2BSandboxSession:
         elif self.sandbox_id:
             from e2b_code_interpreter import Sandbox
             try:
-                sbx = Sandbox.reconnect(self.sandbox_id)
+                sbx = Sandbox.connect(self.sandbox_id)
                 sbx.kill()
             except Exception:
                 pass
@@ -193,6 +200,7 @@ class E2BSandboxSession:
         # 我们在 bootstrap 中直接将 /usr/local 等原生 Node 安装目录授权给 user 用户。
         # 因此，此处无需再向 PATH 中生硬注入任何路径，保持 E2B 原生环境变量的最佳状态即可。
         envs = env.copy() if env else {}
+        # envs["NODE_TLS_REJECT_UNAUTHORIZED"] = "0"
 
         # 兼容老框架中的 async. e2b python 可能是 sync 或者是 e2b-code-interpreter.
         # e2b 提供 AsyncSandbox 吗？如果是 sync 必须用 run_in_executor
@@ -233,11 +241,10 @@ class E2BSandboxSession:
             # E2B sandbox.files.read() 返回的可能是字节或字符串
             content = await loop.run_in_executor(
                 None,
-                lambda: self._sandbox.files.read(container_path)
+                lambda: self._sandbox.files.read(container_path, format="bytes")
             )
-            if isinstance(content, str):
-                return content.encode('utf-8')
-            return content
+            # format="bytes" 保证返回 bytearray，直接返回即可
+            return bytes(content) if isinstance(content, (bytearray, memoryview)) else content
         except Exception as e:
             logger.error(f"Failed to read file {container_path} from E2B: {e}")
             raise SandboxUnavailableError(f"Failed to read file: {e}")

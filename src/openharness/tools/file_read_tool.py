@@ -44,7 +44,13 @@ class FileReadTool(BaseTool):
                 if container_path.startswith("~/"):
                     container_path = "/home/user" + container_path[1:]
                 elif not container_path.startswith("/"):
-                    base_cwd = str(context.cwd).replace("\\", "/")
+                    # E2B 沙箱内的工作目录固定为 /home/user
+                    # context.cwd 可能是 Windows 宿主机路径，不能直接用于容器路径拼接
+                    raw_cwd = str(context.cwd).replace("\\", "/")
+                    if raw_cwd.startswith("/") and ":" not in raw_cwd:
+                        base_cwd = raw_cwd
+                    else:
+                        base_cwd = "/home/user"
                     container_path = f"{base_cwd}/{container_path}".replace("//", "/")
                 
                 # E2B 的 python sdk 默认读出可能是 str/bytes

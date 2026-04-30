@@ -193,7 +193,7 @@ async def _mock_image(task_id: str, prompt: str, context: ToolExecutionContext, 
                 log.warning(f"Mock 图片下载失败: {e}")
     if not saved:
         return ToolResult(output="Mock 图片下载失败，请检查网络。", is_error=True)
-    return ToolResult(output=f"SUCCESS: (MOCK) 已模拟生成 {len(saved)} 张图片。")
+    return ToolResult(output=f"SUCCESS: (MOCK) 已模拟生成 {len(saved)} 张图片。保存文件: {[p.name for p in saved]}")
 
 
 async def _run_gemini_image(
@@ -221,7 +221,7 @@ async def _run_gemini_image(
             dest = context.cwd / f"{task_id}.png"
             await _write_binary(dest, base64.b64decode(b64))
             await notify_artifact(context, dest, prompt, "image")
-            return ToolResult(output=f"SUCCESS: 图像生成完毕，任务 ID: {task_id}。")
+            return ToolResult(output=f"SUCCESS: 图像生成完毕，任务 ID: {task_id}。保存文件: {dest.name}")
     except Exception as e:
         log.exception("GeminiImageEngine 异常")
         return ToolResult(output=f"Gemini 图片生成失败: {e}", is_error=True)
@@ -267,7 +267,7 @@ async def _run_doubao_image(
                         continue
         if not saved:
             return ToolResult(output="Doubao 未生成图像，请检查提示词合规性或 API 额度。", is_error=True)
-        return ToolResult(output=f"SUCCESS: 已生成 {len(saved)} 张图像。")
+        return ToolResult(output=f"SUCCESS: 已生成 {len(saved)} 张图像。保存路径: {[str(p) for p in saved]}")
     except Exception as e:
         log.exception("DoubaoImageEngine 异常")
         return ToolResult(output=f"Doubao 图片生成失败: {e}", is_error=True)
@@ -310,7 +310,7 @@ async def _run_openai_image(
 
         if not saved:
             return ToolResult(output="OpenAI API 未返回有效的预览图像。", is_error=True)
-        return ToolResult(output=f"SUCCESS: 已生成 {len(saved)} 张图像。")
+        return ToolResult(output=f"SUCCESS: 已生成 {len(saved)} 张图像。保存路径: {[str(p) for p in saved]}")
     except Exception as e:
         log.exception("OpenAIImageEngine 异常")
         return ToolResult(output=f"OpenAI 图片生成失败: {e}", is_error=True)
@@ -353,7 +353,7 @@ async def _mock_video(task_id: str, prompt: str, context: ToolExecutionContext) 
             res.raise_for_status()
             await _write_binary(dest, res.content)
         await notify_artifact(context, dest, prompt, "video")
-        return ToolResult(output=f"SUCCESS: (MOCK) 视频模拟创作完成，任务 ID: {task_id}。")
+        return ToolResult(output=f"SUCCESS: (MOCK) 视频模拟创作完成，任务 ID: {task_id}。保存文件: {dest.name}")
     except Exception as e:
         return ToolResult(output=f"Mock 视频下载失败: {e}", is_error=True)
 
@@ -455,6 +455,6 @@ async def _download_video(task_id: str, prompt: str, video_url: str, context: To
                 content_bytes = await res.aread()
                 await _write_binary(dest, content_bytes)
         await notify_artifact(context, dest, prompt, "video")
-        return ToolResult(output=f"SUCCESS: 视频创作完成，任务 ID: {task_id}。")
+        return ToolResult(output=f"SUCCESS: 视频创作完成，任务 ID: {task_id}。保存文件: {dest.name}")
     except Exception as e:
         return ToolResult(output=f"视频下载失败: {e}", is_error=True)

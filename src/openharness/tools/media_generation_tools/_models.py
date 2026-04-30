@@ -51,7 +51,7 @@ IMAGE_MODEL_REGISTRY: dict[str, ModelConfig] = {
     # 前端展示名: Nano Banana (基础版)
     "nano-banana": {
         "provider": "gemini",
-        "api_model": "gemini-2.5-pro-image",
+        "api_model": "gemini-2.5-flash-image",
     },
 
     # --- 字节 Doubao Seedream 系列 ---
