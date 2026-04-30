@@ -41,7 +41,9 @@ class FileReadTool(BaseTool):
             try:
                 # 确保相对路径相对于 context.cwd (/home/user) 解析
                 container_path = arguments.path.replace("\\", "/")
-                if not container_path.startswith("/"):
+                if container_path.startswith("~/"):
+                    container_path = "/home/user" + container_path[1:]
+                elif not container_path.startswith("/"):
                     base_cwd = str(context.cwd).replace("\\", "/")
                     container_path = f"{base_cwd}/{container_path}".replace("//", "/")
                 

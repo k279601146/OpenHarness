@@ -27,6 +27,7 @@ class BashTool(BaseTool):
     name = "bash"
     description = "Run a shell command in the local repository."
     input_model = BashToolInput
+    requires_sandbox = True
 
     async def execute(self, arguments: BashToolInput, context: ToolExecutionContext) -> ToolResult:
         cwd = context.cwd

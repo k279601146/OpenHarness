@@ -241,6 +241,39 @@ async def get_or_start_sandbox(
                 template_id=settings.sandbox.template_id
             )
             await session.start()
+            
+            # [Optimization] Late Startup Sync: 将本地工作区的文件同步到新启动的沙箱中
+            try:
+                # 尝试定位本地工作区
+                current = Path(__file__).resolve()
+                project_root = None
+                for parent in current.parents:
+                    if (parent / "apps").is_dir():
+                        project_root = parent
+                        break
+                
+                if project_root:
+                    local_ws = project_root / "temp_workspaces" / thread_id
+                    if local_ws.exists() and local_ws.is_dir():
+                        logger.info("Syncing local workspace %s to new sandbox...", local_ws)
+                        # 遍历本地工作区并上传文件
+                        for root, _, files in os.walk(local_ws):
+                            for file in files:
+                                local_file_path = Path(root) / file
+                                # 计算相对于本地工作区的相对路径
+                                rel_path = local_file_path.relative_to(local_ws)
+                                sandbox_path = f"/home/user/{rel_path.as_posix()}"
+                                
+                                try:
+                                    content = local_file_path.read_bytes()
+                                    if hasattr(session, "write_file_binary"):
+                                        await session.write_file_binary(sandbox_path, content)
+                                    elif hasattr(session, "upload"):
+                                        await session.upload(sandbox_path, content)
+                                except Exception as fe:
+                                    logger.warning("Failed to sync file %s: %s", file, fe)
+            except Exception as se:
+                logger.warning("Late Startup Sync failed: %s", se)
 
             # 解析持久化映射路径 (即使是 E2B 也维持本地镜像目录，用于加速读取和 API 导出)
             data_root = _resolve_sandbox_data_root(settings)

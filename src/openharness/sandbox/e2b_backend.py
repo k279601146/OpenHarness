@@ -63,7 +63,7 @@ class E2BSandboxSession:
                 # E2B SDK 的创键操作是阻塞的，使用 executor 避免阻塞事件循环
                 self._sandbox = await loop.run_in_executor(
                     None, 
-                    lambda: Sandbox.create(self.template_id)
+                    lambda: Sandbox.create(self.template_id, timeout=3600)
                 )
                 self.sandbox_id = self._sandbox.sandbox_id
                 logger.info(f"E2B sandbox started: {self.sandbox_id}")
@@ -220,7 +220,9 @@ class E2BSandboxSession:
     async def read_file(self, container_path: str) -> str:
         """读取文件为文本字符串"""
         content = await self.read_file_binary(container_path)
-        return content.decode('utf-8')
+        if isinstance(content, bytes):
+            return content.decode('utf-8', errors='replace')
+        return content
 
     async def read_file_binary(self, container_path: str) -> bytes:
         """读取文件为原始二进制字节流"""
@@ -228,17 +230,25 @@ class E2BSandboxSession:
             raise SandboxUnavailableError()
         loop = asyncio.get_event_loop()
         try:
-            # E2B sandbox.files.read() 返回的是字节
+            # E2B sandbox.files.read() 返回的可能是字节或字符串
             content = await loop.run_in_executor(
                 None,
                 lambda: self._sandbox.files.read(container_path)
             )
+            if isinstance(content, str):
+                return content.encode('utf-8')
             return content
         except Exception as e:
             logger.error(f"Failed to read file {container_path} from E2B: {e}")
             raise SandboxUnavailableError(f"Failed to read file: {e}")
         
     async def write_file(self, container_path: str, content: str) -> None:
+        if not self._sandbox:
+            raise SandboxUnavailableError()
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: self._sandbox.files.write(container_path, content))
+
+    async def write_file_binary(self, container_path: str, content: bytes) -> None:
         if not self._sandbox:
             raise SandboxUnavailableError()
         loop = asyncio.get_event_loop()

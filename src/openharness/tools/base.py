@@ -33,6 +33,11 @@ class BaseTool(ABC):
     name: str
     description: str
     input_model: type[BaseModel]
+    
+    # [Optimize] 显式标记工具是否必须在沙箱中运行
+    # False: 默认在宿主机执行（节省资源）
+    # True: 必须启动/使用 E2B 沙箱（安全、隔离、环境依赖）
+    requires_sandbox: bool = False
 
     @abstractmethod
     async def execute(self, arguments: BaseModel, context: ToolExecutionContext) -> ToolResult:

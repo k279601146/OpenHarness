@@ -69,9 +69,9 @@ class AgentTool(BaseTool):
         if def_model == "inherit":
             def_model = None
             
-        settings.model = arguments.model or def_model or os.getenv("DEFAULT_MODEL", "gemini-2.5-flash")
+        settings.model = arguments.model or def_model or os.getenv("DEFAULT_MODEL", "gemini-2.5-pro")
         if settings.model == "inherit":
-            settings.model = os.getenv("DEFAULT_MODEL", "gemini-2.5-flash")
+            settings.model = os.getenv("DEFAULT_MODEL", "gemini-2.5-pro")
             
         settings.permission.mode = PermissionMode.FULL_AUTO
 

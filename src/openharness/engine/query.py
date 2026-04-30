@@ -714,6 +714,21 @@ async def _execute_tool_call(
             )
 
     log.debug("executing %s ...", tool_name)
+    
+    # [Optimize] Just-in-Time 沙箱按需启动策略 ( manus-style )
+    if getattr(tool, "requires_sandbox", False):
+        from openharness.sandbox.session import get_active_sandbox, get_or_start_sandbox
+        user_id = context.tool_metadata.get("user_id")
+        thread_id = context.tool_metadata.get("thread_id")
+        settings = context.tool_metadata.get("settings")
+        db = context.tool_metadata.get("db_session")
+        
+        if user_id and thread_id and settings:
+            if not get_active_sandbox(int(user_id), thread_id):
+                log.info("Tool '%s' requires sandbox. Escalating to E2B...", tool_name)
+                # 启动并执行首次同步 (已经在 session.py 中实现同步逻辑)
+                await get_or_start_sandbox(settings, int(user_id), thread_id, db_session=db)
+
     t0 = time.monotonic()
     result = await tool.execute(
         parsed_input,

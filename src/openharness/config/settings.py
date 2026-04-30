@@ -226,7 +226,7 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             provider="gemini",
             api_format="openai",
             auth_source="gemini_api_key",
-            default_model="gemini-2.5-flash",
+            default_model="gemini-2.5-pro",
             base_url="https://generativelanguage.googleapis.com/v1beta/openai",
         ),
         "minimax": ProviderProfile(

@@ -87,11 +87,16 @@ async def create_shell_subprocess(
         )
 
         if session is not None and session.is_running:
-            # E2B 模式下，直接传递原始 command 字符串，不再包装 bash -lc
-            # 这能彻底避免 -c 参数引起的位置参数解析错误（如 $0, $1 等）
+            # SaaS 模式下，沙箱内部统一使用 /home/user 作为根
+            # 无论宿主机的路径是什么，进入沙箱后都应该映射到其标准工作区
+            target_cwd = "/home/user"
+            
+            # 如果原始 cwd 包含子目录（相对于 session 根），可以尝试保留子路径
+            # 但在大多数 SaaS 任务中，直接用 /home/user 最稳健
+            
             return await session.exec_command(
                 command,
-                cwd=safe_cwd,
+                cwd=target_cwd,
                 stdin=stdin,
                 stdout=stdout,
                 stderr=stderr,

@@ -85,8 +85,17 @@ async def notify_artifact(
     hook = context.metadata.get("hook")
     if not hook:
         return
-    api_url = os.getenv("NEXT_PUBLIC_API_URL", "http://localhost:8000")
-    preview_url = f"{api_url}/api/v1/tasks/files?path={file_path}"
+    
+    # 获取任务 ID
+    task_id = context.metadata.get("thread_id")
+    
+    # 构建基础预览 URL (兜底方案)
+    # 注意：SaaS 层的 hook.on_artifact 会拦截并重写为更简洁的 /artifacts/ 路径
+    filename = os.path.basename(str(file_path))
+    preview_url = f"/api/v1/tasks/files?path={filename}"
+    if task_id:
+        preview_url += f"&task_id={task_id}"
+        
     prefix = "Generated image: " if artifact_type == "image" else "Generated video: "
     await hook.on_artifact(
         file_path=str(file_path),
@@ -98,6 +107,39 @@ async def notify_artifact(
 # ===================================================================
 # 图片生成引擎
 # ===================================================================
+
+async def _write_binary(dest, content_bytes: bytes):
+    # 0. 确保 dest 是一个具体的 Path 对象，而不是 PurePath
+    local_dest = Path(str(dest))
+
+    # 1. 尝试本地写入 (宿主机)
+    try:
+        # 确保父目录存在
+        local_dest.parent.mkdir(parents=True, exist_ok=True)
+        local_dest.write_bytes(content_bytes)
+        log.info(f"Written binary locally: {local_dest}")
+    except Exception as e:
+        log.debug(f"Local write skipped or failed (might be remote path): {e}")
+
+    # 2. 尝试同步到沙箱 (E2B)
+    try:
+        from openharness.sandbox.session import get_sandbox_session
+        session = get_sandbox_session()
+        if session and session.is_running:
+            # 获取纯文件名，确保写入沙箱的 /home/user 根目录
+            filename = os.path.basename(str(dest))
+            sandbox_path = f"/home/user/{filename}"
+            if hasattr(session, "write_file_binary"):
+                await session.write_file_binary(sandbox_path, content_bytes)
+                log.info(f"Synced binary to Sandbox: {sandbox_path}")
+            elif hasattr(session, "upload"):
+                await session.upload(sandbox_path, content_bytes)
+        elif not os.path.exists(local_dest):
+            # 如果本地没写成功且没沙箱，才报错
+            raise RuntimeError(f"Cannot write to {dest}: not a local path and no sandbox session available.")
+    except Exception as e:
+        log.warning(f"Failed to sync binary to sandbox: {e}")
+
 
 async def run_image_generation(
     *,
@@ -144,7 +186,7 @@ async def _mock_image(task_id: str, prompt: str, context: ToolExecutionContext, 
             try:
                 res = await client.get(url)
                 res.raise_for_status()
-                dest.write_bytes(res.content)
+                await _write_binary(dest, res.content)
                 saved.append(dest)
                 await notify_artifact(context, dest, prompt, "image")
             except Exception as e:
@@ -177,7 +219,7 @@ async def _run_gemini_image(
             if not b64:
                 return ToolResult(output="Gemini API 未返回图像数据。", is_error=True)
             dest = context.cwd / f"{task_id}.png"
-            dest.write_bytes(base64.b64decode(b64))
+            await _write_binary(dest, base64.b64decode(b64))
             await notify_artifact(context, dest, prompt, "image")
             return ToolResult(output=f"SUCCESS: 图像生成完毕，任务 ID: {task_id}。")
     except Exception as e:
@@ -218,7 +260,7 @@ async def _run_doubao_image(
                             idx = event.get("image_index", len(saved))
                             if b64:
                                 dest = context.cwd / f"{task_id}_{idx}.png"
-                                dest.write_bytes(base64.b64decode(b64))
+                                await _write_binary(dest, base64.b64decode(b64))
                                 saved.append(dest)
                                 await notify_artifact(context, dest, prompt, "image")
                     except Exception:
@@ -255,11 +297,11 @@ async def _run_openai_image(
                 dest = context.cwd / (f"{task_id}_{idx}.png" if len(data_list) > 1 else f"{task_id}.png")
 
                 if b64:
-                    dest.write_bytes(base64.b64decode(b64))
+                    await _write_binary(dest, base64.b64decode(b64))
                 elif url:
                     img_res = await client.get(url)
                     img_res.raise_for_status()
-                    dest.write_bytes(img_res.content)
+                    await _write_binary(dest, img_res.content)
                 else:
                     continue
 
@@ -309,7 +351,7 @@ async def _mock_video(task_id: str, prompt: str, context: ToolExecutionContext) 
         async with httpx.AsyncClient(timeout=60.0) as client:
             res = await client.get(url)
             res.raise_for_status()
-            dest.write_bytes(res.content)
+            await _write_binary(dest, res.content)
         await notify_artifact(context, dest, prompt, "video")
         return ToolResult(output=f"SUCCESS: (MOCK) 视频模拟创作完成，任务 ID: {task_id}。")
     except Exception as e:
@@ -410,9 +452,8 @@ async def _download_video(task_id: str, prompt: str, video_url: str, context: To
         async with httpx.AsyncClient(timeout=300.0) as client:
             async with client.stream("GET", video_url) as res:
                 res.raise_for_status()
-                with open(dest, "wb") as f:
-                    async for chunk in res.aiter_bytes():
-                        f.write(chunk)
+                content_bytes = await res.aread()
+                await _write_binary(dest, content_bytes)
         await notify_artifact(context, dest, prompt, "video")
         return ToolResult(output=f"SUCCESS: 视频创作完成，任务 ID: {task_id}。")
     except Exception as e:
