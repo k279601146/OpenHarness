@@ -13,22 +13,31 @@ class SkillRegistry:
 
     def register(self, skill: SkillDefinition) -> None:
         """Register one skill."""
-        self._skills[skill.name] = skill
+        for key in (skill.name, skill.command_name, skill.display_name, *skill.aliases):
+            if key:
+                self._skills[key] = skill
 
     def get(self, name: str) -> SkillDefinition | None:
         """Return a skill by name."""
         return self._skills.get(name)
 
     def list_skills(self) -> list[SkillDefinition]:
-        """Return all skills sorted by name."""
-        return sorted(self._skills.values(), key=lambda skill: skill.name)
+        """Return all unique skills sorted by command name."""
+        unique: dict[tuple[str, str | None], SkillDefinition] = {}
+        for skill in self._skills.values():
+            unique[(skill.source, skill.path or skill.name)] = skill
+        return sorted(unique.values(), key=lambda skill: skill.command_name or skill.name)
 
     def find_by_trigger(self, query: str) -> list[SkillDefinition]:
-        """按 triggers 匹配技能。"""
-        results = []
+        """Return skills whose trigger metadata matches *query*."""
         query_lower = query.lower()
-        for skill in self._skills.values():
-            triggers = skill.metadata.get("triggers", [])
-            if any(t.lower() in query_lower for t in triggers):
+        results: list[SkillDefinition] = []
+        for skill in self.list_skills():
+            triggers = skill.metadata.get("triggers", []) if isinstance(skill.metadata, dict) else []
+            if isinstance(triggers, str):
+                triggers = [triggers]
+            if any(str(trigger).lower() in query_lower for trigger in triggers) or any(
+                alias.lower() in query_lower for alias in skill.aliases
+            ):
                 results.append(skill)
         return results

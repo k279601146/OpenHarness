@@ -1,11 +1,20 @@
-import React, {useEffect, useState} from 'react';
-import {Box, Text, useInput} from 'ink';
+import React, {useEffect, useRef, useState} from 'react';
+import {Box, Text, useInput, useStdin} from 'ink';
 import chalk from 'chalk';
 
 import {useTheme} from '../theme/ThemeContext.js';
 import {Spinner} from './Spinner.js';
 
 const noop = (): void => {};
+const BACKSPACE_CONTROL_PATTERN = /^[\b\u007f]+$/;
+
+export function getBackspaceDeleteCount(sequence: string): number {
+	if (!sequence || !BACKSPACE_CONTROL_PATTERN.test(sequence)) {
+		return 1;
+	}
+
+	return [...sequence].length;
+}
 
 function MultilineTextInput({
 	value,
@@ -23,10 +32,45 @@ function MultilineTextInput({
 	promptColor: string;
 }): React.JSX.Element {
 	const [cursorOffset, setCursorOffset] = useState(value.length);
+	const {internal_eventEmitter} = useStdin();
+	const lastSequenceRef = useRef('');
+	// Tracks the last value this component produced via onChange. If the
+	// incoming `value` prop diverges from this, the change came from outside
+	// (tab completion, history recall, programmatic clear) and we should
+	// move the cursor to the end — otherwise the cursor stays wherever the
+	// user had it, which puts subsequent keystrokes in the middle of the
+	// newly-completed text. See HKUDS/OpenHarness#183.
+	const lastInternalValueRef = useRef<string>(value);
 
 	useEffect(() => {
-		setCursorOffset((previous) => Math.min(previous, value.length));
+		if (value === lastInternalValueRef.current) {
+			// Self-authored update; cursor was already positioned by the
+			// handler that called onChange.
+			return;
+		}
+		lastInternalValueRef.current = value;
+		setCursorOffset(value.length);
 	}, [value]);
+
+	const commitValue = (nextValue: string): void => {
+		lastInternalValueRef.current = nextValue;
+		onChange(nextValue);
+	};
+
+	useEffect(() => {
+		if (!focus) {
+			return;
+		}
+
+		const handleRawInput = (chunk: string | Buffer): void => {
+			lastSequenceRef.current = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+		};
+
+		internal_eventEmitter.on('input', handleRawInput);
+		return () => {
+			internal_eventEmitter.removeListener('input', handleRawInput);
+		};
+	}, [focus, internal_eventEmitter]);
 
 	useInput(
 		(input, key) => {
@@ -34,7 +78,14 @@ function MultilineTextInput({
 				return;
 			}
 
-			if (key.upArrow || key.downArrow || key.tab || (key.shift && key.tab) || key.escape || (key.ctrl && input === 'c')) {
+			if (
+				key.upArrow ||
+				key.downArrow ||
+				key.tab ||
+				(key.shift && key.tab) ||
+				key.escape ||
+				(key.ctrl && (input === 'c' || input === 'v'))
+			) {
 				return;
 			}
 
@@ -42,7 +93,7 @@ function MultilineTextInput({
 				if (key.shift) {
 					const nextValue = value.slice(0, cursorOffset) + '\n' + value.slice(cursorOffset);
 					setCursorOffset(cursorOffset + 1);
-					onChange(nextValue);
+					commitValue(nextValue);
 					return;
 				}
 				onSubmit?.(value);
@@ -59,22 +110,41 @@ function MultilineTextInput({
 				return;
 			}
 
-			if (key.backspace || key.delete) {
-				if (key.delete) {
-					if (cursorOffset >= value.length) {
-						return;
-					}
-					const nextValue = value.slice(0, cursorOffset) + value.slice(cursorOffset + 1);
-					onChange(nextValue);
-					return;
-				}
-
+			if (key.backspace) {
 				if (cursorOffset === 0) {
 					return;
 				}
-				const nextValue = value.slice(0, cursorOffset - 1) + value.slice(cursorOffset);
-				setCursorOffset(cursorOffset - 1);
-				onChange(nextValue);
+				const deleteCount = Math.min(cursorOffset, getBackspaceDeleteCount(lastSequenceRef.current || input));
+				const nextValue = value.slice(0, cursorOffset - deleteCount) + value.slice(cursorOffset);
+				setCursorOffset(cursorOffset - deleteCount);
+				commitValue(nextValue);
+				return;
+			}
+
+			if (key.delete) {
+				// Ink reports the common DEL byte (`0x7f`) as `delete`, even though
+				// many terminals emit it for the Backspace key. Use the raw sequence
+				// to distinguish that case from a true forward-delete escape sequence.
+				if (
+					lastSequenceRef.current === '\x7f' ||
+					lastSequenceRef.current === '\x1b\x7f' ||
+					BACKSPACE_CONTROL_PATTERN.test(lastSequenceRef.current)
+				) {
+					if (cursorOffset === 0) {
+						return;
+					}
+					const deleteCount = Math.min(cursorOffset, getBackspaceDeleteCount(lastSequenceRef.current));
+					const nextValue = value.slice(0, cursorOffset - deleteCount) + value.slice(cursorOffset);
+					setCursorOffset(cursorOffset - deleteCount);
+					commitValue(nextValue);
+					return;
+				}
+
+				if (cursorOffset >= value.length) {
+					return;
+				}
+				const nextValue = value.slice(0, cursorOffset) + value.slice(cursorOffset + 1);
+				commitValue(nextValue);
 				return;
 			}
 
@@ -84,7 +154,7 @@ function MultilineTextInput({
 
 			const nextValue = value.slice(0, cursorOffset) + input + value.slice(cursorOffset);
 			setCursorOffset(cursorOffset + input.length);
-			onChange(nextValue);
+			commitValue(nextValue);
 		},
 		{isActive: focus},
 	);
@@ -134,6 +204,8 @@ export function PromptInput({
 	toolName,
 	suppressSubmit,
 	statusLabel,
+	imageAttachmentLabels = [],
+	clipboardStatus,
 }: {
 	busy: boolean;
 	input: string;
@@ -142,6 +214,8 @@ export function PromptInput({
 	toolName?: string;
 	suppressSubmit?: boolean;
 	statusLabel?: string;
+	imageAttachmentLabels?: string[];
+	clipboardStatus?: string | null;
 }): React.JSX.Element {
 	const {theme} = useTheme();
 	const promptPrefix = busy ? '… ' : '> ';
@@ -155,11 +229,23 @@ export function PromptInput({
 					</Box>
 				</Box>
 			) : null}
+			{imageAttachmentLabels.length > 0 ? (
+				<Box>
+					<Text color={theme.colors.accent}>
+						{imageAttachmentLabels.map((label, index) => `[image ${index + 1}: ${label}]`).join(' ')}
+					</Text>
+				</Box>
+			) : null}
+			{clipboardStatus ? (
+				<Box>
+					<Text color={theme.colors.muted}>{clipboardStatus}</Text>
+				</Box>
+			) : null}
 			<MultilineTextInput
 				value={input}
 				onChange={setInput}
-				onSubmit={suppressSubmit || busy ? noop : onSubmit}
-				focus={!busy}
+				onSubmit={suppressSubmit ? noop : onSubmit}
+				focus
 				promptPrefix={promptPrefix}
 				promptColor={theme.colors.primary}
 			/>

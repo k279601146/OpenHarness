@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -29,49 +30,34 @@ class FileWriteTool(BaseTool):
         arguments: FileWriteToolInput,
         context: ToolExecutionContext,
     ) -> ToolResult:
-        from openharness.sandbox.session import get_sandbox_session
-        session = get_sandbox_session()
+        path = _resolve_path(context.cwd, arguments.path)
 
-        if session:
-            try:
-                # E2B 沙箱模式：直接使用 sandbox.files API 写文件
-                # 确保相对路径相对于 context.cwd (/home/user) 解析
-                container_path = arguments.path.replace("\\", "/")
-                if not container_path.startswith("/"):
-                    # E2B 沙箱内的工作目录固定为 /home/user
-                    # context.cwd 可能是 Windows 宿主机路径，不能直接用于容器路径拼接
-                    raw_cwd = str(context.cwd).replace("\\", "/")
-                    if raw_cwd.startswith("/") and ":" not in raw_cwd:
-                        base_cwd = raw_cwd
-                    else:
-                        base_cwd = "/home/user"
-                    container_path = f"{base_cwd}/{container_path}".replace("//", "/")
+        from openharness.sandbox.session import is_docker_sandbox_active
 
-                if arguments.create_directories:
-                    container_dir = str(Path(container_path).parent).replace("\\", "/")
-                    await session.exec_command(["mkdir", "-p", container_dir])
-                    
-                await session.write_file(container_path, arguments.content)
-                return ToolResult(output=f"Wrote {container_path}")
-            except Exception as e:
-                return ToolResult(output=f"Sandbox file write error: {e}", is_error=True)
-        else:
-            # MVP 安全模式：使用白名单验证
-            path = _resolve_path(Path(context.cwd), arguments.path)
-            from openharness.tools.safe_file_validator import validate_safe_file_operation
-            
-            is_safe, error_msg = validate_safe_file_operation(
-                str(path), 
-                str(context.cwd),
-                operation="write"
-            )
-            if not is_safe:
-                return ToolResult(output=error_msg, is_error=True)
+        if is_docker_sandbox_active():
+            from openharness.sandbox.path_validator import validate_sandbox_path
 
+            allowed, reason = validate_sandbox_path(path, context.cwd)
+            if not allowed:
+                return ToolResult(output=f"Sandbox: {reason}", is_error=True)
+
+        approval_prompt = context.metadata.get("edit_approval_prompt") if context.metadata else None
+        if approval_prompt is not None:
+            original = path.read_text(encoding="utf-8") if path.exists() else ""
+            diff_text, added, removed = _compute_diff(str(path), original, arguments.content)
+            reply = await approval_prompt(str(path), diff_text, added, removed)
+            if reply == "reject":
+                return ToolResult(output=f"Write rejected by user: {path}", is_error=True)
             if arguments.create_directories:
                 path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(arguments.content, encoding="utf-8")
-            return ToolResult(output=f"Wrote {path}")
+            stats = f"  ({_ANSI_GREEN}+{added}{_ANSI_RESET} {_ANSI_RED}-{removed}{_ANSI_RESET})"
+            return ToolResult(output=f"Wrote {path}{stats}")
+
+        if arguments.create_directories:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(arguments.content, encoding="utf-8")
+        return ToolResult(output=f"Wrote {path}")
 
 
 def _resolve_path(base: Path, candidate: str) -> Path:
@@ -79,3 +65,23 @@ def _resolve_path(base: Path, candidate: str) -> Path:
     if not path.is_absolute():
         path = base / path
     return path.resolve()
+
+
+def _compute_diff(filename: str, original: str, updated: str) -> tuple[str, int, int]:
+    diff_lines = list(
+        difflib.unified_diff(
+            original.splitlines(keepends=True),
+            updated.splitlines(keepends=True),
+            fromfile=filename,
+            tofile=filename,
+            lineterm="",
+        )
+    )
+    added = sum(1 for line in diff_lines if line.startswith("+") and not line.startswith("+++"))
+    removed = sum(1 for line in diff_lines if line.startswith("-") and not line.startswith("---"))
+    return "".join(diff_lines), added, removed
+
+
+_ANSI_GREEN = "\033[32m"
+_ANSI_RED = "\033[31m"
+_ANSI_RESET = "\033[0m"

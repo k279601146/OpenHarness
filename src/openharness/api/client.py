@@ -51,6 +51,7 @@ class ApiMessageRequest:
     system_prompt: str | list[dict[str, Any]] | None = None
     max_tokens: int = 4096
     tools: list[dict[str, Any]] = field(default_factory=list)
+    effort: str | None = None
 
 
 @dataclass(frozen=True)

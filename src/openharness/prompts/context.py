@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import functools
+import logging
 from pathlib import Path
 from typing import Iterable
 
@@ -13,12 +14,13 @@ from openharness.config.paths import (
 )
 from openharness.config.settings import Settings
 from openharness.coordinator.coordinator_mode import get_coordinator_system_prompt, is_coordinator_mode
-from openharness.memory import find_relevant_memories, load_memory_prompt
+from openharness.memory import load_memory_prompt
+from openharness.memory.relevance import format_relevant_memories, select_relevant_memories
+from openharness.memory.usage import mark_memory_used
 from openharness.personalization.rules import load_local_rules
 from openharness.prompts.claudemd import load_claude_md_prompt
 from openharness.prompts.system_prompt import build_system_prompt
 from openharness.skills.loader import load_skill_registry
-import logging
 
 logger = logging.getLogger("PromptContext")
 
@@ -37,37 +39,22 @@ def _build_skills_section(
         extra_plugin_roots=extra_plugin_roots,
         settings=settings,
     )
-    all_skills = registry.list_skills()
-    # [Optimize] 只在系统提示词索引中展示核心内置逻辑技能 (Bundled Logic)，避免 User/Plugin 技能导致上下文膨胀
-    logic_skills = sorted(
-        [s for s in all_skills if (s.skill_type == "logic" and s.source == "bundled") or s.name == "find-skills"],
-        key=lambda s: s.name
-    )
-    
-    if not logic_skills:
+    skills = [skill for skill in registry.list_skills() if not skill.disable_model_invocation]
+    if not skills:
         return None
-        
     lines = [
         "# Available Skills",
         "",
-        "The following core skills are available via the `skill` tool. ",
-        "Invoke `skill(name=\"<skill_name>\")` to load detailed instructions (SOP).",
-        "",
-        "**原子技能消费协议 (Atomic Skill Consumption Protocol)**:",
-        "1. **发现与安装 (Discovery)**: 如果任务需要专业领域能力（如 PPT, SEO, 数据可视化），先使用 `npx skills find` 查找并 `npx skills add` 安装到沙箱。",
-        "2. **激活与阅读 (Activation)**: 安装成功后，**必须立即**使用 `skill(name=\"<skill_name>\")` 读取其 `SKILL.md`。如果 `skill` 工具提示找不到，请直接 `ls` 技能目录并 `read_file` 其中的文档。",
-        "3. **理解协议 (Understanding)**: **重要提示**：技能不是一个 API 函数。它们通常是文档、示例和脚本的集合。",
-        "4. **原生执行 (Execution)**: 严禁猜测名为 `skill_name()` 的魔法工具。请根据技能文档指引，通过 `bash` 或 `python` 执行该技能目录下的具体脚本（如 `python scripts/xxx.py`）。",
-        "5. **工作区位置**: 技能通常位于 `./skills/` 或 `./.agents/skills/` 目录下。操作前请先 `ls` 确认路径。",
-        "",
-        "**Note on Aesthetics**: Domain-specific aesthetic guidelines (e.g., logo design, ecommerce standards) "
-        "are not listed here but are linked within major creative skills like `generate_image`.",
+        "The following skills are available via the `skill` tool. "
+        "When a user's request matches a skill, invoke it with `skill(name=\"<skill_name>\")` "
+        "to load detailed instructions before proceeding. "
+        "User-invocable skills can also be run directly by the user as `/<skill-name>`.",
         "",
     ]
-    for skill in logic_skills:
-        # 只保留核心名称和一句话概括，减少 Token 浪费
-        desc = skill.description.split('。')[0] if '。' in skill.description else skill.description
-        lines.append(f"- **{skill.name}**: {desc[:200]}")
+    for skill in skills:
+        command_name = skill.command_name or skill.name
+        display = f" ({skill.display_name})" if skill.display_name else ""
+        lines.append(f"- **{command_name}**{display}: {skill.description}")
     return "\n".join(lines)
 
 
@@ -77,40 +64,35 @@ def _build_delegation_section() -> str:
         [
             "# Delegation And Subagents",
             "",
-            "OpenHarness allows you to delegate complex subtasks using the `agent` tool.",
-            "This creates an isolated, concurrent context to perform parallel investigations or deep specialized work.",
+            "OpenHarness can delegate background work with the `agent` tool.",
+            "Use it when the user explicitly asks for a subagent, background worker, or parallel investigation, "
+            "or when the task clearly benefits from splitting off a focused worker.",
             "",
-            "Usage Pattern:",
+            "Default pattern:",
             '- Spawn an agent with `agent(description=..., prompt=..., subagent_type="worker")`.',
-            "- The subagent runs synchronously relative to your current reasoning step. You will naturally WAIt and receive its full output when it completes.",
-            "- Use this feature for deep dives (e.g. extensive code analysis, complex math, heavy data parsing) where splitting off a focused worker improves performance or prevents losing the main context.",
+            "- Inspect running or recorded workers with `/agents`.",
+            "- Inspect one worker in detail with `/agents show TASK_ID`.",
+            "- Send follow-up instructions with `send_message(task_id=..., message=...)`.",
+            "- Read worker output with `task_output(task_id=...)`.",
             "",
-            "Prefer a normal direct answer or standard tool call for simple tasks. Use the `agent` tool only when a task clearly benefits from cognitive isolation or parallel specialization.",
+            "Prefer a normal direct answer for simple tasks. Use subagents only when they materially help.",
         ]
     )
 
 
 @functools.lru_cache(maxsize=4)
 def _build_static_prompt_skeleton(base_dir: str) -> list[str]:
-    """
-    构建系统提示词的「静态骨架」并缓存结果。
-    """
-    logger.info(f"--- [Cache MISS] Building system prompt skeleton for: {base_dir} ---")
-    
+    """Build and cache the static skeleton of the system prompt."""
+    logger.info("--- [Cache MISS] Building system prompt skeleton for: %s ---", base_dir)
     sections: list[str] = []
-
-    # 1. 核心 Persona（基于基础目录构建）
     sections.append(build_system_prompt(cwd=base_dir))
 
-    # 2. Skills（按基础目录扫描一次，后续命中缓存）
     skills_section = _build_skills_section(base_dir)
     if skills_section:
         sections.append(skills_section)
 
-    # 3. Delegation 说明（完全静态）
     sections.append(_build_delegation_section())
 
-    # 4. 本地规则（进程级静态）
     local_rules = load_local_rules()
     if local_rules:
         sections.append(f"# Local Environment Rules\n\n{local_rules}")
@@ -125,34 +107,29 @@ def build_runtime_system_prompt(
     latest_user_prompt: str | None = None,
     extra_skill_dirs: Iterable[str | Path] | None = None,
     extra_plugin_roots: Iterable[str | Path] | None = None,
+    include_project_memory: bool = True,
 ) -> str:
     """Build the runtime system prompt with project instructions and memory."""
     if is_coordinator_mode():
-        # Coordinator 模式走独立路径，不使用缓存骨架
         sections = [get_coordinator_system_prompt()]
     else:
-        # [Optimize] 动态提取稳定级别的 cache_key
-        # SaaS 下，同一个 User 的 Session 应该共享 System Prompt Skeleton 骨架，提升 Cache 命中率
         cwd_path = Path(cwd).resolve()
         cache_key = str(cwd_path)
-        
+
         parts = cwd_path.parts
         if "sandbox-data" in parts:
             idx = parts.index("sandbox-data")
             if len(parts) > idx + 1:
-                # 定位到 .../sandbox-data/{user_id} 级别
-                cache_key = str(Path(*parts[:idx+2]))
+                cache_key = str(Path(*parts[: idx + 2]))
         elif "temp_workspaces" in parts:
             idx = parts.index("temp_workspaces")
-            cache_key = str(Path(*parts[:idx+1]))
-        
+            cache_key = str(Path(*parts[: idx + 1]))
+
         sections = list(_build_static_prompt_skeleton(cache_key))
-        logger.info(f"--- [Prompt Skeleton] Using skeleton for key: {cache_key} ---")
+        logger.info("--- [Prompt Skeleton] Using skeleton for key: %s ---", cache_key)
 
-    # --- 动态部分：每次请求都需要重新计算 ---
-
-    # 1. 环境动态信息 (放在动态部分开头，确保骨架能被缓存，但 Agent 能拿到最新时间)
     from openharness.prompts.environment import get_environment_info
+
     env_info = get_environment_info(cwd, is_sandbox=settings.sandbox.enabled)
     sections.append(
         f"# Environment Context\n"
@@ -160,7 +137,7 @@ def build_runtime_system_prompt(
         f"- Working Directory: {env_info.cwd}\n"
         f"- OS: {env_info.os_name} {env_info.os_version}\n"
         f"- Sudo: {env_info.extra.get('sudo', 'Not available')}\n"
-        f"- Search Policy: Today is {env_info.date}. ALWAYS prioritize records from {env_info.date[:4]} or {int(env_info.date[:4])-1} when searching to ensure data recency."
+        f"- Search Policy: Today is {env_info.date}. ALWAYS prioritize records from {env_info.date[:4]} or {int(env_info.date[:4]) - 1} when searching to ensure data recency."
     )
 
     if settings.fast_mode:
@@ -175,12 +152,10 @@ def build_runtime_system_prompt(
         "Adjust depth and iteration count to match these settings while still completing the task."
     )
 
-    # claude.md（CWD 下的项目说明文件，空 temp_workspace 通常为空）
     claude_md = load_claude_md_prompt(cwd)
     if claude_md:
         sections.append(claude_md)
 
-    # Issue / PR / Repo context（CWD 下的项目上下文文件）
     for title, path in (
         ("Issue Context", get_project_issue_file(cwd)),
         ("Pull Request Comments", get_project_pr_comments_file(cwd)),
@@ -191,34 +166,27 @@ def build_runtime_system_prompt(
             if content:
                 sections.append(f"# {title}\n\n```md\n{content[:12000]}\n```")
 
-    # Memory（依赖 CWD 和当前 prompt，完全动态）
-    if settings.memory.enabled:
+    if include_project_memory and settings.memory.enabled:
         memory_section = load_memory_prompt(
             cwd,
             max_entrypoint_lines=settings.memory.max_entrypoint_lines,
+            max_entrypoint_bytes=settings.memory.max_entrypoint_bytes,
         )
         if memory_section:
             sections.append(memory_section)
 
         if latest_user_prompt:
-            relevant = find_relevant_memories(
+            relevant = select_relevant_memories(
                 latest_user_prompt,
                 cwd,
                 max_results=settings.memory.max_files,
             )
             if relevant:
-                lines = ["# Relevant Memories"]
-                for header in relevant:
-                    content = header.path.read_text(encoding="utf-8", errors="replace").strip()
-                    lines.extend(
-                        [
-                            "",
-                            f"## {header.path.name}",
-                            "```md",
-                            content[:8000],
-                            "```",
-                        ]
-                    )
-                sections.append("\n".join(lines))
+                try:
+                    headers = [item.header for item in relevant]
+                    mark_memory_used(cwd, headers, memory_dir=headers[0].path.parent)
+                except OSError:
+                    pass
+                sections.append(format_relevant_memories(relevant))
 
     return "\n\n".join(section for section in sections if section.strip())

@@ -5,15 +5,23 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from openharness.api.client import ApiMessageCompleteEvent
 from openharness.api.usage import UsageSnapshot
 from openharness.engine.stream_events import CompactProgressEvent
-from openharness.engine.messages import ConversationMessage, TextBlock
-from openharness.ui.backend_host import BackendHostConfig, ReactBackendHost, run_backend_host
-from openharness.ui.protocol import BackendEvent
+from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock
+from openharness.config.settings import Settings, save_settings
+from openharness.ui.backend_host import (
+    BackendHostConfig,
+    ReactBackendHost,
+    _build_user_message_with_images,
+    _format_transcript_line,
+    run_backend_host,
+)
+from openharness.ui.protocol import BackendEvent, FrontendImageAttachment, FrontendRequest
 from openharness.ui.runtime import build_runtime, close_runtime, start_runtime
 
 
@@ -30,6 +38,19 @@ class StaticApiClient:
             usage=UsageSnapshot(input_tokens=2, output_tokens=3),
             stop_reason=None,
         )
+
+
+class CapturingApiClient(StaticApiClient):
+    """Fake streaming client that records model requests."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+        self.requests = []
+
+    async def stream_message(self, request):
+        self.requests.append(request)
+        async for event in super().stream_message(request):
+            yield event
 
 
 class FailingApiClient:
@@ -53,6 +74,71 @@ class FakeBinaryStdout:
 
     def flush(self) -> None:
         return None
+
+
+def test_frontend_request_accepts_image_attachments():
+    request = FrontendRequest.model_validate(
+        {
+            "type": "submit_line",
+            "line": "describe this",
+            "images": [
+                {
+                    "media_type": "image/png",
+                    "data": "aGVsbG8=",
+                    "source_path": "clipboard:clipboard.png",
+                }
+            ],
+        }
+    )
+
+    assert request.images[0].media_type == "image/png"
+    assert request.images[0].data == "aGVsbG8="
+
+
+def test_frontend_request_rejects_non_image_attachments():
+    with pytest.raises(ValueError):
+        FrontendRequest.model_validate(
+            {
+                "type": "submit_line",
+                "images": [
+                    {
+                        "media_type": "text/plain",
+                        "data": "aGVsbG8=",
+                    }
+                ],
+            }
+        )
+
+
+def test_build_user_message_with_images():
+    message = _build_user_message_with_images(
+        "What is in this screenshot?",
+        [
+            FrontendImageAttachment(
+                media_type="image/png",
+                data="aGVsbG8=",
+                source_path="clipboard:clipboard.png",
+            )
+        ],
+    )
+
+    assert message is not None
+    assert message.text == "What is in this screenshot?"
+    assert isinstance(message.content[1], ImageBlock)
+    assert message.content[1].media_type == "image/png"
+    assert message.content[1].source_path == "clipboard:clipboard.png"
+
+
+def test_format_transcript_line_mentions_attached_images():
+    assert _format_transcript_line("inspect", []) == "inspect"
+    assert _format_transcript_line("", [FrontendImageAttachment(media_type="image/png", data="x")]) == "[1 image attached]"
+    assert _format_transcript_line(
+        "inspect",
+        [
+            FrontendImageAttachment(media_type="image/png", data="x"),
+            FrontendImageAttachment(media_type="image/jpeg", data="y"),
+        ],
+    ) == "inspect\n[2 images attached]"
 
 
 @pytest.mark.asyncio
@@ -104,6 +190,110 @@ async def test_read_requests_resolves_permission_response_without_queueing(monke
     queued = await host._request_queue.get()
     assert queued.type == "shutdown"
     assert host._request_queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_read_requests_resolves_edit_approval_response_without_queueing(monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    fut = asyncio.get_running_loop().create_future()
+    host._edit_approval_requests["req-1"] = fut
+
+    payload = b'{"type":"permission_response","request_id":"req-1","allowed":true,"permission_reply":"always"}\n'
+
+    class _FakeBuffer:
+        def __init__(self):
+            self._reads = 0
+
+        def readline(self):
+            self._reads += 1
+            if self._reads == 1:
+                return payload
+            return b""
+
+    class _FakeStdin:
+        buffer = _FakeBuffer()
+
+    monkeypatch.setattr("openharness.ui.backend_host.sys.stdin", _FakeStdin())
+
+    await host._read_requests()
+
+    assert fut.done()
+    assert fut.result() == "always"
+    queued = await host._request_queue.get()
+    assert queued.type == "shutdown"
+    assert host._request_queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_read_requests_interrupt_cancels_active_request(monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+
+    async def _long_running():
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(_long_running())
+    host._active_request_task = task
+
+    class _FakeBuffer:
+        def __init__(self):
+            self._reads = 0
+
+        def readline(self):
+            self._reads += 1
+            if self._reads == 1:
+                return b'{"type":"interrupt"}\n'
+            return b""
+
+    class _FakeStdin:
+        buffer = _FakeBuffer()
+
+    monkeypatch.setattr("openharness.ui.backend_host.sys.stdin", _FakeStdin())
+
+    await host._read_requests()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    queued = await host._request_queue.get()
+    assert queued.type == "shutdown"
+
+
+@pytest.mark.asyncio
+async def test_run_active_request_recovers_from_cancel(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+
+    async def _long_running():
+        await asyncio.Event().wait()
+        return True
+
+    try:
+        runner = asyncio.create_task(host._run_active_request(_long_running()))
+        while host._active_request_task is None:
+            await asyncio.sleep(0)
+        await host._interrupt_active_request()
+        assert await runner is True
+    finally:
+        await close_runtime(host._bundle)
+
+    assert any(
+        event.type == "transcript_item"
+        and event.item
+        and event.item.role == "system"
+        and "Interrupted" in event.item.text
+        for event in events
+    )
+    assert any(event.type == "line_complete" for event in events)
 
 
 @pytest.mark.asyncio
@@ -173,6 +363,57 @@ async def test_backend_host_processes_model_turn(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_backend_host_processes_image_turn(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    client = CapturingApiClient("image received")
+    host = ReactBackendHost(BackendHostConfig(api_client=client))
+    host._bundle = await build_runtime(api_client=client)
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        should_continue = await host._process_line(
+            "",
+            images=[
+                FrontendImageAttachment(
+                    media_type="image/png",
+                    data="aGVsbG8=",
+                    source_path="clipboard:clipboard.png",
+                )
+            ],
+        )
+    finally:
+        await close_runtime(host._bundle)
+
+    assert should_continue is True
+    assert len(client.requests) == 1
+    image_messages = [
+        message
+        for message in client.requests[0].messages
+        if message.role == "user" and any(isinstance(block, ImageBlock) for block in message.content)
+    ]
+    assert len(image_messages) == 1
+    message = image_messages[0]
+    assert message.text == "Please analyze the attached image."
+    image = next(block for block in message.content if isinstance(block, ImageBlock))
+    assert image.data == "aGVsbG8="
+    assert any(
+        event.type == "transcript_item"
+        and event.item
+        and event.item.role == "user"
+        and event.item.text == "[1 image attached]"
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
 async def test_backend_host_emits_compact_progress_event(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
@@ -185,8 +426,10 @@ async def test_backend_host_emits_compact_progress_event(tmp_path, monkeypatch):
     async def _emit(event):
         events.append(event)
 
-    async def _fake_handle_line(bundle, line, print_system, render_event, clear_output):
-        del bundle, line, print_system, clear_output
+    async def _fake_handle_line(
+        bundle, line, print_system, render_event, clear_output, user_message=None
+    ):
+        del bundle, line, print_system, clear_output, user_message
         await render_event(
             CompactProgressEvent(
                 phase="compact_start",
@@ -375,6 +618,54 @@ async def test_backend_host_emits_model_select_request(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_backend_host_model_selector_uses_profile_model_allowlist(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    save_settings(
+        Settings().model_copy(
+            update={
+                "active_profile": "local-llm",
+                "provider": "openai",
+                "api_format": "openai",
+                "base_url": "http://localhost:8000/v1",
+                "model": "qwen-vl",
+                "profiles": {
+                    "local-llm": {
+                        "label": "Local LLM",
+                        "provider": "openai",
+                        "api_format": "openai",
+                        "auth_source": "openai_api_key",
+                        "default_model": "deepseek-chat",
+                        "last_model": "qwen-vl",
+                        "base_url": "http://localhost:8000/v1",
+                        "allowed_models": ["deepseek-chat", "qwen-vl"],
+                    }
+                },
+            }
+        )
+    )
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        await host._handle_select_command("model")
+    finally:
+        await close_runtime(host._bundle)
+
+    event = next(item for item in events if item.type == "select_request")
+    assert [option["value"] for option in event.select_options] == ["deepseek-chat", "qwen-vl"]
+    assert any(option["value"] == "qwen-vl" and option.get("active") for option in event.select_options)
+
+
+@pytest.mark.asyncio
 async def test_backend_host_emits_theme_select_request(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
@@ -545,3 +836,56 @@ async def test_concurrent_ask_permission_are_serialised():
     # distinct request IDs must have been emitted.
     assert len(emitted_order) == 2
     assert emitted_order[0] != emitted_order[1]
+
+
+@pytest.mark.asyncio
+async def test_ask_edit_approval_remembers_always_choice():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+
+    async def _resolver():
+        while not host._edit_approval_requests:
+            await asyncio.sleep(0)
+        next(iter(host._edit_approval_requests.values())).set_result("always")
+
+    asyncio.create_task(_resolver())
+    reply = await host._ask_edit_approval("notes.txt", "@@ -1 +1 @@\n-old\n+new", 1, 1)
+
+    assert reply == "always"
+    assert host._edit_always_approved is True
+    assert any(
+        event.type == "modal_request"
+        and event.modal
+        and event.modal.get("kind") == "edit_diff"
+        for event in events
+    )
+
+    events.clear()
+    second_reply = await host._ask_edit_approval("notes.txt", "@@ -1 +1 @@\n-old\n+new", 1, 1)
+
+    assert second_reply == "always"
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_ask_edit_approval_skips_when_session_mode_is_full_auto():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    host._bundle = SimpleNamespace(
+        app_state=SimpleNamespace(get=lambda: SimpleNamespace(permission_mode="full_auto"))
+    )
+
+    reply = await host._ask_edit_approval("notes.txt", "@@ -1 +1 @@\n-old\n+new", 1, 1)
+
+    assert reply == "always"
+    assert events == []

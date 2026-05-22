@@ -4,75 +4,87 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from openharness.skills._frontmatter import (
+    optional_frontmatter_str,
+    parse_bool_frontmatter,
+    parse_skill_frontmatter,
+    parse_skill_metadata,
+)
 from openharness.skills.types import SkillDefinition
 
-_CONTENT_DIR = Path(__file__).parent / "content"
+_BUNDLED_ROOT = Path(__file__).parent
 
 
 def get_bundled_skills() -> list[SkillDefinition]:
     """Load all bundled skills from content/ and aesthetics/ directories."""
     skills: list[SkillDefinition] = []
-    
-    # 扫描 content (逻辑技能) 和 aesthetics (审美技能)
-    for sub_dir, s_type in [("content", "logic"), ("aesthetics", "aesthetic")]:
-        target_dir = Path(__file__).parent / sub_dir
+    for sub_dir, skill_type in (("content", "logic"), ("aesthetics", "aesthetic")):
+        target_dir = _BUNDLED_ROOT / sub_dir
         if not target_dir.exists():
             continue
-            
         for path in sorted(target_dir.glob("*.md")):
             content = path.read_text(encoding="utf-8")
-            info = _parse_full_frontmatter(path.stem, content)
+            metadata = _parse_metadata(path.stem, content)
+            display_name = metadata["name"] if metadata["name"] != path.stem else None
+            frontmatter = metadata["frontmatter"]
             skills.append(
                 SkillDefinition(
-                    name=info["name"],
-                    description=info["description"],
+                    name=metadata["name"],
+                    description=metadata["description"],
                     content=content,
                     source="bundled",
                     path=str(path),
-                    skill_type=s_type,
-                    metadata=info["metadata"],
+                    base_dir=str(path.parent),
+                    command_name=path.stem,
+                    display_name=display_name,
+                    aliases=_frontmatter_aliases(frontmatter),
+                    user_invocable=metadata["user_invocable"],
+                    disable_model_invocation=metadata["disable_model_invocation"],
+                    model=metadata["model"],
+                    argument_hint=metadata["argument_hint"],
+                    skill_type=skill_type,
+                    metadata=dict(frontmatter),
                 )
             )
     return skills
 
 
-def _parse_full_frontmatter(default_name: str, content: str) -> dict:
-    """全面解析 frontmatter，返回包含 metadata 的字典。"""
-    import yaml
-    
-    res = {
-        "name": default_name,
-        "description": f"Bundled skill: {default_name}",
-        "metadata": {}
+def _parse_frontmatter(default_name: str, content: str) -> tuple[str, str]:
+    """Extract name and description from a bundled skill markdown file."""
+    return parse_skill_frontmatter(
+        default_name,
+        content,
+        fallback_template="Bundled skill: {name}",
+    )
+
+
+def _parse_metadata(default_name: str, content: str) -> dict:
+    parsed = parse_skill_metadata(default_name, content, fallback_template="Bundled skill: {name}")
+    frontmatter = parsed.get("frontmatter")
+    if not isinstance(frontmatter, dict):
+        frontmatter = {}
+    return {
+        "name": str(parsed["name"]),
+        "description": str(parsed["description"]),
+        "user_invocable": parse_bool_frontmatter(frontmatter.get("user-invocable"), default=True),
+        "disable_model_invocation": parse_bool_frontmatter(
+            frontmatter.get("disable-model-invocation"),
+            default=False,
+        ),
+        "model": optional_frontmatter_str(frontmatter.get("model")),
+        "argument_hint": optional_frontmatter_str(frontmatter.get("argument-hint")),
+        "frontmatter": frontmatter,
     }
-    
-    lines = content.splitlines()
-    if lines and lines[0].strip() == "---":
-        end_index = -1
-        for i, line in enumerate(lines[1:], 1):
-            if line.strip() == "---":
-                end_index = i
-                break
-        
-        if end_index != -1:
-            fm_text = "\n".join(lines[1:end_index])
-            try:
-                metadata = yaml.safe_load(fm_text)
-                if isinstance(metadata, dict):
-                    res["name"] = metadata.get("name", res["name"])
-                    res["description"] = metadata.get("description", res["description"])
-                    res["metadata"] = metadata
-            except Exception:
-                pass
-                
-    if res["description"] == f"Bundled skill: {default_name}":
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith("# "):
-                res["name"] = stripped[2:].strip() or res["name"]
-                continue
-            if stripped and not stripped.startswith("---") and not stripped.startswith("#"):
-                res["description"] = stripped[:200]
-                break
-                
-    return res
+
+
+def _frontmatter_aliases(frontmatter: dict[str, object]) -> tuple[str, ...]:
+    aliases: list[str] = []
+    for key in ("aliases", "triggers", "keywords"):
+        raw = frontmatter.get(key)
+        if isinstance(raw, str) and raw.strip():
+            aliases.append(raw.strip())
+        elif isinstance(raw, (list, tuple, set)):
+            for item in raw:
+                if isinstance(item, str) and item.strip():
+                    aliases.append(item.strip())
+    return tuple(dict.fromkeys(aliases))

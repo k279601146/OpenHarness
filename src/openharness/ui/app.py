@@ -6,9 +6,12 @@ import asyncio
 import json
 import sys
 
+from openharness.coordinator.coordinator_mode import is_coordinator_mode
+
 from openharness.api.client import SupportsStreamingMessages
 from openharness.engine.stream_events import StreamEvent
 from openharness.ui.backend_host import run_backend_host
+from openharness.ui.coordinator_drain import drain_coordinator_async_agents
 from openharness.ui.react_launcher import launch_react_tui
 from openharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
 
@@ -40,6 +43,7 @@ async def run_repl(
     cwd: str | None = None,
     model: str | None = None,
     max_turns: int | None = None,
+    effort: str | None = None,
     base_url: str | None = None,
     system_prompt: str | None = None,
     api_key: str | None = None,
@@ -56,6 +60,7 @@ async def run_repl(
             cwd=cwd,
             model=model,
             max_turns=max_turns,
+            effort=effort,
             base_url=base_url,
             system_prompt=system_prompt,
             api_key=api_key,
@@ -73,6 +78,7 @@ async def run_repl(
         cwd=cwd,
         model=model,
         max_turns=max_turns,
+        effort=effort,
         base_url=base_url,
         system_prompt=system_prompt,
         api_key=api_key,
@@ -88,6 +94,7 @@ async def run_task_worker(
     cwd: str | None = None,
     model: str | None = None,
     max_turns: int | None = None,
+    effort: str | None = None,
     base_url: str | None = None,
     system_prompt: str | None = None,
     api_key: str | None = None,
@@ -132,6 +139,7 @@ async def run_task_worker(
         cwd=cwd,
         model=model,
         max_turns=max_turns,
+        effort=effort,
         base_url=base_url,
         system_prompt=system_prompt,
         api_key=api_key,
@@ -173,6 +181,7 @@ async def run_print_mode(
     cwd: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    effort: str | None = None,
     system_prompt: str | None = None,
     append_system_prompt: str | None = None,
     api_key: str | None = None,
@@ -203,6 +212,7 @@ async def run_print_mode(
         cwd=cwd,
         model=model,
         max_turns=max_turns,
+        effort=effort,
         base_url=base_url,
         system_prompt=system_prompt,
         api_key=api_key,
@@ -294,6 +304,14 @@ async def run_print_mode(
             render_event=_render_event,
             clear_output=_clear_output,
         )
+        if is_coordinator_mode():
+            await drain_coordinator_async_agents(
+                bundle,
+                prompt_seed=prompt,
+                print_system=_print_system,
+                render_event=_render_event,
+                announce_waiting=output_format == "text",
+            )
 
         if output_format == "json":
             result = {"type": "result", "text": collected_text.strip()}

@@ -13,6 +13,9 @@ from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.utils.shell import create_shell_subprocess
 
 
+_READ_REMAINING_OUTPUT_TIMEOUT_SECONDS = 2.0
+
+
 class BashToolInput(BaseModel):
     """Arguments for the bash tool."""
 
@@ -56,6 +59,7 @@ class BashTool(BaseTool):
                 cwd=cwd,
                 settings=context.metadata.get("settings"),
                 prefer_pty=True,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 user_id=context.metadata.get("user_id"),
@@ -115,7 +119,14 @@ async def _terminate_process(process: asyncio.subprocess.Process, *, force: bool
 async def _read_remaining_output(process: asyncio.subprocess.Process) -> bytearray:
     output_buffer = bytearray()
     if process.stdout is not None:
-        output_buffer.extend(await process.stdout.read())
+        try:
+            remaining = await asyncio.wait_for(
+                process.stdout.read(),
+                timeout=_READ_REMAINING_OUTPUT_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            remaining = b""
+        output_buffer.extend(remaining)
     return output_buffer
 
 

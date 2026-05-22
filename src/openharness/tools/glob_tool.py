@@ -6,7 +6,7 @@ import asyncio
 import shutil
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
@@ -14,7 +14,10 @@ from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 class GlobToolInput(BaseModel):
     """Arguments for the glob tool."""
 
-    pattern: str = Field(description="Glob pattern relative to the working directory")
+    pattern: str = Field(
+        description="Glob pattern relative to the working directory",
+        validation_alias=AliasChoices("pattern", "path"),
+    )
     root: str | None = Field(default=None, description="Optional search root")
     limit: int = Field(default=200, ge=1, le=5000)
 
@@ -31,27 +34,8 @@ class GlobTool(BaseTool):
         return True
 
     async def execute(self, arguments: GlobToolInput, context: ToolExecutionContext) -> ToolResult:
-        from openharness.sandbox.session import get_sandbox_session
-        session = get_sandbox_session()
-
-        if session:
-            # E2B 沙箱模式下直接在给定的容器容器目录上 glob
-            root_path = arguments.root or str(context.cwd) or "/home/user"
-            root_path = root_path.replace("\\", "/")
-            if not root_path.startswith("/"):
-                base_cwd = str(context.cwd).replace("\\", "/")
-                root_path = f"{base_cwd}/{root_path}".replace("//", "/")
-            root = Path(root_path)
-        else:
-            # MVP 安全模式：使用白名单验证本地文件系统
-            root = _resolve_path(context.cwd, arguments.root)
-            if not str(root.resolve()).startswith(str(context.cwd.resolve())):
-                return ToolResult(
-                    output=f"❌ 安全限制：不允许访问工作区外的目录 ({root})", 
-                    is_error=True
-                )
-
-        matches = await _glob(root, arguments.pattern, limit=arguments.limit)
+        root, pattern = _resolve_glob_request(context.cwd, arguments.root, arguments.pattern)
+        matches = await _glob(root, pattern, limit=arguments.limit)
         if not matches:
             return ToolResult(output="(no matches)")
         return ToolResult(output="\n".join(matches))
@@ -62,6 +46,33 @@ def _resolve_path(base: Path, candidate: str | None) -> Path:
     if not path.is_absolute():
         path = base / path
     return path.resolve()
+
+
+def _resolve_glob_request(base: Path, root_arg: str | None, pattern: str) -> tuple[Path, str]:
+    """Return a concrete search root plus a root-relative glob pattern."""
+    if not pattern.strip():
+        return (_resolve_path(base, root_arg) if root_arg else base, pattern)
+
+    candidate = Path(pattern).expanduser()
+    if not candidate.is_absolute():
+        return (_resolve_path(base, root_arg) if root_arg else base, pattern)
+
+    parts = candidate.parts
+    first_glob_index = next(
+        (index for index, part in enumerate(parts) if _has_glob_magic(part)),
+        None,
+    )
+    if first_glob_index is None:
+        return candidate.parent.resolve(), candidate.name
+
+    root_parts = parts[:first_glob_index]
+    root = Path(*root_parts).resolve() if root_parts else Path(candidate.anchor or "/").resolve()
+    relative_pattern = str(Path(*parts[first_glob_index:]))
+    return root, relative_pattern
+
+
+def _has_glob_magic(value: str) -> bool:
+    return any(char in value for char in "*?[")
 
 
 def _looks_like_git_repo(path: Path) -> bool:
@@ -81,46 +92,49 @@ def _looks_like_git_repo(path: Path) -> bool:
     return False
 
 
+_GLOB_RG_TIMEOUT_SECONDS = 30.0
+
+
 async def _glob(root: Path, pattern: str, *, limit: int) -> list[str]:
     """Fast glob implementation.
 
     Uses ripgrep's file walker when available (respects .gitignore and can skip
     heavy directories like `.venv/`), with a Python fallback.
     """
-    # Normalize pattern: pathlib.glob does not support patterns starting with /
-    # Any leading slash is treated as relative to the search root.
-    clean_pattern = pattern.lstrip("/")
-    if not clean_pattern:
-        clean_pattern = "*"
+    if not root.exists() or not root.is_dir():
+        return []
 
     rg = shutil.which("rg")
     # `Path.glob("**/*")` will traverse hidden and ignored paths (like `.venv/`)
     # and can be very slow on real workspaces. Prefer `rg --files`.
-    if rg and ("**" in clean_pattern or "/" in clean_pattern):
+    if rg and ("**" in pattern or "/" in pattern):
         include_hidden = _looks_like_git_repo(root)
         cmd = [rg, "--files"]
         if include_hidden:
             cmd.append("--hidden")
-        cmd.extend(["--glob", clean_pattern, "."])
+        cmd.extend(["--glob", pattern, "."])
 
-        from openharness.sandbox.session import get_sandbox_session
+        from openharness.sandbox.session import get_docker_sandbox
 
-        session = get_sandbox_session()
+        session = get_docker_sandbox()
         if session is not None and session.is_running:
             process = await session.exec_command(
                 cmd,
-                cwd=str(root).replace("\\", "/"),
+                cwd=root,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
             )
         else:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 cwd=str(root),
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
             )
 
         lines: list[str] = []
-        try:
+
+        async def _read_stdout() -> None:
             assert process.stdout is not None
             while len(lines) < limit:
                 raw = await process.stdout.readline()
@@ -129,26 +143,33 @@ async def _glob(root: Path, pattern: str, *, limit: int) -> list[str]:
                 line = raw.decode("utf-8", errors="replace").strip()
                 if line:
                     lines.append(line)
+
+        try:
+            try:
+                await asyncio.wait_for(_read_stdout(), timeout=_GLOB_RG_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                pass
         finally:
             if process.returncode is None:
                 try:
                     process.terminate()
-                    await asyncio.wait_for(process.wait(), timeout=0.5)
-                except (asyncio.TimeoutError, ProcessLookupError):
-                    if process.returncode is None:
+                except ProcessLookupError:
+                    pass
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    try:
                         process.kill()
-                        await process.wait()
+                    except ProcessLookupError:
+                        pass
+                    await process.wait()
 
         # Sorting keeps unit tests and user output deterministic for small results.
         lines.sort()
         return lines
 
     # Fallback: non-recursive patterns are usually cheap; keep Python semantics.
-    try:
-        return sorted(
-            str(path.relative_to(root))
-            for path in root.glob(clean_pattern)
-        )[:limit]
-    except (NotImplementedError, ValueError):
-        # Handle cases where globbing fails due to pattern issues or path escape attempts
-        return []
+    return sorted(
+        str(path.relative_to(root))
+        for path in root.glob(pattern)
+    )[:limit]

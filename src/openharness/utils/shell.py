@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -22,6 +23,9 @@ def resolve_shell_command(
     """Return argv for the best available shell on the current platform."""
     resolved_platform = platform_name or get_platform()
     if resolved_platform == "windows":
+        bash = shutil.which("bash")
+        if bash and _bash_is_usable(bash):
+            return [bash, "-lc", command]
         powershell = shutil.which("pwsh") or shutil.which("powershell")
         if powershell:
             return [powershell, "-NoLogo", "-NoProfile", "-Command", command]
@@ -31,14 +35,14 @@ def resolve_shell_command(
     if bash:
         argv = [bash, "-lc", command]
         if prefer_pty:
-            wrapped = _wrap_command_with_script(argv)
+            wrapped = _wrap_command_with_script(argv, platform_name=resolved_platform)
             if wrapped is not None:
                 return wrapped
         return argv
     shell = shutil.which("sh") or os.environ.get("SHELL") or "/bin/sh"
     argv = [shell, "-lc", command]
     if prefer_pty:
-        wrapped = _wrap_command_with_script(argv)
+        wrapped = _wrap_command_with_script(argv, platform_name=resolved_platform)
         if wrapped is not None:
             return wrapped
     return argv
@@ -50,53 +54,24 @@ async def create_shell_subprocess(
     cwd: str | Path,
     settings: Settings | None = None,
     prefer_pty: bool = False,
-    stdin: int | None = None,
+    stdin: int | None = asyncio.subprocess.DEVNULL,
     stdout: int | None = None,
     stderr: int | None = None,
     env: Mapping[str, str] | None = None,
-    user_id: int | None = None,
-    thread_id: str | None = None,
-    db_session=None,
 ) -> asyncio.subprocess.Process:
-    """Spawn a shell command with platform-aware shell selection and sandboxing.
-
-    重构后新增 user_id / thread_id / db_session 参数，
-    用于驱动新版沙箱管理器的复用/隔离逻辑。
-    """
+    """Spawn a shell command with platform-aware shell selection and sandboxing."""
     resolved_settings = settings or load_settings()
 
-    # Cloud backend (E2B): route through e2b exec
-    if resolved_settings.sandbox.enabled and (resolved_settings.sandbox.backend == "e2b"):
-        from openharness.sandbox.session import get_or_start_sandbox
+    # Docker backend: route through docker exec
+    if resolved_settings.sandbox.enabled and resolved_settings.sandbox.backend == "docker":
+        from openharness.sandbox.session import get_docker_sandbox
 
-        # 彻底的路径脱敏：在发送给沙箱前，强制转换为标准 Linux 字符串
-        # 杜绝 Path() 在 Windows 宿主机上的反斜杠污染
-        safe_cwd = str(cwd).replace('\\', '/')
-        if not safe_cwd.startswith('/'):
-            safe_cwd = '/' + safe_cwd
-
-        # 确定 user_id 和 thread_id，避免使用 Path(cwd).resolve()
-        resolved_user_id = user_id or 0
-        resolved_thread_id = thread_id or safe_cwd.split('/')[-1]
-
-        session = await get_or_start_sandbox(
-            resolved_settings,
-            resolved_user_id,
-            resolved_thread_id,
-            db_session=db_session,
-        )
-
+        session = get_docker_sandbox()
         if session is not None and session.is_running:
-            # SaaS 模式下，沙箱内部统一使用 /home/user 作为根
-            # 无论宿主机的路径是什么，进入沙箱后都应该映射到其标准工作区
-            target_cwd = "/home/user"
-            
-            # 如果原始 cwd 包含子目录（相对于 session 根），可以尝试保留子路径
-            # 但在大多数 SaaS 任务中，直接用 /home/user 最稳健
-            
+            argv = resolve_shell_command(command)
             return await session.exec_command(
-                command,
-                cwd=target_cwd,
+                argv,
+                cwd=cwd,
                 stdin=stdin,
                 stdout=stdout,
                 stderr=stderr,
@@ -105,7 +80,7 @@ async def create_shell_subprocess(
         if resolved_settings.sandbox.fail_if_unavailable:
             from openharness.sandbox import SandboxUnavailableError
 
-            raise SandboxUnavailableError("E2B sandbox session could not be started")
+            raise SandboxUnavailableError("Docker sandbox session is not running")
 
     # Existing srt path
     argv = resolve_shell_command(command, prefer_pty=prefer_pty)
@@ -130,13 +105,39 @@ async def create_shell_subprocess(
     return process
 
 
-def _wrap_command_with_script(argv: list[str]) -> list[str] | None:
+def _wrap_command_with_script(
+    argv: list[str],
+    *,
+    platform_name: PlatformName | None = None,
+) -> list[str] | None:
+    resolved_platform = platform_name or get_platform()
+    if resolved_platform == "macos":
+        return None
     script = shutil.which("script")
     if script is None:
         return None
     if len(argv) >= 3 and argv[1] == "-lc":
         return [script, "-qefc", argv[2], "/dev/null"]
     return None
+
+
+def _bash_is_usable(bash_path: str) -> bool:
+    """Return True when a discovered bash executable can run commands.
+
+    On Windows, ``shutil.which("bash")`` can find WSL's ``bash.exe`` even when no
+    WSL distribution is installed. In that case the executable exists but every
+    command fails, so fall back to PowerShell/cmd instead of selecting it.
+    """
+    try:
+        result = subprocess.run(
+            [bash_path, "-lc", "exit 0"],
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
 
 
 async def _cleanup_after_exit(process: asyncio.subprocess.Process, cleanup_path: Path) -> None:

@@ -153,6 +153,14 @@ OpenHarness is an open-source Python implementation designed for **researchers, 
 
 ## 📰 What's New
 
+- **Unreleased** 🔍 **Dry-run safe preview**:
+  - `oh --dry-run` previews resolved runtime settings, auth state, skills, commands, tools, and configured MCP servers without executing the model, tools, or subagents.
+  - Dry-run now reports a `ready` / `warning` / `blocked` readiness verdict with concrete next-step suggestions such as fixing auth, fixing MCP config, or running the prompt directly.
+  - Prompt previews include likely matching skills and tools, while slash-command previews show whether the command is mostly read-only or stateful.
+- **2026-04-18** ⚙️ **v0.1.7** — Packaging & TUI polish:
+  - Install script now links `oh`, `ohmo`, and `openharness` into `~/.local/bin` instead of prepending the virtualenv `bin` directory to `PATH`, which avoids clobbering Conda-managed shells.
+  - React TUI now supports `Shift+Enter` to insert a newline while keeping plain `Enter` as submit.
+  - Busy-state animation in the React TUI is quieter and less error-prone on Windows terminals, with conservative spinner frames and reduced flashing.
 - **2026-04-10** 🧠 **v0.1.6** — Auto-Compaction & Markdown TUI:
   - Auto-Compaction preserves task state and channel logs across context compression — agents can run multi-day sessions without manual compact/clear
   - Subprocess teammates run in headless worker mode; agent team creation stabilized
@@ -219,7 +227,7 @@ oh setup    # interactive wizard — pick a provider, authenticate, done
 # On Windows PowerShell, use: openh setup
 ```
 
-Supports **Claude / OpenAI / Copilot / Codex / Moonshot(Kimi) / GLM / MiniMax** and any compatible endpoint.
+Supports **Claude / OpenAI / Copilot / Codex / Moonshot(Kimi) / GLM / MiniMax / NVIDIA NIM** and any compatible endpoint.
 
 ### 3. Run
 
@@ -256,6 +264,43 @@ oh -p "List all functions in main.py" --output-format json
 # Stream JSON events in real-time
 oh -p "Fix the bug" --output-format stream-json
 ```
+
+### Dry Run (Safe Preview)
+
+Use `--dry-run` when you want to inspect what OpenHarness would use before any live execution starts.
+
+```bash
+# Preview an interactive session setup
+oh --dry-run
+
+# Preview one prompt without executing the model or tools
+oh --dry-run -p "Review this bug fix and grep for failing tests"
+
+# Preview a slash command path
+oh --dry-run -p "/plugin list"
+
+# Get structured output for scripts or channels
+oh --dry-run -p "Explain this repository" --output-format json
+```
+
+Dry-run is intentionally static:
+
+- It does **not** call the model
+- It does **not** execute tools or spawn subagents
+- It does **not** connect to MCP servers
+- It **does** resolve settings, auth status, prompt assembly, skills, commands, tools, and obvious MCP config problems
+
+Readiness levels:
+
+- `ready`: configuration looks usable; the next suggested action is usually to run the prompt directly
+- `warning`: OpenHarness can resolve the session, but something important still looks wrong, such as broken MCP config or missing auth for later model work
+- `blocked`: the requested path will not run successfully as-is, for example an unknown slash command or a prompt that cannot resolve a runtime client
+
+`next actions` in the dry-run output tell you the shortest fix or follow-up step, such as:
+
+- run `oh auth login`
+- fix or disable broken MCP configuration
+- run the prompt directly with `oh -p "..."` or open the interactive UI with `oh`
 
 ## 🔌 Provider Compatibility
 
@@ -302,7 +347,7 @@ Any provider implementing the OpenAI `/v1/chat/completions` style API works:
 | **DeepSeek** | `https://api.deepseek.com` | `deepseek-chat`, `deepseek-reasoner` |
 | **GitHub Models** | `https://models.inference.ai.azure.com` | `gpt-4o`, `Meta-Llama-3.1-405B-Instruct` |
 | **SiliconFlow** | `https://api.siliconflow.cn/v1` | `deepseek-ai/DeepSeek-V3` |
-| **Google Gemini** | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.5-flash`, `gemini-2.5-flash` |
+| **Google Gemini** | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.5-flash`, `gemini-2.5-pro` |
 | **Groq** | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile` |
 | **Ollama (local)** | `http://localhost:11434/v1` | any local model |
 
@@ -495,7 +540,47 @@ Available Skills:
 - ... 40+ more
 ```
 
-**Compatible with [anthropics/skills](https://github.com/anthropics/skills)** — just copy `.md` files to `~/.openharness/skills/`.
+Skills can live in bundled, user, ohmo, project, or plugin locations. User-level skills are loaded from:
+
+```text
+~/.openharness/skills/<skill>/SKILL.md
+~/.claude/skills/<skill>/SKILL.md
+~/.agents/skills/<skill>/SKILL.md
+```
+
+Project-level skills are enabled by default and are discovered from the current working directory up to the git root:
+
+```text
+<project>/.openharness/skills/<skill>/SKILL.md
+<project>/.agents/skills/<skill>/SKILL.md
+<project>/.claude/skills/<skill>/SKILL.md
+```
+
+Disable project skills for untrusted repositories with:
+
+```bash
+oh config set allow_project_skills false
+```
+
+Use `/skills` to list loaded skills with their source and path. User-invocable skills can be run directly as slash commands, for example `/deploy staging`.
+
+**Compatible with [anthropics/skills](https://github.com/anthropics/skills)** — use the `SKILL.md` directory layout above.
+
+### 🌐 Web search and proxy settings
+
+Built-in `web_search` uses DuckDuckGo HTML search by default. In regions where that endpoint is unreachable, point OpenHarness at a trusted public HTML search endpoint or your own SearXNG instance:
+
+```bash
+export OPENHARNESS_WEB_SEARCH_URL="https://your-searxng.example/search"
+```
+
+`web_search` and `web_fetch` keep `trust_env=False` for SSRF safety, so they do not automatically inherit `HTTP_PROXY` / `HTTPS_PROXY`. If you need a proxy, opt in with an OpenHarness-specific variable:
+
+```bash
+export OPENHARNESS_WEB_PROXY="http://127.0.0.1:7890"
+```
+
+The proxy URL must be HTTP/HTTPS and cannot contain embedded credentials.
 
 ### 🔌 Plugin System
 
@@ -750,6 +835,16 @@ Useful contributor entry points:
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, checks, and PR expectations
 - [`CHANGELOG.md`](CHANGELOG.md) for user-visible changes
 - [`docs/SHOWCASE.md`](docs/SHOWCASE.md) for real-world usage patterns worth documenting
+
+---
+
+## 🔧 Troubleshooting
+
+### Backspace key in macOS Terminal.app
+
+OpenHarness handles both common terminal delete sequences, including the raw `DEL` byte (`0x7f`) that macOS Terminal.app sends for Backspace. If Backspace inserts spaces or visible control characters instead of deleting text, upgrade OpenHarness first.
+
+For older versions that do not include this fix, use a terminal that sends a standard Backspace sequence or adjust your terminal keyboard profile as a temporary workaround.
 
 ---
 

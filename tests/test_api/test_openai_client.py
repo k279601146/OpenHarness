@@ -11,9 +11,11 @@ import pytest
 from openharness.api.client import ApiMessageRequest
 from openharness.api.openai_client import (
     OpenAICompatibleClient,
+    _convert_assistant_message,
     _convert_messages_to_openai,
     _convert_tools_to_openai,
     _normalize_openai_base_url,
+    _strip_think_blocks,
     _token_limit_param_for_model,
 )
 from openharness.engine.messages import (
@@ -313,6 +315,12 @@ def test_openai_client_init_passes_timeout(monkeypatch):
     assert captured["timeout"] == 45.0
 
 
+def test_openai_client_uses_bearer_authorization_header():
+    client = OpenAICompatibleClient(api_key="test-key", base_url="https://example.com/v1")
+
+    assert client._client.default_headers["Authorization"] == "Bearer test-key"
+
+
 
 class TestStreamMessageTokenParams:
     @pytest.mark.asyncio
@@ -350,3 +358,142 @@ class TestStreamMessageTokenParams:
         assert fake_sdk.chat.completions.last_kwargs is not None
         assert "max_tokens" in fake_sdk.chat.completions.last_kwargs
         assert "max_completion_tokens" not in fake_sdk.chat.completions.last_kwargs
+
+
+class TestStripThinkBlocks:
+    """Unit tests for the _strip_think_blocks streaming helper."""
+
+    def test_no_think_tags_passthrough(self):
+        visible, leftover = _strip_think_blocks("Hello world")
+        assert visible == "Hello world"
+        assert leftover == ""
+
+    def test_complete_think_block_removed(self):
+        visible, leftover = _strip_think_blocks("<think>internal reasoning</think>answer")
+        assert visible == "answer"
+        assert leftover == ""
+
+    def test_multiline_think_block_removed(self):
+        buf = "<think>\nstep 1\nstep 2\n</think>final answer"
+        visible, leftover = _strip_think_blocks(buf)
+        assert visible == "final answer"
+        assert leftover == ""
+
+    def test_unclosed_think_held_in_leftover(self):
+        # Streaming chunk ends before </think> arrives
+        visible, leftover = _strip_think_blocks("prefix<think>partial reasoning")
+        assert visible == "prefix"
+        assert leftover == "<think>partial reasoning"
+
+    def test_empty_string(self):
+        visible, leftover = _strip_think_blocks("")
+        assert visible == ""
+        assert leftover == ""
+
+    def test_only_think_block(self):
+        visible, leftover = _strip_think_blocks("<think>all hidden</think>")
+        assert visible == ""
+        assert leftover == ""
+
+    def test_multiple_think_blocks(self):
+        buf = "<think>a</think>text1<think>b</think>text2"
+        visible, leftover = _strip_think_blocks(buf)
+        assert visible == "text1text2"
+        assert leftover == ""
+
+    def test_text_before_unclosed_think(self):
+        visible, leftover = _strip_think_blocks("before<think>unclosed")
+        assert visible == "before"
+        assert leftover == "<think>unclosed"
+
+    def test_closed_then_unclosed(self):
+        # One complete block followed by a new unclosed one (cross-chunk scenario)
+        buf = "<think>done</think>visible<think>still open"
+        visible, leftover = _strip_think_blocks(buf)
+        assert visible == "visible"
+        assert leftover == "<think>still open"
+
+    def test_partial_open_tag_is_held_for_next_chunk(self):
+        visible, leftover = _strip_think_blocks("prefix<thi")
+        assert visible == "prefix"
+        assert leftover == "<thi"
+
+    def test_partial_open_tag_after_closed_block_is_held(self):
+        buf = "<think>done</think>visible<thi"
+        visible, leftover = _strip_think_blocks(buf)
+        assert visible == "visible"
+        assert leftover == "<thi"
+
+    def test_split_open_tag_across_chunks_does_not_leak_reasoning(self):
+        buf = ""
+
+        buf += "<thi"
+        visible, buf = _strip_think_blocks(buf)
+        assert visible == ""
+        assert buf == "<thi"
+
+        buf += "nk>secret</think>answer"
+        visible, buf = _strip_think_blocks(buf)
+        assert visible == "answer"
+        assert buf == ""
+
+
+class TestReasoningContentEmission:
+    """``reasoning_content`` is a non-standard field. It must round-trip
+    when the streaming parser captured non-empty reasoning, but the
+    legacy "emit empty string when there are tool calls" behaviour now
+    requires opt-in via ``OPENHARNESS_REQUIRE_EMPTY_REASONING_CONTENT=1``.
+
+    Strict-OpenAI providers (Cerebras, NVIDIA NIM, OpenAI direct) reject
+    requests carrying the field with a ``wrong_api_format`` 400, so the
+    default-off behaviour fixes them out-of-the-box; Kimi-on-Anthropic
+    users opt in via env var.
+    """
+
+    def _msg_with_tool_use(self, *, reasoning: str | None = None) -> ConversationMessage:
+        msg = ConversationMessage(
+            role="assistant",
+            content=[
+                TextBlock(text="ok"),
+                ToolUseBlock(id="tool_1", name="read_file", input={"path": "x"}),
+            ],
+        )
+        if reasoning is not None:
+            msg._reasoning = reasoning  # type: ignore[attr-defined]
+        return msg
+
+    def test_omits_reasoning_when_no_captured_text(self, monkeypatch):
+        monkeypatch.delenv("OPENHARNESS_REQUIRE_EMPTY_REASONING_CONTENT", raising=False)
+        out = _convert_assistant_message(self._msg_with_tool_use())
+        assert "reasoning_content" not in out
+
+    def test_replays_captured_reasoning(self, monkeypatch):
+        monkeypatch.delenv("OPENHARNESS_REQUIRE_EMPTY_REASONING_CONTENT", raising=False)
+        out = _convert_assistant_message(self._msg_with_tool_use(reasoning="thinking…"))
+        assert out["reasoning_content"] == "thinking…"
+
+    def test_emits_empty_when_opted_in(self, monkeypatch):
+        monkeypatch.setenv("OPENHARNESS_REQUIRE_EMPTY_REASONING_CONTENT", "1")
+        out = _convert_assistant_message(self._msg_with_tool_use())
+        assert out["reasoning_content"] == ""
+
+    def test_opt_in_truthy_values(self, monkeypatch):
+        for v in ("1", "true", "TRUE", "yes", "on"):
+            monkeypatch.setenv("OPENHARNESS_REQUIRE_EMPTY_REASONING_CONTENT", v)
+            out = _convert_assistant_message(self._msg_with_tool_use())
+            assert out.get("reasoning_content") == "", f"value={v!r}"
+
+    def test_opt_in_falsy_values(self, monkeypatch):
+        for v in ("0", "false", "no", "off", ""):
+            monkeypatch.setenv("OPENHARNESS_REQUIRE_EMPTY_REASONING_CONTENT", v)
+            out = _convert_assistant_message(self._msg_with_tool_use())
+            assert "reasoning_content" not in out, f"value={v!r} should not opt in"
+
+    def test_no_tool_calls_never_emits_empty(self, monkeypatch):
+        # Pure-text assistant messages have always omitted the field; the
+        # opt-in is scoped to tool-use messages where Kimi specifically
+        # demands the placeholder.
+        monkeypatch.setenv("OPENHARNESS_REQUIRE_EMPTY_REASONING_CONTENT", "1")
+        msg = ConversationMessage(role="assistant", content=[TextBlock(text="hi")])
+        out = _convert_assistant_message(msg)
+        assert "reasoning_content" not in out

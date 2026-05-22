@@ -92,3 +92,102 @@ async def test_grep_tool_uses_large_stream_limit_and_skips_valueerror(monkeypatc
     assert result.is_error is False
     assert result.output == "(no matches)"
     assert seen_kwargs["limit"] == 8 * 1024 * 1024
+
+
+@pytest.mark.asyncio
+async def test_grep_tool_discards_rg_stderr_for_directory_search(monkeypatch, tmp_path: Path):
+    tool = GrepTool()
+    monkeypatch.setattr("openharness.tools.grep_tool.shutil.which", lambda _: "/usr/bin/rg")
+    fake_process = _FakeProcess(stdout=_ValueErrorThenEofStdout())
+    seen_kwargs = {}
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        seen_kwargs.update(kwargs)
+        fake_process.returncode = 1
+        return fake_process
+
+    monkeypatch.setattr(
+        "openharness.tools.grep_tool.asyncio.create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+
+    result = await tool.execute(
+        GrepToolInput(pattern="foo"),
+        type("Ctx", (), {"cwd": tmp_path})(),
+    )
+
+    assert result.is_error is False
+    assert seen_kwargs["stderr"] is asyncio.subprocess.DEVNULL
+
+
+@pytest.mark.asyncio
+async def test_grep_tool_discards_rg_stderr_for_file_search(monkeypatch, tmp_path: Path):
+    tool = GrepTool()
+    monkeypatch.setattr("openharness.tools.grep_tool.shutil.which", lambda _: "/usr/bin/rg")
+    file_path = tmp_path / "notes.txt"
+    file_path.write_text("hello\n", encoding="utf-8")
+    fake_process = _FakeProcess(stdout=_ValueErrorThenEofStdout())
+    seen_kwargs = {}
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        seen_kwargs.update(kwargs)
+        fake_process.returncode = 1
+        return fake_process
+
+    monkeypatch.setattr(
+        "openharness.tools.grep_tool.asyncio.create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+
+    result = await tool.execute(
+        GrepToolInput(pattern="foo", root=str(file_path)),
+        type("Ctx", (), {"cwd": tmp_path})(),
+    )
+
+    assert result.is_error is False
+    assert seen_kwargs["stderr"] is asyncio.subprocess.DEVNULL
+
+
+@pytest.mark.asyncio
+async def test_grep_tool_python_fallback_reports_invalid_regex(monkeypatch, tmp_path: Path):
+    tool = GrepTool()
+    monkeypatch.setattr("openharness.tools.grep_tool.shutil.which", lambda _: None)
+    file_path = tmp_path / "notes.txt"
+    file_path.write_text("hello\n", encoding="utf-8")
+
+    result = await tool.execute(
+        GrepToolInput(pattern="hello(", root=str(file_path)),
+        type("Ctx", (), {"cwd": tmp_path})(),
+    )
+
+    assert result.is_error is False
+    assert "invalid regex pattern 'hello('" in result.output
+    assert "unterminated subpattern" in result.output
+
+
+@pytest.mark.asyncio
+async def test_grep_tool_reports_missing_root_before_spawning_rg(monkeypatch, tmp_path: Path):
+    tool = GrepTool()
+    src_root = tmp_path / "src"
+    tests_root = tmp_path / "tests"
+    src_root.mkdir()
+    tests_root.mkdir()
+    monkeypatch.setattr("openharness.tools.grep_tool.shutil.which", lambda _: "/usr/bin/rg")
+
+    async def fail_create_subprocess_exec(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("rg should not be spawned for a missing root")
+
+    monkeypatch.setattr(
+        "openharness.tools.grep_tool.asyncio.create_subprocess_exec",
+        fail_create_subprocess_exec,
+    )
+
+    result = await tool.execute(
+        GrepToolInput(pattern="continue", root=f"{src_root} {tests_root}"),
+        type("Ctx", (), {"cwd": tmp_path})(),
+    )
+
+    assert result.is_error is True
+    assert "Search root does not exist" in result.output
+    assert "call grep separately for each root" in result.output

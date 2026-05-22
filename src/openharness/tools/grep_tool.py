@@ -16,7 +16,10 @@ class GrepToolInput(BaseModel):
     """Arguments for the grep tool."""
 
     pattern: str = Field(description="Regular expression to search for")
-    root: str | None = Field(default=None, description="Search root directory")
+    root: str | None = Field(
+        default=None,
+        description="Search root directory or file. For multiple roots, call grep separately per root.",
+    )
     file_glob: str = Field(default="**/*")
     case_sensitive: bool = Field(default=True)
     limit: int = Field(default=200, ge=1, le=2000)
@@ -36,21 +39,14 @@ class GrepTool(BaseTool):
 
     async def execute(self, arguments: GrepToolInput, context: ToolExecutionContext) -> ToolResult:
         root = _resolve_path(context.cwd, arguments.root) if arguments.root else context.cwd
-
-        from openharness.sandbox.session import get_sandbox_session
-        session = get_sandbox_session()
-
-        if session and session.is_running:
-            # E2B 模式下沙箱是隔离的，通常我们只关心从根目录去查文件
-            pass
-        else:
-            # MVP 安全限制：禁止访问工作区外
-            if not str(root.resolve()).startswith(str(context.cwd.resolve())):
-                return ToolResult(
-                    output=f"❌ 安全限制：不允许访问工作区外的目录 ({root})", 
-                    is_error=True
-                )
-
+        if not root.exists():
+            return ToolResult(
+                output=(
+                    f"Search root does not exist: {root}\n"
+                    "If you intended multiple roots, call grep separately for each root."
+                ),
+                is_error=True,
+            )
         if root.is_file():
             display_base = _display_base(root, context.cwd)
             matches = await _rg_grep_file(
@@ -116,7 +112,10 @@ def _python_grep_files(
 ) -> str:
     # Python fallback (kept for portability).
     flags = 0 if case_sensitive else re.IGNORECASE
-    compiled = re.compile(pattern, flags)
+    try:
+        compiled = re.compile(pattern, flags)
+    except re.error as exc:
+        return f"(invalid regex pattern '{pattern}': {exc})"
     collected: list[str] = []
 
     for path in paths:
@@ -193,20 +192,22 @@ async def _rg_grep(
     # `--` ensures patterns like `-foo` aren't parsed as flags.
     cmd.extend(["--", pattern, "."])
 
-    from openharness.sandbox.session import get_sandbox_session
+    from openharness.sandbox.session import get_docker_sandbox
 
-    session = get_sandbox_session()
+    session = get_docker_sandbox()
     if session is not None and session.is_running:
         process = await session.exec_command(
             cmd,
-            cwd=str(root).replace("\\", "/"),
+            cwd=root,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
     else:
         process = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=str(root),
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
             limit=8 * 1024 * 1024,  # 8 MB per line — avoids LimitOverrunError on long lines
         )
 
@@ -259,20 +260,22 @@ async def _rg_grep_file(
         cmd.append("-i")
     cmd.extend(["--", pattern, path.name])
 
-    from openharness.sandbox.session import get_sandbox_session
+    from openharness.sandbox.session import get_docker_sandbox
 
-    session = get_sandbox_session()
+    session = get_docker_sandbox()
     if session is not None and session.is_running:
         process = await session.exec_command(
             cmd,
-            cwd=str(path.parent).replace("\\", "/"),
+            cwd=path.parent,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
     else:
         process = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=str(path.parent),
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
             limit=8 * 1024 * 1024,  # 8 MB per line — avoids LimitOverrunError on long lines
         )
 

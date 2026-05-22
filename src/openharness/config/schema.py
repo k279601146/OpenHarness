@@ -34,6 +34,9 @@ class BaseChannelConfig(_CompatModel):
 class TelegramConfig(BaseChannelConfig):
     token: str = ""
     chat_id: str | None = None
+    proxy: str | None = None
+    reply_to_message: bool = True
+    bot_name: str = "ohmo"
 
 
 class SlackConfig(BaseChannelConfig):
@@ -51,6 +54,11 @@ class FeishuConfig(BaseChannelConfig):
     app_secret: str = ""
     encrypt_key: str = ""
     verification_token: str = ""
+    # Group reply policy is enforced by ohmo gateway because managed-group
+    # metadata lives outside the generic Feishu channel adapter.
+    group_policy: str = "managed_or_mention"
+    bot_open_id: str = ""
+    bot_names: list[str] = Field(default_factory=lambda: ["ohmo", "openclaw", "openharness"])
 
 
 class DingTalkConfig(BaseChannelConfig):
@@ -108,4 +116,3 @@ class ChannelConfigs(_CompatModel):
 class Config(_CompatModel):
     channels: ChannelConfigs = Field(default_factory=ChannelConfigs)
     providers: ProviderConfigs = Field(default_factory=ProviderConfigs)
-
