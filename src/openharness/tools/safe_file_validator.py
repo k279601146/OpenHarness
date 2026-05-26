@@ -6,7 +6,7 @@ from typing import Tuple
 # 允许的文件扩展名白名单
 SAFE_EXTENSIONS = {
     # 文档类
-    '.md', '.txt', '.csv', '.json', '.yaml', '.yml',
+    '.md', '.txt', '.log', '.csv', '.json', '.yaml', '.yml',
     # 代码类（仅文本，不执行）
     '.html', '.css', '.js', '.jsx', '.ts', '.tsx', 
     '.py', '.java', '.go', '.rs', '.cpp', '.c', '.h',

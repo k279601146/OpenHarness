@@ -6,10 +6,12 @@ from openharness.tools.bash_tool import BashTool
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
 from openharness.tools.brief_tool import BriefTool
 from openharness.tools.config_tool import ConfigTool
+from openharness.tools.create_folder_tool import CreateFolderTool
 from openharness.tools.cron_create_tool import CronCreateTool
 from openharness.tools.cron_delete_tool import CronDeleteTool
 from openharness.tools.cron_list_tool import CronListTool
 from openharness.tools.cron_toggle_tool import CronToggleTool
+from openharness.tools.deliver_artifact_tool import DeliverArtifactTool
 from openharness.tools.enter_plan_mode_tool import EnterPlanModeTool
 from openharness.tools.exit_plan_mode_tool import ExitPlanModeTool
 from openharness.tools.file_edit_tool import FileEditTool
@@ -70,6 +72,7 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         WebFetchTool(),
         WebSearchTool(),
         ConfigTool(),
+        CreateFolderTool(),
         BriefTool(),
         SleepTool(),
         TodoWriteTool(),
@@ -79,6 +82,7 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         CronListTool(),
         CronDeleteTool(),
         CronToggleTool(),
+        DeliverArtifactTool(),
         RemoteTriggerTool(),
         TaskCreateTool(),
         TaskGetTool(),
@@ -110,34 +114,18 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
 
 
 def create_mvp_safe_tool_registry(mcp_manager=None) -> ToolRegistry:
-    """
-    MVP 阶段安全工具注册表
-    排除所有 Bash 相关工具，专注于 Manus/Loveart 核心能力
-    
-    5 大核心工具矩阵：
-    1. 超级网联能力 (Research & Scraping)
-    2. 长程记忆与检索引擎 (Memory & RAG)
-    3. 多模态内容生成器 (Creative Generation)
-    4. 自动化排班与多 Agent 协同 (Autonomy & Cron)
-    5. 外部生态系统打通 (MCP)
-    """
+    """Return the SaaS-safe tool registry with controlled file tools first."""
     registry = ToolRegistry()
 
-    # 在 create_mvp_safe_tool_registry 中添加：
-    registry.register(BashTool()) # 已受 Docker Sandbox 保护
-
-    
-    # === 1. 超级网联能力 ===
-    registry.register(WebSearchTool())
-    registry.register(WebFetchTool())
-    
-    # === 2. 长程记忆与检索 ===
+    # Prefer controlled read/search tools for uploaded files and logs.
     registry.register(QueryMemoryTool())
     registry.register(GlobTool())
     registry.register(GrepTool())
     registry.register(FileReadTool())
-    
-    # === 3. 多模态内容生成 ===
+
+    registry.register(WebSearchTool())
+    registry.register(WebFetchTool())
+
     registry.register(CreativeImageTool())
     registry.register(EditImageTool())
     registry.register(ImageFromReferenceTool())
@@ -145,39 +133,42 @@ def create_mvp_safe_tool_registry(mcp_manager=None) -> ToolRegistry:
     registry.register(AnimateFirstFrameTool())
     registry.register(VideoInterpolationTool())
     registry.register(VideoWithReferenceTool())
-    registry.register(FileWriteTool())  # 带白名单验证
-    registry.register(FileEditTool())   # 带白名单验证
+    registry.register(FileWriteTool())
+    registry.register(FileEditTool())
+    registry.register(CreateFolderTool())
     registry.register(BriefTool())
-    
-    # === 4. 自动化排班与协同 ===
+    registry.register(DeliverArtifactTool())
+
     registry.register(CronCreateTool())
     registry.register(CronListTool())
     registry.register(CronDeleteTool())
     registry.register(CronToggleTool())
-    registry.register(TaskCreateTool())  # 仅支持 local_agent 类型
+    registry.register(TaskCreateTool())
     registry.register(TaskGetTool())
     registry.register(TaskListTool())
     registry.register(TaskStopTool())
     registry.register(TaskOutputTool())
     registry.register(TaskUpdateTool())
     registry.register(AgentTool())
-    
-    # === 5. MCP 生态打通 ===
+
     registry.register(McpAuthTool())
     if mcp_manager is not None:
         registry.register(ListMcpResourcesTool(mcp_manager))
         registry.register(ReadMcpResourceTool(mcp_manager))
         for tool_info in mcp_manager.list_tools():
             registry.register(McpToolAdapter(mcp_manager, tool_info))
-    
-    # === 辅助工具 ===
+
     registry.register(AskUserQuestionTool())
     registry.register(SkillTool())
     registry.register(ToolSearchTool())
     registry.register(ConfigTool())
     registry.register(SleepTool())
     registry.register(SendMessageTool())
-    
+
+    # Keep bash available as a deliberate fallback; placing it last nudges models
+    # toward host-side file tools for ordinary attachment inspection.
+    registry.register(BashTool())
+
     return registry
 
 

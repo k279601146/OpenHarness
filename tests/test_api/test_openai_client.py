@@ -13,8 +13,13 @@ from openharness.api.openai_client import (
     OpenAICompatibleClient,
     _convert_assistant_message,
     _convert_messages_to_openai,
+    _convert_messages_to_responses_input,
+    _convert_tools_to_responses,
     _convert_tools_to_openai,
     _normalize_openai_base_url,
+    _reasoning_effort_param_for_model,
+    _responses_reasoning_param_for_model,
+    _usage_snapshot_from_openai_usage,
     _strip_think_blocks,
     _token_limit_param_for_model,
 )
@@ -63,6 +68,24 @@ class TestConvertToolsToOpenai:
         assert len(result) == 2
         assert result[0]["function"]["name"] == "tool_a"
         assert result[1]["function"]["name"] == "tool_b"
+
+    def test_responses_tool_schema(self):
+        result = _convert_tools_to_responses([
+            {
+                "name": "read_file",
+                "description": "Read a file",
+                "input_schema": {"type": "object", "properties": {}},
+            }
+        ])
+
+        assert result == [
+            {
+                "type": "function",
+                "name": "read_file",
+                "description": "Read a file",
+                "parameters": {"type": "object", "properties": {}},
+            }
+        ]
 
 
 class TestConvertMessagesToOpenai:
@@ -198,6 +221,42 @@ class TestConvertMessagesToOpenai:
         assert result[0]["tool_call_id"] == "c1"
         assert result[1]["tool_call_id"] == "c2"
 
+    def test_responses_input_with_tool_round_trip(self):
+        messages = [
+            ConversationMessage.from_user_text("Read /tmp/test.txt"),
+            ConversationMessage(
+                role="assistant",
+                content=[
+                    TextBlock(text="I'll read that."),
+                    ToolUseBlock(id="call_abc", name="read_file", input={"path": "/tmp/test.txt"}),
+                ],
+            ),
+            ConversationMessage(
+                role="user",
+                content=[ToolResultBlock(tool_use_id="call_abc", content="hello world")],
+            ),
+        ]
+
+        result = _convert_messages_to_responses_input(messages)
+
+        assert result[0] == {
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Read /tmp/test.txt"}],
+        }
+        assert result[1] == {
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "I'll read that."}],
+        }
+        assert result[2]["type"] == "function_call"
+        assert result[2]["call_id"] == "call_abc"
+        assert result[2]["name"] == "read_file"
+        assert json.loads(result[2]["arguments"]) == {"path": "/tmp/test.txt"}
+        assert result[3] == {
+            "type": "function_call_output",
+            "call_id": "call_abc",
+            "output": "hello world",
+        }
+
 
 class TestNormalizeOpenAIBaseUrl:
     def test_preserves_explicit_v1_path(self):
@@ -218,6 +277,30 @@ class TestTokenLimitParams:
         assert _token_limit_param_for_model("gpt-4o", 4096) == {"max_tokens": 4096}
 
 
+class TestReasoningEffortParams:
+    def test_gpt5_defaults_to_low_reasoning_effort(self):
+        assert _reasoning_effort_param_for_model("gpt-5.4", None) == {"reasoning_effort": "low"}
+
+    def test_gpt5_passes_supported_reasoning_effort(self):
+        assert _reasoning_effort_param_for_model("gpt-5.4", "medium") == {"reasoning_effort": "medium"}
+
+    def test_gpt5_maps_xhigh_to_high_for_chat_completions(self):
+        assert _reasoning_effort_param_for_model("gpt-5.4", "xhigh") == {"reasoning_effort": "high"}
+
+    def test_legacy_chat_models_omit_reasoning_effort(self):
+        assert _reasoning_effort_param_for_model("gpt-4o", "low") == {}
+
+    def test_responses_reasoning_shape(self):
+        assert _responses_reasoning_param_for_model("gpt-5.4", "medium") == {
+            "reasoning": {"effort": "medium"}
+        }
+
+    def test_responses_reasoning_allows_minimal(self):
+        assert _responses_reasoning_param_for_model("gpt-5.4", "minimal") == {
+            "reasoning": {"effort": "minimal"}
+        }
+
+
 class _FakeUsage:
     prompt_tokens = 11
     completion_tokens = 7
@@ -229,7 +312,41 @@ class _FakeChunk:
         self.usage = _FakeUsage()
 
 
-class _FakeCompletions:
+class TestOpenAIUsageParsing:
+    def test_parses_cached_tokens_from_prompt_details_object(self):
+        class _PromptDetails:
+            cached_tokens = 8
+
+        class _Usage:
+            prompt_tokens = 20
+            completion_tokens = 4
+            prompt_tokens_details = _PromptDetails()
+
+        usage = _usage_snapshot_from_openai_usage(_Usage())
+
+        assert usage.input_tokens == 20
+        assert usage.output_tokens == 4
+        assert usage.cache_read_input_tokens == 8
+
+    def test_parses_cached_tokens_from_dict_usage(self):
+        usage = _usage_snapshot_from_openai_usage(
+            {
+                "prompt_tokens": 20,
+                "completion_tokens": 4,
+                "prompt_tokens_details": {
+                    "cached_tokens": 8,
+                    "cache_creation_tokens": 12,
+                },
+            }
+        )
+
+        assert usage.input_tokens == 20
+        assert usage.output_tokens == 4
+        assert usage.cache_read_input_tokens == 8
+        assert usage.cache_creation_input_tokens == 12
+
+
+class _FakeResponses:
     def __init__(self) -> None:
         self.last_kwargs: dict[str, object] | None = None
 
@@ -237,19 +354,20 @@ class _FakeCompletions:
         self.last_kwargs = kwargs
 
         async def _stream():
-            yield _FakeChunk()
+            yield {
+                "type": "response.completed",
+                "response": {
+                    "status": "completed",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            }
 
         return _stream()
 
 
-class _FakeChat:
-    def __init__(self) -> None:
-        self.completions = _FakeCompletions()
-
-
 class _FakeOpenAIClient:
     def __init__(self) -> None:
-        self.chat = _FakeChat()
+        self.responses = _FakeResponses()
 
 
 @pytest.mark.asyncio
@@ -285,7 +403,7 @@ async def test_openai_client_uses_full_base_url_path_for_requests():
     events = [event async for event in client.stream_message(request)]
 
     assert events
-    assert seen_urls == ["https://jarodfund.xyz/openai/v1/chat/completions"]
+    assert seen_urls == ["https://jarodfund.xyz/openai/v1/responses"]
     await http_client.aclose()
 
 
@@ -321,10 +439,16 @@ def test_openai_client_uses_bearer_authorization_header():
     assert client._client.default_headers["Authorization"] == "Bearer test-key"
 
 
+def test_openai_client_overrides_sdk_user_agent():
+    client = OpenAICompatibleClient(api_key="test-key", base_url="https://example.com/v1")
+
+    assert client._client.default_headers["User-Agent"] == "OpenHarness/1.0"
+
+
 
 class TestStreamMessageTokenParams:
     @pytest.mark.asyncio
-    async def test_gpt5_stream_uses_max_completion_tokens(self):
+    async def test_stream_uses_responses_max_output_tokens(self):
         client = OpenAICompatibleClient(api_key="test-key")
         fake_sdk = _FakeOpenAIClient()
         client._client = fake_sdk
@@ -337,12 +461,58 @@ class TestStreamMessageTokenParams:
         events = [event async for event in client.stream_message(request)]
 
         assert events
-        assert fake_sdk.chat.completions.last_kwargs is not None
-        assert "max_completion_tokens" in fake_sdk.chat.completions.last_kwargs
-        assert "max_tokens" not in fake_sdk.chat.completions.last_kwargs
+        assert fake_sdk.responses.last_kwargs is not None
+        assert fake_sdk.responses.last_kwargs["max_output_tokens"] == 4096
+        assert "max_completion_tokens" not in fake_sdk.responses.last_kwargs
+        assert "max_tokens" not in fake_sdk.responses.last_kwargs
 
     @pytest.mark.asyncio
-    async def test_gpt4o_stream_keeps_max_tokens(self):
+    async def test_gpt5_stream_includes_responses_reasoning(self):
+        client = OpenAICompatibleClient(api_key="test-key")
+        fake_sdk = _FakeOpenAIClient()
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="gpt-5.4",
+            messages=[ConversationMessage.from_user_text("Explain the codebase")],
+            effort="medium",
+        )
+
+        events = [event async for event in client.stream_message(request)]
+
+        assert events
+        assert fake_sdk.responses.last_kwargs is not None
+        assert fake_sdk.responses.last_kwargs["reasoning"] == {"effort": "medium"}
+
+    @pytest.mark.asyncio
+    async def test_stream_uses_responses_tool_schema(self):
+        client = OpenAICompatibleClient(api_key="test-key")
+        fake_sdk = _FakeOpenAIClient()
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="gpt-5.4",
+            messages=[ConversationMessage.from_user_text("Read a file")],
+            tools=[
+                {
+                    "name": "read_file",
+                    "description": "Read a file",
+                    "input_schema": {"type": "object", "properties": {}},
+                }
+            ],
+        )
+
+        events = [event async for event in client.stream_message(request)]
+
+        assert events
+        assert fake_sdk.responses.last_kwargs is not None
+        assert fake_sdk.responses.last_kwargs["tools"][0]["type"] == "function"
+        assert fake_sdk.responses.last_kwargs["tools"][0]["name"] == "read_file"
+        assert fake_sdk.responses.last_kwargs["tool_choice"] == "auto"
+        assert fake_sdk.responses.last_kwargs["parallel_tool_calls"] is True
+
+    @pytest.mark.asyncio
+    async def test_gpt4o_stream_omits_reasoning(self):
         client = OpenAICompatibleClient(api_key="test-key")
         fake_sdk = _FakeOpenAIClient()
         client._client = fake_sdk
@@ -355,9 +525,9 @@ class TestStreamMessageTokenParams:
         events = [event async for event in client.stream_message(request)]
 
         assert events
-        assert fake_sdk.chat.completions.last_kwargs is not None
-        assert "max_tokens" in fake_sdk.chat.completions.last_kwargs
-        assert "max_completion_tokens" not in fake_sdk.chat.completions.last_kwargs
+        assert fake_sdk.responses.last_kwargs is not None
+        assert "reasoning" not in fake_sdk.responses.last_kwargs
+        assert fake_sdk.responses.last_kwargs["max_output_tokens"] == 4096
 
 
 class TestStripThinkBlocks:

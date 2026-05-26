@@ -99,7 +99,7 @@ class ImageGenerationTool(BaseTool):
                 return ToolResult(
                     output=(
                         "[Image generation via Codex hosted image_generation]\n"
-                        + "\n".join(f"Wrote {path}" for path in written)
+                        + _public_image_output(written)
                         + extra
                     ),
                     metadata={
@@ -120,7 +120,7 @@ class ImageGenerationTool(BaseTool):
         return ToolResult(
             output=(
                 f"[Image generation via {model} ({mode}, openai)]\n"
-                + "\n".join(f"Wrote {path}" for path in written)
+                + _public_image_output(written)
             ),
             metadata={"paths": [str(path) for path in written], "model": model, "mode": mode, "provider": "openai"},
         )
@@ -268,6 +268,17 @@ def _resolve_provider(requested: str, config: dict[str, object]) -> Literal["ope
     if str(config.get("codex_auth_token") or "").strip():
         return "codex"
     return "openai"
+
+
+def _public_image_output(paths: list[Path]) -> str:
+    names = ", ".join(path.name for path in paths)
+    count = len(paths)
+    noun = "image" if count == 1 else "images"
+    return (
+        f"Generated {count} {noun}: {names}\n"
+        "The generated media has been published to the artifact preview. "
+        "Do not expose host filesystem paths to the user."
+    )
 
 
 def _image_payload(arguments: ImageGenerationToolInput, model: str) -> dict[str, Any]:

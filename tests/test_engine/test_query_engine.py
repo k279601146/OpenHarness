@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -35,7 +35,12 @@ from openharness.engine.messages import ToolResultBlock
 from openharness.hooks import HookExecutionContext, HookExecutor, HookEvent
 from openharness.hooks.loader import HookRegistry
 from openharness.hooks.schemas import PromptHookDefinition
-from openharness.engine.query import QueryContext, _execute_tool_call, _is_prompt_too_long_error
+from openharness.engine.query import (
+    QueryContext,
+    _execute_tool_call,
+    _is_prompt_too_long_error,
+    _resolve_permission_file_path,
+)
 
 
 @dataclass
@@ -1114,6 +1119,56 @@ async def test_query_engine_applies_path_rules_to_relative_read_file_targets(tmp
     assert tool_results
     assert tool_results[0].is_error is True
     assert "matches deny rule" in tool_results[0].output
+
+
+def test_permission_path_resolution_accepts_posix_cwd_on_windows():
+    cwd = PurePosixPath("D:/workspace/project")
+
+    resolved = _resolve_permission_file_path(
+        cwd,
+        {"path": "uploads/example.log"},
+        object(),
+    )
+
+    assert resolved == str((Path("D:/workspace/project") / "uploads/example.log").resolve())
+
+
+def test_permission_path_resolution_accepts_posix_root_on_windows():
+    cwd = PurePosixPath("D:/workspace/project")
+
+    resolved = _resolve_permission_file_path(
+        cwd,
+        {"root": "uploads"},
+        object(),
+    )
+
+    assert resolved == str((Path("D:/workspace/project") / "uploads").resolve())
+
+
+@pytest.mark.asyncio
+async def test_tool_execution_accepts_posix_cwd_on_windows(tmp_path: Path):
+    sample = tmp_path / "uploads" / "example.log"
+    sample.parent.mkdir()
+    sample.write_text("image generation complete\n", encoding="utf-8")
+    context = QueryContext(
+        api_client=FakeApiClient([]),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=PurePosixPath(str(tmp_path).replace("\\", "/")),
+        model="claude-test",
+        system_prompt="system",
+        max_tokens=128,
+    )
+
+    result = await _execute_tool_call(
+        context,
+        "read_file",
+        "toolu_read",
+        {"path": "uploads/example.log", "offset": 0, "limit": 1},
+    )
+
+    assert result.is_error is False
+    assert "image generation complete" in result.content
 
 
 @pytest.mark.asyncio

@@ -28,7 +28,10 @@ class BashTool(BaseTool):
     """Execute a shell command with stdout/stderr capture."""
 
     name = "bash"
-    description = "Run a shell command in the local repository."
+    description = (
+        "Run a shell command only when file/search tools cannot complete the task "
+        "or command execution is explicitly required."
+    )
     input_model = BashToolInput
     requires_sandbox = True
 

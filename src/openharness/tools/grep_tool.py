@@ -10,6 +10,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.utils.paths import normalize_host_path
 
 
 class GrepToolInput(BaseModel):
@@ -27,11 +28,12 @@ class GrepToolInput(BaseModel):
 
 
 class GrepTool(BaseTool):
-    """Search text files for a regex pattern."""
+    """Search host workspace text files for a regex pattern."""
 
     name = "grep"
-    description = "Search file contents with a regular expression."
+    description = "Search host workspace file contents with a regular expression."
     input_model = GrepToolInput
+    requires_sandbox = False
 
     def is_read_only(self, arguments: GrepToolInput) -> bool:
         del arguments
@@ -70,7 +72,6 @@ class GrepTool(BaseTool):
                 )
             )
 
-        # Prefer ripgrep for performance; fallback to Python when unavailable.
         matches = await _rg_grep(
             root=root,
             pattern=arguments.pattern,
@@ -82,7 +83,6 @@ class GrepTool(BaseTool):
         if matches is not None:
             return _format_rg_result(matches, arguments.timeout_seconds)
 
-        # Python fallback (kept for portability).
         return ToolResult(
             output=_python_grep_files(
                 paths=root.glob(arguments.file_glob),
@@ -110,7 +110,6 @@ def _python_grep_files(
     limit: int,
     display_base: Path,
 ) -> str:
-    # Python fallback (kept for portability).
     flags = 0 if case_sensitive else re.IGNORECASE
     try:
         compiled = re.compile(pattern, flags)
@@ -142,10 +141,7 @@ def _python_grep_files(
 
 
 def _resolve_path(base: Path, candidate: str | None) -> Path:
-    path = Path(candidate or ".").expanduser()
-    if not path.is_absolute():
-        path = base / path
-    return path.resolve()
+    return normalize_host_path(base, candidate or ".")
 
 
 def _format_rg_result(matches: list[str], timeout_seconds: int) -> ToolResult:
@@ -170,7 +166,6 @@ async def _rg_grep(
     limit: int,
     timeout_seconds: int,
 ) -> list[str] | None:
-    """Return matches using ripgrep, or None if ripgrep is unavailable."""
     rg = shutil.which("rg")
     if not rg:
         return None
@@ -189,27 +184,15 @@ async def _rg_grep(
         cmd.append("-i")
     if file_glob:
         cmd.extend(["--glob", file_glob])
-    # `--` ensures patterns like `-foo` aren't parsed as flags.
     cmd.extend(["--", pattern, "."])
 
-    from openharness.sandbox.session import get_docker_sandbox
-
-    session = get_docker_sandbox()
-    if session is not None and session.is_running:
-        process = await session.exec_command(
-            cmd,
-            cwd=root,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-    else:
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=str(root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-            limit=8 * 1024 * 1024,  # 8 MB per line — avoids LimitOverrunError on long lines
-        )
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        cwd=str(root),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+        limit=8 * 1024 * 1024,
+    )
 
     matches: list[str] = []
     try:
@@ -229,8 +212,6 @@ async def _rg_grep(
         elif process.returncode is None:
             await process.wait()
 
-    # rg exits 0 when matches are found, 1 when none are found.
-    # Any other return code indicates an error; fall back to Python.
     if process.returncode in {0, 1, -15, -9}:
         return matches
     return None
@@ -260,24 +241,13 @@ async def _rg_grep_file(
         cmd.append("-i")
     cmd.extend(["--", pattern, path.name])
 
-    from openharness.sandbox.session import get_docker_sandbox
-
-    session = get_docker_sandbox()
-    if session is not None and session.is_running:
-        process = await session.exec_command(
-            cmd,
-            cwd=path.parent,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-    else:
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=str(path.parent),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-            limit=8 * 1024 * 1024,  # 8 MB per line — avoids LimitOverrunError on long lines
-        )
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        cwd=str(path.parent),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+        limit=8 * 1024 * 1024,
+    )
 
     matches: list[str] = []
     try:
@@ -323,7 +293,6 @@ async def _collect_rg_matches(
         try:
             raw = await process.stdout.readline()
         except ValueError:
-            # Line exceeded the stream buffer limit; skip it and continue.
             continue
         if not raw:
             break
@@ -345,7 +314,6 @@ async def _collect_rg_file_matches(
         try:
             raw = await process.stdout.readline()
         except ValueError:
-            # Line exceeded the stream buffer limit; skip it and continue.
             continue
         if not raw:
             break
@@ -364,7 +332,6 @@ async def _terminate_process(process: asyncio.subprocess.Process) -> None:
     except asyncio.TimeoutError:
         process.kill()
         await process.wait()
-    return None
 
 
 def _format_path(path: Path, display_base: Path) -> str:

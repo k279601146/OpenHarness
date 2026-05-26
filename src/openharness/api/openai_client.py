@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import uuid
 from typing import Any, AsyncIterator
 from urllib.parse import urlsplit, urlunsplit
 
@@ -15,6 +16,7 @@ from openai import AsyncOpenAI
 from openharness.api.client import (
     ApiMessageCompleteEvent,
     ApiMessageRequest,
+    ApiReasoningDeltaEvent,
     ApiRetryEvent,
     ApiStreamEvent,
     ApiTextDeltaEvent,
@@ -46,6 +48,9 @@ STREAM_STALL_THRESHOLD_MS = 30_000
 HEARTBEAT_INTERVAL = 30.0
 
 _MAX_COMPLETION_TOKEN_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+_REASONING_EFFORT_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+_DISABLE_STREAMING_ENV = "OPENHARNESS_OPENAI_DISABLE_STREAMING"
+_DISABLE_STREAM_USAGE_ENV = "OPENHARNESS_OPENAI_DISABLE_STREAM_USAGE"
 
 
 def _token_limit_param_for_model(model: str, max_tokens: int) -> dict[str, int]:
@@ -60,6 +65,97 @@ def _token_limit_param_for_model(model: str, max_tokens: int) -> dict[str, int]:
     if normalized.startswith(_MAX_COMPLETION_TOKEN_MODEL_PREFIXES):
         return {"max_completion_tokens": max_tokens}
     return {"max_tokens": max_tokens}
+
+
+def _responses_token_limit_param(max_tokens: int) -> dict[str, int]:
+    return {"max_output_tokens": max_tokens}
+
+
+def _normalized_model_name(model: str) -> str:
+    normalized = model.strip().lower()
+    if "/" in normalized:
+        normalized = normalized.rsplit("/", 1)[-1]
+    return normalized
+
+
+def _reasoning_effort_param_for_model(model: str, effort: str | None) -> dict[str, str]:
+    normalized_model = _normalized_model_name(model)
+    if not normalized_model.startswith(_REASONING_EFFORT_MODEL_PREFIXES):
+        return {}
+
+    normalized_effort = (effort or "low").strip().lower()
+    if normalized_effort == "max":
+        normalized_effort = "high"
+    if normalized_effort == "xhigh":
+        normalized_effort = "high"
+    if normalized_effort not in {"low", "medium", "high"}:
+        normalized_effort = "low"
+    return {"reasoning_effort": normalized_effort}
+
+
+def _responses_reasoning_param_for_model(model: str, effort: str | None) -> dict[str, dict[str, str]]:
+    normalized_model = _normalized_model_name(model)
+    if not normalized_model.startswith(_REASONING_EFFORT_MODEL_PREFIXES):
+        return {}
+
+    normalized_effort = (effort or "low").strip().lower()
+    if normalized_effort == "xhigh":
+        normalized_effort = "high"
+    if normalized_effort not in {"minimal", "low", "medium", "high"}:
+        normalized_effort = "low"
+    return {"reasoning": {"effort": normalized_effort}}
+
+
+def _openai_streaming_disabled() -> bool:
+    raw = os.environ.get(_DISABLE_STREAMING_ENV, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _openai_stream_usage_disabled() -> bool:
+    raw = os.environ.get(_DISABLE_STREAM_USAGE_ENV, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _usage_attr(obj: Any, name: str, default: Any = None) -> Any:
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
+def _usage_detail_int(details: Any, *names: str) -> int | None:
+    for name in names:
+        value = _usage_attr(details, name)
+        if value is None:
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _usage_snapshot_from_openai_usage(usage: Any) -> UsageSnapshot:
+    prompt_details = _usage_attr(usage, "prompt_tokens_details")
+    if prompt_details is None:
+        prompt_details = _usage_attr(usage, "input_tokens_details")
+
+    return UsageSnapshot(
+        input_tokens=int(_usage_attr(usage, "prompt_tokens", 0) or _usage_attr(usage, "input_tokens", 0) or 0),
+        output_tokens=int(_usage_attr(usage, "completion_tokens", 0) or _usage_attr(usage, "output_tokens", 0) or 0),
+        cache_read_input_tokens=_usage_detail_int(
+            prompt_details,
+            "cached_tokens",
+            "cache_read_input_tokens",
+            "cached_input_tokens",
+        ),
+        cache_creation_input_tokens=_usage_detail_int(
+            prompt_details,
+            "cache_creation_input_tokens",
+            "cache_creation_tokens",
+        ),
+    )
 
 
 def _convert_tools_to_openai(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -79,6 +175,18 @@ def _convert_tools_to_openai(tools: list[dict[str, Any]]) -> list[dict[str, Any]
                 "description": tool.get("description", ""),
                 "parameters": tool.get("input_schema", {}),
             },
+        })
+    return result
+
+
+def _convert_tools_to_responses(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result = []
+    for tool in tools:
+        result.append({
+            "type": "function",
+            "name": tool["name"],
+            "description": tool.get("description", ""),
+            "parameters": tool.get("input_schema", {}),
         })
     return result
 
@@ -169,6 +277,79 @@ def _convert_messages_to_openai(
                     prev["reasoning_content"] = (prev.get("reasoning_content") or "") + "\n" + msg["reasoning_content"]
 
     return merged_messages
+
+
+def _convert_messages_to_responses_input(messages: list[ConversationMessage]) -> list[dict[str, Any]]:
+    responses_items: list[dict[str, Any]] = []
+
+    for msg in messages:
+        if msg.role == "assistant":
+            text_parts = [b.text for b in msg.content if isinstance(b, TextBlock)]
+            text = "".join(text_parts)
+            if text:
+                responses_items.append({
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": text}],
+                })
+            for tool_use in [b for b in msg.content if isinstance(b, ToolUseBlock)]:
+                responses_items.append({
+                    "type": "function_call",
+                    "call_id": tool_use.id,
+                    "name": tool_use.name,
+                    "arguments": json.dumps(tool_use.input),
+                })
+        elif msg.role == "user":
+            user_blocks = [b for b in msg.content if isinstance(b, (TextBlock, ImageBlock))]
+            tool_results = [b for b in msg.content if isinstance(b, ToolResultBlock)]
+
+            if user_blocks:
+                content = _convert_user_content_to_responses(user_blocks)
+                if content:
+                    responses_items.append({"role": "user", "content": content})
+
+            for tool_result in tool_results:
+                responses_items.append({
+                    "type": "function_call_output",
+                    "call_id": tool_result.tool_use_id,
+                    "output": tool_result.content,
+                })
+
+            if not user_blocks and not tool_results:
+                responses_items.append({
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": ""}],
+                })
+
+    return responses_items
+
+
+def _convert_user_content_to_responses(blocks: list[ContentBlock]) -> list[dict[str, Any]]:
+    content: list[dict[str, Any]] = []
+    for block in blocks:
+        if isinstance(block, TextBlock) and block.text:
+            content.append({"type": "input_text", "text": block.text})
+        elif isinstance(block, ImageBlock):
+            content.append({
+                "type": "input_image",
+                "image_url": f"data:{block.media_type};base64,{block.data}",
+            })
+    return content
+
+
+def _system_prompt_to_responses_instructions(system_prompt: Any) -> str | None:
+    if not system_prompt:
+        return None
+    if isinstance(system_prompt, list):
+        parts = []
+        for block in system_prompt:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(str(block.get("text", "")))
+            elif isinstance(block, str):
+                parts.append(block)
+        text = "\n\n".join(parts)
+    else:
+        text = str(system_prompt)
+    return text if text.strip() else None
 
 
 def _convert_user_content_to_openai(blocks: list[ContentBlock]) -> str | list[dict[str, Any]]:
@@ -286,6 +467,60 @@ def _parse_assistant_response(response: Any) -> ConversationMessage:
     return ConversationMessage(role="assistant", content=content)
 
 
+def _usage_snapshot_from_chat_response(response: Any) -> UsageSnapshot:
+    return _usage_snapshot_from_openai_usage(getattr(response, "usage", None))
+
+
+def _usage_snapshot_from_responses_response(response: Any) -> UsageSnapshot:
+    return _usage_snapshot_from_openai_usage(_usage_attr(response, "usage"))
+
+
+def _response_event_type(event: Any) -> str | None:
+    return _usage_attr(event, "type")
+
+
+def _response_event_attr(event: Any, name: str, default: Any = None) -> Any:
+    return _usage_attr(event, name, default)
+
+
+def _response_item_attr(item: Any, name: str, default: Any = None) -> Any:
+    return _usage_attr(item, name, default)
+
+
+def _text_from_response_message_item(item: Any) -> str:
+    raw_content = _response_item_attr(item, "content", [])
+    parts: list[str] = []
+    if isinstance(raw_content, list):
+        for block in raw_content:
+            block_type = _usage_attr(block, "type")
+            if block_type in {"output_text", "text"}:
+                parts.append(str(_usage_attr(block, "text", "")))
+            elif block_type == "refusal":
+                parts.append(str(_usage_attr(block, "refusal", "")))
+    return "".join(parts)
+
+
+def _tool_use_from_response_item(item: Any) -> ToolUseBlock | None:
+    item_type = _response_item_attr(item, "type")
+    if item_type != "function_call":
+        return None
+    call_id = _response_item_attr(item, "call_id") or _response_item_attr(item, "id")
+    name = _response_item_attr(item, "name")
+    arguments = _response_item_attr(item, "arguments", "")
+    if not isinstance(call_id, str) or not call_id or not isinstance(name, str) or not name:
+        return None
+    if isinstance(arguments, str) and arguments:
+        try:
+            parsed = json.loads(arguments)
+        except json.JSONDecodeError:
+            parsed = {}
+    elif isinstance(arguments, dict):
+        parsed = arguments
+    else:
+        parsed = {}
+    return ToolUseBlock(id=call_id, name=name, input=parsed if isinstance(parsed, dict) else {})
+
+
 def _normalize_openai_base_url(base_url: str | None) -> str | None:
     """Normalize custom OpenAI-compatible base URLs without dropping API path segments."""
     if not base_url:
@@ -312,13 +547,17 @@ class OpenAICompatibleClient:
     def __init__(self, api_key: str, *, base_url: str | None = None, timeout: float | None = None) -> None:
         kwargs: dict[str, Any] = {
             "api_key": api_key,
-            "default_headers": {"Authorization": f"Bearer {api_key}"},
+            "default_headers": {
+                "Authorization": f"Bearer {api_key}",
+                "User-Agent": "OpenHarness/1.0",
+            },
         }
         normalized_base_url = _normalize_openai_base_url(base_url)
         if normalized_base_url:
             kwargs["base_url"] = normalized_base_url
         if timeout is not None:
             kwargs["timeout"] = timeout
+        kwargs["max_retries"] = 0
         self._client = AsyncOpenAI(**kwargs)
 
     async def stream_message(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
@@ -362,36 +601,106 @@ class OpenAICompatibleClient:
             raise self._translate_error(last_error) from last_error
 
     async def _stream_once(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
-        """Single attempt: stream an OpenAI chat completion."""
-        openai_messages = _convert_messages_to_openai(request.messages, request.system_prompt)
-        openai_tools = _convert_tools_to_openai(request.tools) if request.tools else None
+        """Single attempt: stream an OpenAI Responses API request."""
+        responses_input = _convert_messages_to_responses_input(request.messages)
+        responses_tools = _convert_tools_to_responses(request.tools) if request.tools else None
+        request_id = f"oh-{uuid.uuid4().hex[:10]}"
 
         params: dict[str, Any] = {
             "model": request.model,
-            "messages": openai_messages,
+            "input": responses_input,
             "stream": True,
-            "stream_options": {"include_usage": True},
         }
-        params.update(_token_limit_param_for_model(request.model, request.max_tokens))
-        if openai_tools:
-            params["tools"] = openai_tools
-            # Some providers (Kimi) error on empty reasoning_content in
-            # tool-call follow-ups.  Omit the entire stream_options key if
-            # tools are present – avoids triggering model-side thinking mode
-            # that requires reasoning_content on every assistant message.
-            params.pop("stream_options", None)
+        instructions = _system_prompt_to_responses_instructions(request.system_prompt)
+        if instructions:
+            params["instructions"] = instructions
+        if _openai_streaming_disabled():
+            params["stream"] = False
+        params.update(_responses_token_limit_param(request.max_tokens))
+        params.update(_responses_reasoning_param_for_model(request.model, request.effort))
+        if responses_tools:
+            params["tools"] = responses_tools
+            params["tool_choice"] = "auto"
+            params["parallel_tool_calls"] = True
 
-        # Collect full response while streaming text deltas
+        log.info(
+            "[OpenAICompat:%s] responses request model=%s stream=%s input_items=%d system=%s "
+            "tools=%d tool_names=%s max_output_tokens=%s reasoning=%s base_url=%s",
+            request_id,
+            request.model,
+            params.get("stream"),
+            len(responses_input),
+            "yes" if instructions else "no",
+            len(responses_tools or []),
+            [tool.get("name") for tool in (responses_tools or [])[:8]],
+            params.get("max_output_tokens"),
+            params.get("reasoning"),
+            getattr(self._client, "base_url", None),
+        )
+
+        if not params.get("stream"):
+            try:
+                response = await self._client.responses.create(**params)
+            except Exception as exc:
+                log.warning(
+                    "[OpenAICompat:%s] responses non-stream create failed type=%s status=%s body=%s message=%s",
+                    request_id,
+                    exc.__class__.__name__,
+                    getattr(exc, "status_code", None),
+                    getattr(exc, "body", None),
+                    exc,
+                )
+                raise
+
+            content: list[ContentBlock] = []
+            for item in _usage_attr(response, "output", []) or []:
+                item_type = _response_item_attr(item, "type")
+                if item_type == "message":
+                    text = _text_from_response_message_item(item)
+                    if text:
+                        content.append(TextBlock(text=text))
+                else:
+                    tool_use = _tool_use_from_response_item(item)
+                    if tool_use:
+                        content.append(tool_use)
+
+            message = ConversationMessage(role="assistant", content=content)
+            if message.text:
+                yield ApiTextDeltaEvent(text=message.text)
+            log.info(
+                "[OpenAICompat:%s] responses non-stream complete content_chars=%d tools=%d status=%s",
+                request_id,
+                len(message.text),
+                len(message.tool_uses),
+                _usage_attr(response, "status"),
+            )
+            yield ApiMessageCompleteEvent(
+                message=message,
+                usage=_usage_snapshot_from_responses_response(response),
+                stop_reason=_usage_attr(response, "status"),
+            )
+            return
+
         collected_content = ""
         collected_reasoning = ""
-        collected_tool_calls: dict[int, dict[str, Any]] = {}
+        collected_tool_calls: list[ToolUseBlock] = []
         finish_reason: str | None = None
-        usage_data: dict[str, int] = {}
-        # Buffer to strip inline <think>…</think> blocks across streaming chunks.
+        usage = UsageSnapshot()
         _think_buf = ""
 
-        response_stream = await self._client.chat.completions.create(**params)
-        
+        try:
+            response_stream = await self._client.responses.create(**params)
+        except Exception as exc:
+            log.warning(
+                "[OpenAICompat:%s] responses create failed type=%s status=%s body=%s message=%s",
+                request_id,
+                exc.__class__.__name__,
+                getattr(exc, "status_code", None),
+                getattr(exc, "body", None),
+                exc,
+            )
+            raise
+
         last_event_time = asyncio.get_event_loop().time()
 
         async def _watchdog_iterator():
@@ -403,112 +712,162 @@ class OpenAICompatibleClient:
                     now = asyncio.get_event_loop().time()
                     gap = now - last_event_time
                     if gap > STREAM_STALL_THRESHOLD_MS / 1000:
-                        log.warning(f"OpenAI Streaming stall detected: {gap:.1f}s gap.")
+                        log.warning(f"OpenAI Responses streaming stall detected: {gap:.1f}s gap.")
                     last_event_time = now
                     yield event
                 except asyncio.TimeoutError:
-                    log.error(f"OpenAI Streaming idle timeout after {STREAM_IDLE_TIMEOUT_MS}ms.")
+                    log.error(f"OpenAI Responses streaming idle timeout after {STREAM_IDLE_TIMEOUT_MS}ms.")
                     raise TimeoutError("Streaming idle timeout")
                 except StopAsyncIteration:
                     break
 
-        async for chunk in _watchdog_iterator():
-            if not chunk.choices:
-                # Usage-only chunk (some providers send this at the end)
-                if chunk.usage:
-                    prompt_details = getattr(chunk.usage, "prompt_tokens_details", None)
-                    usage_data = {
-                        "input_tokens": chunk.usage.prompt_tokens or 0,
-                        "output_tokens": chunk.usage.completion_tokens or 0,
-                        "cache_read_input_tokens": getattr(prompt_details, "cached_tokens", None) if prompt_details else None,
-                    }
-                continue
+        try:
+            request_started_at = asyncio.get_event_loop().time()
+            first_visible_delta_at: float | None = None
+            async for event in _watchdog_iterator():
+                event_type = _response_event_type(event)
 
-            delta = chunk.choices[0].delta
-            if not delta:
-                continue
+                if event_type == "response.output_text.delta":
+                    delta = _response_event_attr(event, "delta", "")
+                    if not isinstance(delta, str) or not delta:
+                        continue
+                    _think_buf += delta
+                    visible, _think_buf = _strip_think_blocks(_think_buf)
+                    if visible:
+                        collected_content += visible
+                        if first_visible_delta_at is None:
+                            first_visible_delta_at = asyncio.get_event_loop().time()
+                            log.info(
+                                "[OpenAICompat:%s] first_visible_delta latency=%.3fs chars=%d",
+                                request_id,
+                                first_visible_delta_at - request_started_at,
+                                len(visible),
+                            )
+                        yield ApiTextDeltaEvent(text=visible)
+                    continue
 
-            chunk_finish = chunk.choices[0].finish_reason
+                if event_type in {"response.reasoning.delta", "response.reasoning_text.delta"}:
+                    reasoning_piece = (
+                        _response_event_attr(event, "delta", "")
+                        or _response_event_attr(event, "text", "")
+                        or ""
+                    )
+                    if not isinstance(reasoning_piece, str):
+                        reasoning_piece = str(reasoning_piece)
+                    if reasoning_piece:
+                        collected_reasoning += reasoning_piece
+                        yield ApiReasoningDeltaEvent(text=reasoning_piece)
+                    continue
 
-            if chunk_finish:
-                finish_reason = chunk_finish
+                if event_type == "response.output_item.done":
+                    item = _response_event_attr(event, "item")
+                    if not item:
+                        continue
+                    item_type = _response_item_attr(item, "type")
+                    if item_type == "message":
+                        text = _text_from_response_message_item(item)
+                        if text and not collected_content:
+                            collected_content = text
+                    else:
+                        tool_use = _tool_use_from_response_item(item)
+                        if tool_use:
+                            collected_tool_calls.append(tool_use)
+                    continue
 
-            # Accumulate reasoning_content from thinking models (not shown to user)
-            reasoning_piece = getattr(delta, "reasoning_content", None) or ""
-            if reasoning_piece:
-                collected_reasoning += reasoning_piece
-                yield ApiReasoningDeltaEvent(text=reasoning_piece)
+                if event_type == "response.completed":
+                    response_payload = _response_event_attr(event, "response", {})
+                    if response_payload:
+                        usage = _usage_snapshot_from_responses_response(response_payload)
+                        finish_reason = _usage_attr(response_payload, "status") or "completed"
+                    continue
 
-            # Stream text content to user, stripping inline <think> blocks
-            if delta.content:
-                _think_buf += delta.content
-                visible, _think_buf = _strip_think_blocks(_think_buf)
-                if visible:
-                    collected_content += visible
-                    yield ApiTextDeltaEvent(text=visible)
+                if event_type in {"response.failed", "response.incomplete"}:
+                    response_payload = _response_event_attr(event, "response", {})
+                    error = _usage_attr(response_payload, "error") or _response_event_attr(event, "error")
+                    raise RequestFailure(str(error or f"Responses API stream ended with {event_type}"))
 
-            # Accumulate tool calls
-            if delta.tool_calls:
-                for tc_delta in delta.tool_calls:
-                    idx = tc_delta.index
-                    if idx not in collected_tool_calls:
-                        collected_tool_calls[idx] = {
-                            "id": tc_delta.id or "",
-                            "name": "",
-                            "arguments": "",
-                        }
-                    entry = collected_tool_calls[idx]
-                    if tc_delta.id:
-                        entry["id"] = tc_delta.id
-                    if tc_delta.function:
-                        if tc_delta.function.name:
-                            entry["name"] = tc_delta.function.name
-                        if tc_delta.function.arguments:
-                            entry["arguments"] += tc_delta.function.arguments
+                if event_type == "error":
+                    raise RequestFailure(str(_response_event_attr(event, "message", event)))
 
-            # Usage in chunk (if provider sends it)
-            if chunk.usage:
-                prompt_details = getattr(chunk.usage, "prompt_tokens_details", None)
-                usage_data = {
-                    "input_tokens": chunk.usage.prompt_tokens or 0,
-                    "output_tokens": chunk.usage.completion_tokens or 0,
-                    "cache_read_input_tokens": getattr(prompt_details, "cached_tokens", None) if prompt_details else None,
-                }
+                if _usage_attr(event, "usage") is not None and _usage_attr(event, "output") is not None:
+                    usage = _usage_snapshot_from_responses_response(event)
+                    finish_reason = _usage_attr(event, "status") or finish_reason
+                    continue
 
-        # Build the final ConversationMessage
+                choices = _usage_attr(event, "choices")
+                if not choices:
+                    continue
+                choice = choices[0]
+                delta = _usage_attr(choice, "delta")
+                if not delta:
+                    continue
+                chunk_finish = _usage_attr(choice, "finish_reason")
+                if chunk_finish:
+                    finish_reason = chunk_finish
+
+                reasoning_piece = _usage_attr(delta, "reasoning_content", "") or ""
+                if reasoning_piece:
+                    collected_reasoning += reasoning_piece
+                    yield ApiReasoningDeltaEvent(text=reasoning_piece)
+
+                delta_content = _usage_attr(delta, "content", "")
+                if delta_content:
+                    _think_buf += delta_content
+                    visible, _think_buf = _strip_think_blocks(_think_buf)
+                    if visible:
+                        collected_content += visible
+                        if first_visible_delta_at is None:
+                            first_visible_delta_at = asyncio.get_event_loop().time()
+                            log.info(
+                                "[OpenAICompat:%s] first_visible_delta latency=%.3fs chars=%d",
+                                request_id,
+                                first_visible_delta_at - request_started_at,
+                                len(visible),
+                            )
+                        yield ApiTextDeltaEvent(text=visible)
+
+                event_usage = _usage_attr(event, "usage")
+                if event_usage:
+                    usage = _usage_snapshot_from_openai_usage(event_usage)
+        except Exception as exc:
+            log.warning(
+                "[OpenAICompat:%s] responses stream failed type=%s status=%s body=%s "
+                "content_chars=%d reasoning_chars=%d tool_calls=%d finish_reason=%s message=%s",
+                request_id,
+                exc.__class__.__name__,
+                getattr(exc, "status_code", None),
+                getattr(exc, "body", None),
+                len(collected_content),
+                len(collected_reasoning),
+                len(collected_tool_calls),
+                finish_reason,
+                exc,
+            )
+            raise
+
         content: list[ContentBlock] = []
         if collected_content:
             content.append(TextBlock(text=collected_content))
-
-        for _idx in sorted(collected_tool_calls.keys()):
-            tc = collected_tool_calls[_idx]
-            # Skip phantom/empty tool calls that some providers send
-            if not tc["name"]:
-                continue
-            try:
-                args = json.loads(tc["arguments"])
-            except (json.JSONDecodeError, TypeError):
-                args = {}
-            content.append(ToolUseBlock(
-                id=tc["id"],
-                name=tc["name"],
-                input=args,
-            ))
+        content.extend(collected_tool_calls)
 
         final_message = ConversationMessage(role="assistant", content=content)
-
-        # Stash reasoning for thinking models so _convert_assistant_message
-        # can replay it when the message is sent back to the API
         if collected_reasoning:
             final_message._reasoning = collected_reasoning  # type: ignore[attr-defined]
 
+        log.info(
+            "[OpenAICompat:%s] responses complete content_chars=%d reasoning_chars=%d tools=%d "
+            "finish_reason=%s usage=%s",
+            request_id,
+            len(collected_content),
+            len(collected_reasoning),
+            len(collected_tool_calls),
+            finish_reason,
+            usage.model_dump(),
+        )
+
         yield ApiMessageCompleteEvent(
             message=final_message,
-            usage=UsageSnapshot(
-                input_tokens=usage_data.get("input_tokens", 0),
-                output_tokens=usage_data.get("output_tokens", 0),
-                cache_read_input_tokens=usage_data.get("cache_read_input_tokens"),
-            ),
+            usage=usage,
             stop_reason=finish_reason,
         )
 

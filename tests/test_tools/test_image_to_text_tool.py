@@ -33,7 +33,7 @@ from openharness.tools.image_to_text_tool import ImageToTextTool, ImageToTextToo
         ("o3-mini", True),
         ("o4-mini", True),
         # Google Gemini
-        ("gemini-2.5-flash", True),
+        ("gpt-5.4", True),
         ("gemini-2.0-flash", True),
         ("gemini-pro-vision", True),
         # Qwen VL

@@ -37,6 +37,17 @@ _MOCK_VIDEO_URLS = [
 ]
 
 
+def _public_media_output(kind: str, paths: list[Path]) -> str:
+    names = ", ".join(path.name for path in paths)
+    count = len(paths)
+    plural = "" if count == 1 else "s"
+    return (
+        f"SUCCESS: Generated {count} {kind}{plural}: {names}. "
+        "The media has been published to the artifact preview. "
+        "Do not expose host filesystem paths to the user."
+    )
+
+
 def _is_mock_mode(api_key: str) -> bool:
     """判断是否应使用 Mock 模式。必须显式设置 MOCK_MEDIA=true 才会启用。"""
     is_mock = os.getenv("MOCK_MEDIA", "false").lower() == "true"
@@ -267,7 +278,7 @@ async def _run_doubao_image(
                         continue
         if not saved:
             return ToolResult(output="Doubao 未生成图像，请检查提示词合规性或 API 额度。", is_error=True)
-        return ToolResult(output=f"SUCCESS: 已生成 {len(saved)} 张图像。保存路径: {[str(p) for p in saved]}")
+        return ToolResult(output=_public_media_output("image", saved))
     except Exception as e:
         log.exception("DoubaoImageEngine 异常")
         return ToolResult(output=f"Doubao 图片生成失败: {e}", is_error=True)
@@ -310,7 +321,7 @@ async def _run_openai_image(
 
         if not saved:
             return ToolResult(output="OpenAI API 未返回有效的预览图像。", is_error=True)
-        return ToolResult(output=f"SUCCESS: 已生成 {len(saved)} 张图像。保存路径: {[str(p) for p in saved]}")
+        return ToolResult(output=_public_media_output("image", saved))
     except Exception as e:
         log.exception("OpenAIImageEngine 异常")
         return ToolResult(output=f"OpenAI 图片生成失败: {e}", is_error=True)

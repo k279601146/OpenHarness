@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.utils.paths import normalize_host_path
 
 
 class FileReadToolInput(BaseModel):
@@ -18,11 +19,12 @@ class FileReadToolInput(BaseModel):
 
 
 class FileReadTool(BaseTool):
-    """Read a UTF-8 text file with line numbers."""
+    """Read a UTF-8 text file with line numbers from the host workspace."""
 
     name = "read_file"
-    description = "Read a text file from the local repository."
+    description = "Read a text file from the host workspace."
     input_model = FileReadToolInput
+    requires_sandbox = False
 
     def is_read_only(self, arguments: FileReadToolInput) -> bool:
         del arguments
@@ -33,62 +35,28 @@ class FileReadTool(BaseTool):
         arguments: FileReadToolInput,
         context: ToolExecutionContext,
     ) -> ToolResult:
-        from openharness.sandbox.session import get_sandbox_session
-        session = get_sandbox_session()
+        path = _resolve_path(Path(context.cwd), arguments.path)
+        from openharness.tools.safe_file_validator import validate_safe_file_operation
 
-        if session:
-            # E2B 沙箱模式：直接使用 sandbox.files API 读文件
-            try:
-                # 确保相对路径相对于 context.cwd (/home/user) 解析
-                container_path = arguments.path.replace("\\", "/")
-                if container_path.startswith("~/"):
-                    container_path = "/home/user" + container_path[1:]
-                elif not container_path.startswith("/"):
-                    # E2B 沙箱内的工作目录固定为 /home/user
-                    # context.cwd 可能是 Windows 宿主机路径，不能直接用于容器路径拼接
-                    raw_cwd = str(context.cwd).replace("\\", "/")
-                    if raw_cwd.startswith("/") and ":" not in raw_cwd:
-                        base_cwd = raw_cwd
-                    else:
-                        base_cwd = "/home/user"
-                    container_path = f"{base_cwd}/{container_path}".replace("//", "/")
-                
-                # E2B 的 python sdk 默认读出可能是 str/bytes
-                text = await session.read_file(container_path)
-            except Exception as e:
-                return ToolResult(output=f"Sandbox file read error: {e}", is_error=True)
-                
-            if isinstance(text, bytes):
-                if b"\x00" in text:
-                    return ToolResult(output=f"Binary file cannot be read as text: {arguments.path}", is_error=True)
-                text = text.decode("utf-8", errors="replace")
-                
-            lines = text.splitlines()
-        else:
-            # MVP 安全模式：使用白名单验证本地文件系统
-            path = _resolve_path(Path(context.cwd), arguments.path)
-            from openharness.tools.safe_file_validator import validate_safe_file_operation
-            
-            is_safe, error_msg = validate_safe_file_operation(
-                str(path), 
-                str(context.cwd),
-                operation="read"
-            )
-            if not is_safe:
-                return ToolResult(output=error_msg, is_error=True)
+        is_safe, error_msg = validate_safe_file_operation(
+            str(path),
+            str(context.cwd),
+            operation="read",
+        )
+        if not is_safe:
+            return ToolResult(output=error_msg, is_error=True)
 
-            if not path.exists():
-                return ToolResult(output=f"File not found: {path}", is_error=True)
-            if path.is_dir():
-                return ToolResult(output=f"Cannot read directory: {path}", is_error=True)
+        if not path.exists():
+            return ToolResult(output=f"File not found: {path}", is_error=True)
+        if path.is_dir():
+            return ToolResult(output=f"Cannot read directory: {path}", is_error=True)
 
-            raw = path.read_bytes()
-            if b"\x00" in raw:
-                return ToolResult(output=f"Binary file cannot be read as text: {path}", is_error=True)
+        raw = path.read_bytes()
+        if b"\x00" in raw:
+            return ToolResult(output=f"Binary file cannot be read as text: {path}", is_error=True)
 
-            text = raw.decode("utf-8", errors="replace")
-            lines = text.splitlines()
-
+        text = raw.decode("utf-8", errors="replace")
+        lines = text.splitlines()
         selected = lines[arguments.offset : arguments.offset + arguments.limit]
         numbered = [
             f"{arguments.offset + index + 1:>6}\t{line}"
@@ -100,7 +68,4 @@ class FileReadTool(BaseTool):
 
 
 def _resolve_path(base: Path, candidate: str) -> Path:
-    path = Path(candidate).expanduser()
-    if not path.is_absolute():
-        path = base / path
-    return path.resolve()
+    return normalize_host_path(base, candidate)

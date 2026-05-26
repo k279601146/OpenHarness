@@ -8,6 +8,7 @@ import shutil
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from openharness.config import Settings, load_settings
 from openharness.platforms import PlatformName, get_platform
@@ -58,9 +59,54 @@ async def create_shell_subprocess(
     stdout: int | None = None,
     stderr: int | None = None,
     env: Mapping[str, str] | None = None,
+    user_id: str | int | None = None,
+    thread_id: str | None = None,
+    db_session: Any | None = None,
 ) -> asyncio.subprocess.Process:
     """Spawn a shell command with platform-aware shell selection and sandboxing."""
     resolved_settings = settings or load_settings()
+
+    # E2B backend: route shell commands through the active per-user/thread sandbox
+    # when the caller is running inside a SaaS mission context. Plain local
+    # helper calls still use the host shell, even if e2b is the default backend.
+    if resolved_settings.sandbox.enabled and resolved_settings.sandbox.backend == "e2b":
+        from openharness.sandbox.session import (
+            get_active_sandbox,
+            get_or_start_sandbox,
+            get_sandbox_session,
+        )
+
+        session = None
+        if user_id is not None and thread_id:
+            try:
+                session = get_active_sandbox(int(user_id), thread_id)
+            except (TypeError, ValueError):
+                session = None
+        if session is None:
+            session = get_sandbox_session()
+        if session is None and user_id is not None and thread_id:
+            try:
+                session = await get_or_start_sandbox(
+                    resolved_settings,
+                    int(user_id),
+                    thread_id,
+                    db_session=db_session,
+                )
+            except (TypeError, ValueError):
+                session = None
+        if session is not None and session.is_running:
+            return await session.exec_command(
+                command,
+                cwd=cwd,
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
+                env=dict(env) if env is not None else None,
+            )
+        if user_id is not None and thread_id and resolved_settings.sandbox.fail_if_unavailable:
+            from openharness.sandbox import SandboxUnavailableError
+
+            raise SandboxUnavailableError("E2B sandbox session is not running")
 
     # Docker backend: route through docker exec
     if resolved_settings.sandbox.enabled and resolved_settings.sandbox.backend == "docker":

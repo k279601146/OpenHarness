@@ -42,6 +42,7 @@ from openharness.permissions.checker import PermissionChecker
 from openharness.services.tool_outputs import tool_output_inline_chars, tool_output_preview_chars
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.base import ToolRegistry
+from openharness.utils.paths import normalize_host_path
 
 AUTO_COMPACT_STATUS_MESSAGE = "Auto-compacting conversation memory to keep things fast and focused."
 REACTIVE_COMPACT_STATUS_MESSAGE = "Prompt too long; compacting conversation memory and retrying."
@@ -61,6 +62,10 @@ MAX_TRACKED_WORK_LOG = 10
 MAX_TRACKED_USER_GOALS = 5
 MAX_TRACKED_ACTIVE_ARTIFACTS = 8
 MAX_TRACKED_VERIFIED_WORK = 10
+
+
+def _concrete_path(path: Path) -> Path:
+    return normalize_host_path(Path.cwd(), path)
 
 
 def _is_prompt_too_long_error(exc: Exception) -> bool:
@@ -611,7 +616,7 @@ async def _preprocess_images_in_messages(
             return msg_idx, blk_idx, "[Image: could not parse image data]"
 
         exec_context = ToolExecutionContext(
-            cwd=context.cwd,
+            cwd=_concrete_path(context.cwd),
             metadata={
                 "vision_model_config": vision_config,
                 **(context.tool_metadata or {}),
@@ -784,8 +789,27 @@ async def run_query(
         if final_message is None:
             raise RuntimeError("Model stream finished without a final message")
 
+        
         coordinator_context_message: ConversationMessage | None = None
-        if context.system_prompt.startswith("You are a **coordinator**."):
+        
+        # === 升级版：多格式全兼容提取文本 ===
+        sys_prompt = context.system_prompt
+        if isinstance(sys_prompt, list):
+            extracted_prompts = []
+            for item in sys_prompt:
+                if isinstance(item, str):
+                    extracted_prompts.append(item)
+                elif isinstance(item, dict):
+                    # 兼容不同大模型客户端常见的字典键名：text 或 content
+                    text_val = item.get("text") or item.get("content") or ""
+                    if text_val:
+                        extracted_prompts.append(text_val)
+            sys_prompt = "\n".join(extracted_prompts)
+        elif isinstance(sys_prompt, dict):
+            sys_prompt = sys_prompt.get("text") or sys_prompt.get("content") or ""
+        # ==================================
+            
+        if sys_prompt.startswith("You are a **coordinator**."):
             if messages and messages[-1].role == "user" and messages[-1].text.startswith("# Coordinator User Context"):
                 coordinator_context_message = messages.pop()
 
@@ -970,7 +994,7 @@ async def _execute_tool_call(
     result = await tool.execute(
         parsed_input,
         ToolExecutionContext(
-            cwd=context.cwd,
+            cwd=_concrete_path(context.cwd),
             metadata={
                 "tool_registry": context.tool_registry,
                 "ask_user_prompt": context.ask_user_prompt,
@@ -1026,18 +1050,12 @@ def _resolve_permission_file_path(
     for key in ("file_path", "path", "root"):
         value = raw_input.get(key)
         if isinstance(value, str) and value.strip():
-            path = Path(value).expanduser()
-            if not path.is_absolute():
-                path = cwd / path
-            return str(path.resolve())
+            return str(normalize_host_path(cwd, value))
 
     for attr in ("file_path", "path", "root"):
         value = getattr(parsed_input, attr, None)
         if isinstance(value, str) and value.strip():
-            path = Path(value).expanduser()
-            if not path.is_absolute():
-                path = cwd / path
-            return str(path.resolve())
+            return str(normalize_host_path(cwd, value))
 
     return None
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic import AliasChoices, BaseModel, Field
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.utils.paths import normalize_host_path
 
 
 class GlobToolInput(BaseModel):
@@ -42,10 +43,7 @@ class GlobTool(BaseTool):
 
 
 def _resolve_path(base: Path, candidate: str | None) -> Path:
-    path = Path(candidate or ".").expanduser()
-    if not path.is_absolute():
-        path = base / path
-    return path.resolve()
+    return normalize_host_path(base, candidate or ".")
 
 
 def _resolve_glob_request(base: Path, root_arg: str | None, pattern: str) -> tuple[Path, str]:
@@ -114,23 +112,12 @@ async def _glob(root: Path, pattern: str, *, limit: int) -> list[str]:
             cmd.append("--hidden")
         cmd.extend(["--glob", pattern, "."])
 
-        from openharness.sandbox.session import get_docker_sandbox
-
-        session = get_docker_sandbox()
-        if session is not None and session.is_running:
-            process = await session.exec_command(
-                cmd,
-                cwd=root,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-        else:
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                cwd=str(root),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=str(root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
 
         lines: list[str] = []
 

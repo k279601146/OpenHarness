@@ -190,3 +190,56 @@ async def test_create_shell_subprocess_defaults_stdin_to_devnull(monkeypatch, tm
 
     assert captured["args"] == ("/usr/bin/bash", "-lc", "echo hi")
     assert captured["kwargs"]["stdin"] is asyncio.subprocess.DEVNULL
+
+
+@pytest.mark.asyncio
+async def test_create_shell_subprocess_routes_e2b_by_user_thread(monkeypatch, tmp_path: Path):
+    class _FakeProcess:
+        returncode = 0
+
+        async def wait(self):
+            return 0
+
+    class _FakeSandbox:
+        is_running = True
+
+        def __init__(self):
+            self.calls: list[dict[str, object]] = []
+
+        async def exec_command(self, command, **kwargs):
+            self.calls.append({"command": command, **kwargs})
+            return _FakeProcess()
+
+    sandbox = _FakeSandbox()
+
+    monkeypatch.setattr(
+        "openharness.sandbox.session.get_active_sandbox",
+        lambda user_id, thread_id: sandbox if (user_id, thread_id) == (1, "thread-1") else None,
+    )
+
+    settings = Settings()
+    settings.sandbox.backend = "e2b"
+    settings.sandbox.fail_if_unavailable = True
+
+    process = await create_shell_subprocess(
+        "pwd && ls -la",
+        cwd=tmp_path,
+        settings=settings,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        user_id="1",
+        thread_id="thread-1",
+        db_session=object(),
+    )
+
+    assert await process.wait() == 0
+    assert sandbox.calls == [
+        {
+            "command": "pwd && ls -la",
+            "cwd": tmp_path,
+            "stdin": asyncio.subprocess.DEVNULL,
+            "stdout": asyncio.subprocess.PIPE,
+            "stderr": asyncio.subprocess.STDOUT,
+            "env": None,
+        }
+    ]
