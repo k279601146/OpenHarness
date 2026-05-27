@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -559,6 +560,15 @@ class OpenAICompatibleClient:
             kwargs["timeout"] = timeout
         kwargs["max_retries"] = 0
         self._client = AsyncOpenAI(**kwargs)
+
+    async def aclose(self) -> None:
+        """Close the underlying async SDK client before its event loop exits."""
+        close = getattr(self._client, "close", None)
+        if close is None:
+            return
+        result = close()
+        if inspect.isawaitable(result):
+            await result
 
     async def stream_message(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
         """Yield text deltas and the final message, matching the Anthropic client interface."""

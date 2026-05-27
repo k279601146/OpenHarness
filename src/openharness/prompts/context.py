@@ -24,6 +24,27 @@ from openharness.skills.loader import load_skill_registry
 
 logger = logging.getLogger("PromptContext")
 
+def _build_delegation_section() -> str:
+    """Build a concise section describing delegation and worker usage."""
+    return "\n".join(
+        [
+            "# Delegation And Subagents",
+            "",
+            "OpenHarness can delegate background work with the `agent` tool.",
+            "Use it when the user explicitly asks for a subagent, background worker, or parallel investigation, "
+            "or when the task clearly benefits from splitting off a focused worker.",
+            "",
+            "Default pattern:",
+            '- Spawn an agent with `agent(description=..., prompt=..., subagent_type="worker")`.',
+            "- Inspect running or recorded workers with `/agents`.",
+            "- Inspect one worker in detail with `/agents show TASK_ID`.",
+            "- Send follow-up instructions with `send_message(task_id=..., message=...)`.",
+            "- Read worker output with `task_output(task_id=...)`.",
+            "",
+            "Prefer a normal direct answer for simple tasks. Use subagents only when they materially help.",
+        ]
+    )
+
 
 def _build_skills_section(
     cwd: str | Path,
@@ -56,28 +77,6 @@ def _build_skills_section(
         display = f" ({skill.display_name})" if skill.display_name else ""
         lines.append(f"- **{command_name}**{display}: {skill.description}")
     return "\n".join(lines)
-
-
-def _build_delegation_section() -> str:
-    """Build a concise section describing delegation and worker usage."""
-    return "\n".join(
-        [
-            "# Delegation And Subagents",
-            "",
-            "OpenHarness can delegate background work with the `agent` tool.",
-            "Use it when the user explicitly asks for a subagent, background worker, or parallel investigation, "
-            "or when the task clearly benefits from splitting off a focused worker.",
-            "",
-            "Default pattern:",
-            '- Spawn an agent with `agent(description=..., prompt=..., subagent_type="worker")`.',
-            "- Inspect running or recorded workers with `/agents`.",
-            "- Inspect one worker in detail with `/agents show TASK_ID`.",
-            "- Send follow-up instructions with `send_message(task_id=..., message=...)`.",
-            "- Read worker output with `task_output(task_id=...)`.",
-            "",
-            "Prefer a normal direct answer for simple tasks. Use subagents only when they materially help.",
-        ]
-    )
 
 
 @functools.lru_cache(maxsize=4)
@@ -145,12 +144,7 @@ def build_runtime_system_prompt(
             "# Session Mode\nFast mode is enabled. Prefer concise replies, minimal tool use, and quicker progress over exhaustive exploration."
         )
 
-    sections.append(
-        "# Reasoning Settings\n"
-        f"- Effort: {settings.effort}\n"
-        f"- Passes: {settings.passes}\n"
-        "Adjust depth and iteration count to match these settings while still completing the task."
-    )
+ 
 
     claude_md = load_claude_md_prompt(cwd)
     if claude_md:

@@ -445,6 +445,23 @@ def test_openai_client_overrides_sdk_user_agent():
     assert client._client.default_headers["User-Agent"] == "OpenHarness/1.0"
 
 
+@pytest.mark.asyncio
+async def test_openai_client_aclose_closes_underlying_sdk_client():
+    class _StubAsyncOpenAI:
+        def __init__(self, **kwargs):
+            self.closed = False
+
+        async def close(self):
+            self.closed = True
+
+    client = OpenAICompatibleClient(api_key="test-key")
+    client._client = _StubAsyncOpenAI()
+
+    await client.aclose()
+
+    assert client._client.closed is True
+
+
 
 class TestStreamMessageTokenParams:
     @pytest.mark.asyncio
