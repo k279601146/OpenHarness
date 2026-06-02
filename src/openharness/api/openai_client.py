@@ -180,9 +180,18 @@ def _convert_tools_to_openai(tools: list[dict[str, Any]]) -> list[dict[str, Any]
     return result
 
 
-def _convert_tools_to_responses(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _convert_tools_to_responses(
+    tools: list[dict[str, Any]],
+    *,
+    include_hosted_web_search: bool = True,
+) -> list[dict[str, Any]]:
     result = []
+    use_hosted_web_search = include_hosted_web_search and _should_register_hosted_web_search(tools)
+    if use_hosted_web_search:
+        result.append({"type": "web_search"})
     for tool in tools:
+        if use_hosted_web_search and tool.get("name") == "web_search":
+            continue
         result.append({
             "type": "function",
             "name": tool["name"],
@@ -190,6 +199,51 @@ def _convert_tools_to_responses(tools: list[dict[str, Any]]) -> list[dict[str, A
             "parameters": tool.get("input_schema", {}),
         })
     return result
+
+
+def _should_register_hosted_web_search(tools: list[dict[str, Any]]) -> bool:
+    if os.environ.get("OPENHARNESS_DISABLE_HOSTED_WEB_SEARCH", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return False
+    return any(tool.get("name") == "web_search" for tool in tools)
+
+
+def _without_hosted_web_search(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
+    if not tools:
+        return tools
+    return [tool for tool in tools if tool.get("type") != "web_search"]
+
+
+def _has_hosted_web_search(tools: list[dict[str, Any]] | None) -> bool:
+    return any(tool.get("type") == "web_search" for tool in tools or [])
+
+
+def _convert_tools_to_responses_local_web_search_fallback(
+    tools: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]] | None:
+    if not tools:
+        return tools
+    return _convert_tools_to_responses(tools, include_hosted_web_search=False)
+
+
+def _looks_like_hosted_web_search_unsupported(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code not in {400, 404, 422}:
+        return False
+    body = getattr(exc, "body", None)
+    text = f"{body or ''} {exc}".lower()
+    if "web_search" not in text:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "unsupported",
+            "not supported",
+            "invalid",
+            "unknown",
+            "unrecognized",
+            "extra_forbidden",
+        )
+    )
 
 
 def _convert_messages_to_openai(
@@ -522,6 +576,42 @@ def _tool_use_from_response_item(item: Any) -> ToolUseBlock | None:
     return ToolUseBlock(id=call_id, name=name, input=parsed if isinstance(parsed, dict) else {})
 
 
+def _response_item_with_arguments(item: Any, arguments: str) -> Any:
+    if isinstance(item, dict):
+        merged = dict(item)
+        merged["arguments"] = arguments
+        return merged
+    try:
+        setattr(item, "arguments", arguments)
+    except Exception:
+        return item
+    return item
+
+
+def _function_argument_keys(*values: Any) -> list[str]:
+    keys: list[str] = []
+    for value in values:
+        if value is None or value == "":
+            continue
+        keys.append(str(value))
+    return keys
+
+
+def _function_argument_for_item(item: Any, arguments_by_key: dict[str, str]) -> str | None:
+    keys = _function_argument_keys(
+        _response_item_attr(item, "id"),
+        _response_item_attr(item, "call_id"),
+        f"index:{_response_item_attr(item, 'output_index')}"
+        if _response_item_attr(item, "output_index") is not None
+        else None,
+    )
+    for key in keys:
+        arguments = arguments_by_key.get(key)
+        if arguments:
+            return arguments
+    return None
+
+
 def _normalize_openai_base_url(base_url: str | None) -> str | None:
     """Normalize custom OpenAI-compatible base URLs without dropping API path segments."""
     if not base_url:
@@ -554,6 +644,7 @@ class OpenAICompatibleClient:
             },
         }
         normalized_base_url = _normalize_openai_base_url(base_url)
+        self._base_url = normalized_base_url
         if normalized_base_url:
             kwargs["base_url"] = normalized_base_url
         if timeout is not None:
@@ -642,25 +733,49 @@ class OpenAICompatibleClient:
             len(responses_input),
             "yes" if instructions else "no",
             len(responses_tools or []),
-            [tool.get("name") for tool in (responses_tools or [])[:8]],
+            [tool.get("name") or tool.get("type") for tool in (responses_tools or [])[:8]],
             params.get("max_output_tokens"),
             params.get("reasoning"),
             getattr(self._client, "base_url", None),
         )
 
         if not params.get("stream"):
+            response: Any | None = None
             try:
                 response = await self._client.responses.create(**params)
             except Exception as exc:
-                log.warning(
-                    "[OpenAICompat:%s] responses non-stream create failed type=%s status=%s body=%s message=%s",
-                    request_id,
-                    exc.__class__.__name__,
-                    getattr(exc, "status_code", None),
-                    getattr(exc, "body", None),
-                    exc,
-                )
+                if _has_hosted_web_search(responses_tools) and _looks_like_hosted_web_search_unsupported(exc):
+                    fallback_tools = _convert_tools_to_responses_local_web_search_fallback(request.tools)
+                    if fallback_tools:
+                        params["tools"] = fallback_tools
+                        log.warning(
+                            "[OpenAICompat:%s] hosted web_search unsupported; retrying non-stream with local web_search function fallback",
+                            request_id,
+                        )
+                        response = await self._client.responses.create(**params)
+                    else:
+                        raise
+                else:
+                    log.warning(
+                        "[OpenAICompat:%s] responses non-stream create failed type=%s status=%s body=%s message=%s",
+                        request_id,
+                        exc.__class__.__name__,
+                        getattr(exc, "status_code", None),
+                        getattr(exc, "body", None),
+                        exc,
+                    )
+                    raise
+            except BaseException:
                 raise
+            else:
+                pass
+
+            if response is None:
+                log.warning(
+                    "[OpenAICompat:%s] responses non-stream create returned no response",
+                    request_id,
+                )
+                raise RequestFailure("Responses API returned no response")
 
             content: list[ContentBlock] = []
             for item in _usage_attr(response, "output", []) or []:
@@ -693,7 +808,8 @@ class OpenAICompatibleClient:
 
         collected_content = ""
         collected_reasoning = ""
-        collected_tool_calls: list[ToolUseBlock] = []
+        function_call_items: list[Any] = []
+        function_call_arguments: dict[str, str] = {}
         finish_reason: str | None = None
         usage = UsageSnapshot()
         _think_buf = ""
@@ -701,15 +817,38 @@ class OpenAICompatibleClient:
         try:
             response_stream = await self._client.responses.create(**params)
         except Exception as exc:
-            log.warning(
-                "[OpenAICompat:%s] responses create failed type=%s status=%s body=%s message=%s",
-                request_id,
-                exc.__class__.__name__,
-                getattr(exc, "status_code", None),
-                getattr(exc, "body", None),
-                exc,
-            )
-            raise
+            if _has_hosted_web_search(responses_tools) and _looks_like_hosted_web_search_unsupported(exc):
+                fallback_tools = _convert_tools_to_responses_local_web_search_fallback(request.tools)
+                if fallback_tools:
+                    params["tools"] = fallback_tools
+                    log.warning(
+                        "[OpenAICompat:%s] hosted web_search unsupported; retrying with local web_search function fallback",
+                        request_id,
+                    )
+                    try:
+                        response_stream = await self._client.responses.create(**params)
+                    except Exception as fallback_exc:
+                        log.warning(
+                            "[OpenAICompat:%s] responses fallback create failed type=%s status=%s body=%s message=%s",
+                            request_id,
+                            fallback_exc.__class__.__name__,
+                            getattr(fallback_exc, "status_code", None),
+                            getattr(fallback_exc, "body", None),
+                            fallback_exc,
+                        )
+                        raise
+                else:
+                    raise
+            else:
+                log.warning(
+                    "[OpenAICompat:%s] responses create failed type=%s status=%s body=%s message=%s",
+                    request_id,
+                    exc.__class__.__name__,
+                    getattr(exc, "status_code", None),
+                    getattr(exc, "body", None),
+                    exc,
+                )
+                raise
 
         last_event_time = asyncio.get_event_loop().time()
 
@@ -779,9 +918,40 @@ class OpenAICompatibleClient:
                         if text and not collected_content:
                             collected_content = text
                     else:
-                        tool_use = _tool_use_from_response_item(item)
-                        if tool_use:
-                            collected_tool_calls.append(tool_use)
+                        output_index = _response_event_attr(event, "output_index")
+                        if output_index is not None and isinstance(item, dict):
+                            item = {**item, "output_index": output_index}
+                        function_call_items.append(item)
+                    continue
+
+                if event_type == "response.function_call_arguments.delta":
+                    item_id = _response_event_attr(event, "item_id")
+                    call_id = _response_event_attr(event, "call_id")
+                    output_index = _response_event_attr(event, "output_index")
+                    delta = _response_event_attr(event, "delta", "")
+                    keys = _function_argument_keys(
+                        item_id,
+                        call_id,
+                        f"index:{output_index}" if output_index is not None else None,
+                    )
+                    if keys and isinstance(delta, str):
+                        key = keys[0]
+                        function_call_arguments[key] = function_call_arguments.get(key, "") + delta
+                    continue
+
+                if event_type == "response.function_call_arguments.done":
+                    item_id = _response_event_attr(event, "item_id")
+                    call_id = _response_event_attr(event, "call_id")
+                    output_index = _response_event_attr(event, "output_index")
+                    arguments = _response_event_attr(event, "arguments", "")
+                    keys = _function_argument_keys(
+                        item_id,
+                        call_id,
+                        f"index:{output_index}" if output_index is not None else None,
+                    )
+                    if keys and isinstance(arguments, str):
+                        for key in keys:
+                            function_call_arguments[key] = arguments
                     continue
 
                 if event_type == "response.completed":
@@ -849,11 +1019,20 @@ class OpenAICompatibleClient:
                 getattr(exc, "body", None),
                 len(collected_content),
                 len(collected_reasoning),
-                len(collected_tool_calls),
+                len(function_call_items),
                 finish_reason,
                 exc,
             )
             raise
+
+        collected_tool_calls: list[ToolUseBlock] = []
+        for item in function_call_items:
+            streamed_arguments = _function_argument_for_item(item, function_call_arguments)
+            if streamed_arguments:
+                item = _response_item_with_arguments(item, streamed_arguments)
+            tool_use = _tool_use_from_response_item(item)
+            if tool_use:
+                collected_tool_calls.append(tool_use)
 
         content: list[ContentBlock] = []
         if collected_content:

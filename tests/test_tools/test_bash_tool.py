@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from openharness.config.settings import SandboxSettings, Settings
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.bash_tool import BashTool, BashToolInput
 import openharness.tools.bash_tool as bash_tool_module
@@ -186,6 +187,73 @@ async def test_bash_tool_uses_devnull_stdin_for_non_interactive_shell(monkeypatc
     assert result.is_error is False
     assert seen_kwargs["stdin"] == asyncio.subprocess.DEVNULL
     assert seen_kwargs["prefer_pty"] is True
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_uses_sandbox_home_for_e2b_default_cwd(monkeypatch, tmp_path: Path):
+    process = _FakeProcess(stdout=_FakeStdout([b"ok\n", b""]), returncode=0)
+    seen_kwargs: dict[str, object] = {}
+
+    async def fake_create_shell_subprocess(*args, **kwargs):
+        del args
+        seen_kwargs.update(kwargs)
+        return process
+
+    monkeypatch.setattr("openharness.tools.bash_tool.create_shell_subprocess", fake_create_shell_subprocess)
+
+    settings = Settings(sandbox=SandboxSettings(enabled=True, backend="e2b"))
+    result = await BashTool().execute(
+        BashToolInput(command="pwd"),
+        ToolExecutionContext(cwd=tmp_path, metadata={"settings": settings}),
+    )
+
+    assert result.is_error is False
+    assert seen_kwargs["cwd"] == "/home/user"
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_preserves_posix_cwd_for_e2b_before_session_start(monkeypatch, tmp_path: Path):
+    process = _FakeProcess(stdout=_FakeStdout([b"ok\n", b""]), returncode=0)
+    seen_kwargs: dict[str, object] = {}
+
+    async def fake_create_shell_subprocess(*args, **kwargs):
+        del args
+        seen_kwargs.update(kwargs)
+        return process
+
+    monkeypatch.setattr("openharness.tools.bash_tool.create_shell_subprocess", fake_create_shell_subprocess)
+
+    settings = Settings(sandbox=SandboxSettings(enabled=True, backend="e2b"))
+    result = await BashTool().execute(
+        BashToolInput(command="pwd", cwd="/home/user"),
+        ToolExecutionContext(cwd=tmp_path, metadata={"settings": settings}),
+    )
+
+    assert result.is_error is False
+    assert seen_kwargs["cwd"] == "/home/user"
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_maps_host_subdir_to_e2b_home(monkeypatch, tmp_path: Path):
+    process = _FakeProcess(stdout=_FakeStdout([b"ok\n", b""]), returncode=0)
+    seen_kwargs: dict[str, object] = {}
+
+    async def fake_create_shell_subprocess(*args, **kwargs):
+        del args
+        seen_kwargs.update(kwargs)
+        return process
+
+    monkeypatch.setattr("openharness.tools.bash_tool.create_shell_subprocess", fake_create_shell_subprocess)
+
+    settings = Settings(sandbox=SandboxSettings(enabled=True, backend="e2b"))
+    subdir = tmp_path / "slides"
+    result = await BashTool().execute(
+        BashToolInput(command="pwd", cwd=str(subdir)),
+        ToolExecutionContext(cwd=tmp_path, metadata={"settings": settings}),
+    )
+
+    assert result.is_error is False
+    assert seen_kwargs["cwd"] == "/home/user/slides"
 
 
 @pytest.mark.asyncio

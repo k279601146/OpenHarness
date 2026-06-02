@@ -2,12 +2,31 @@
 
 from __future__ import annotations
 
+import base64
+import json
+import os
+import shlex
+import sys
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from openharness.services.cron import upsert_cron_job, validate_cron_expression, validate_timezone
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+
+
+def _build_saas_task_command(api_dir: str, payload: dict[str, Any]) -> str:
+    encoded = base64.urlsafe_b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode("ascii")
+    command = " ".join(
+        [
+            shlex.quote(sys.executable),
+            shlex.quote(str(Path(api_dir) / "scheduled_task_runner.py")),
+            "--payload-b64",
+            shlex.quote(encoded),
+        ]
+    )
+    return f"& {command}" if os.name == "nt" else command
 
 
 class CronCreateToolInput(BaseModel):
@@ -83,6 +102,10 @@ class CronCreateTool(BaseTool):
         if not payload and not arguments.command:
             return ToolResult(output="Cron job requires command or message.", is_error=True)
 
+        saas_user_id = context.metadata.get("user_id")
+        saas_api_dir = context.metadata.get("saas_api_dir")
+        saas_thread_id = context.metadata.get("thread_id")
+
         job = {
             "name": arguments.name,
             "schedule": arguments.schedule,
@@ -94,7 +117,27 @@ class CronCreateTool(BaseTool):
         if arguments.command is not None:
             job["command"] = arguments.command
         if payload:
-            payload.setdefault("kind", "agent_turn")
+            if saas_user_id and saas_api_dir and not arguments.command:
+                payload["kind"] = "saas_agent_task"
+                payload.setdefault("title", arguments.name)
+                payload.setdefault("user_id", saas_user_id)
+                payload.setdefault("source", "chat")
+                payload.setdefault("origin_thread_id", saas_thread_id)
+                job["title"] = str(payload.get("title") or arguments.name)
+                job["description"] = str(payload.get("message") or "")
+                job["source"] = "chat"
+                job["created_by_user_id"] = saas_user_id
+                job["origin_thread_id"] = saas_thread_id
+                job["command"] = _build_saas_task_command(
+                    str(saas_api_dir),
+                    {
+                        "user_id": saas_user_id,
+                        "title": payload.get("title") or arguments.name,
+                        "prompt": payload.get("message"),
+                    },
+                )
+            else:
+                payload.setdefault("kind", "agent_turn")
             job["payload"] = payload
         if arguments.notify is not None:
             job["notify"] = arguments.notify

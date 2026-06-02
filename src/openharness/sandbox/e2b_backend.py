@@ -15,6 +15,21 @@ from openharness.sandbox.adapter import SandboxAvailability, SandboxUnavailableE
 
 logger = logging.getLogger(__name__)
 
+
+def _normalize_e2b_cwd(cwd: str | Path | None) -> str:
+    if cwd is None or not str(cwd).strip():
+        return "/home/user"
+
+    value = str(cwd).strip().replace("\\", "/")
+    if value in {".", "~"}:
+        return "/home/user"
+    if len(value) >= 2 and value[1] == ":":
+        return "/home/user"
+    if value.startswith("/"):
+        return value.rstrip("/") or "/home/user"
+    return f"/home/user/{value.strip('/')}"
+
+
 def get_e2b_availability(settings: Settings) -> SandboxAvailability:
     """Check whether E2B can be used as a sandbox backend."""
     # Temporarily we might just pretend we use E2B if backend is 'e2b' or if we force it.
@@ -202,6 +217,8 @@ class E2BSandboxSession:
         envs = env.copy() if env else {}
         # envs["NODE_TLS_REJECT_UNAUTHORIZED"] = "0"
 
+        sandbox_cwd = _normalize_e2b_cwd(cwd)
+
         # 兼容老框架中的 async. e2b python 可能是 sync 或者是 e2b-code-interpreter.
         # e2b 提供 AsyncSandbox 吗？如果是 sync 必须用 run_in_executor
         loop = asyncio.get_event_loop()
@@ -210,7 +227,7 @@ class E2BSandboxSession:
                 None,
                 lambda: self._sandbox.commands.run(
                     cmd_str,
-                    cwd=str(cwd),
+                    cwd=sandbox_cwd,
                     envs=envs
                 )
             )

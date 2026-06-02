@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any
@@ -13,6 +13,11 @@ from croniter import croniter
 from openharness.config.paths import get_cron_registry_path
 from openharness.utils.file_lock import exclusive_file_lock
 from openharness.utils.fs import atomic_write_text
+
+_FIXED_TIMEZONES = {
+    "Asia/Shanghai": timezone(timedelta(hours=8), "Asia/Shanghai"),
+    "UTC": timezone.utc,
+}
 
 
 def _cron_lock_path() -> Path:
@@ -50,10 +55,19 @@ def validate_timezone(tz: str | None) -> bool:
     if not tz:
         return True
     try:
-        ZoneInfo(tz)
+        _resolve_timezone(tz)
     except Exception:
         return False
     return True
+
+
+def _resolve_timezone(tz: str):
+    try:
+        return ZoneInfo(tz)
+    except Exception:
+        if tz in _FIXED_TIMEZONES:
+            return _FIXED_TIMEZONES[tz]
+        raise
 
 
 def next_run_time(expression: str, base: datetime | None = None, tz: str | None = None) -> datetime:
@@ -64,7 +78,7 @@ def next_run_time(expression: str, base: datetime | None = None, tz: str | None 
     """
     base = base or datetime.now(timezone.utc)
     if tz:
-        local_base = base.astimezone(ZoneInfo(tz))
+        local_base = base.astimezone(_resolve_timezone(tz))
         local_next = croniter(expression, local_base).get_next(datetime)
         return local_next.astimezone(timezone.utc)
     return croniter(expression, base).get_next(datetime)

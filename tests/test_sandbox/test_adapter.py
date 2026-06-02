@@ -20,6 +20,21 @@ from openharness.sandbox.adapter import (
 from openharness.utils.shell import create_shell_subprocess
 
 
+def test_e2b_cwd_normalization_preserves_sandbox_paths():
+    from openharness.sandbox.e2b_backend import _normalize_e2b_cwd
+
+    assert _normalize_e2b_cwd("/home/user") == "/home/user"
+    assert _normalize_e2b_cwd("/home/user/slides") == "/home/user/slides"
+    assert _normalize_e2b_cwd("slides") == "/home/user/slides"
+
+
+def test_e2b_cwd_normalization_rejects_windows_host_paths():
+    from openharness.sandbox.e2b_backend import _normalize_e2b_cwd
+
+    assert _normalize_e2b_cwd(r"D:\workspace\project") == "/home/user"
+    assert _normalize_e2b_cwd(r"D:\home\user") == "/home/user"
+
+
 def test_build_sandbox_runtime_config_maps_settings():
     settings = Settings(
         sandbox=SandboxSettings(

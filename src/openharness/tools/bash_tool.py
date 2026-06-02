@@ -37,13 +37,8 @@ class BashTool(BaseTool):
 
     async def execute(self, arguments: BashToolInput, context: ToolExecutionContext) -> ToolResult:
         cwd = context.cwd
-        
-        from openharness.sandbox.session import get_sandbox_session
-        session = get_sandbox_session()
-        
-        if session and arguments.cwd:
-            # E2B 模式下，直接使用给定的容器目录
-            cwd = arguments.cwd.replace("\\", "/")
+        if _uses_e2b_sandbox(context):
+            cwd = _normalize_e2b_cwd(arguments.cwd, host_cwd=context.cwd)
         elif arguments.cwd:
             cwd = Path(arguments.cwd).expanduser()
             if not cwd.is_absolute():
@@ -102,6 +97,43 @@ class BashTool(BaseTool):
             is_error=process.returncode != 0,
             metadata={"returncode": process.returncode},
         )
+
+
+def _uses_e2b_sandbox(context: ToolExecutionContext) -> bool:
+    settings = context.metadata.get("settings")
+    sandbox = getattr(settings, "sandbox", None)
+    return bool(
+        getattr(sandbox, "enabled", False)
+        and getattr(sandbox, "backend", None) == "e2b"
+    )
+
+
+def _normalize_e2b_cwd(raw_cwd: str | None, *, host_cwd: Path) -> str:
+    if raw_cwd is None or not str(raw_cwd).strip():
+        return "/home/user"
+
+    raw = str(raw_cwd).strip()
+    normalized = raw.replace("\\", "/")
+    if normalized in {".", "~"}:
+        return "/home/user"
+    if normalized == "/home/user" or normalized.startswith("/home/user/"):
+        return normalized.rstrip("/") or "/home/user"
+    if normalized.startswith("/") and ":" not in normalized:
+        return normalized.rstrip("/") or "/home/user"
+
+    try:
+        raw_path = Path(raw).expanduser().resolve()
+        host_path = Path(host_cwd).expanduser().resolve()
+        rel = raw_path.relative_to(host_path)
+    except (OSError, ValueError):
+        if len(normalized) >= 2 and normalized[1] == ":":
+            return "/home/user"
+        rel = Path(normalized)
+
+    rel_text = rel.as_posix().strip("/")
+    if not rel_text or rel_text == ".":
+        return "/home/user"
+    return f"/home/user/{rel_text}"
 
 
 async def _terminate_process(process: asyncio.subprocess.Process, *, force: bool) -> None:

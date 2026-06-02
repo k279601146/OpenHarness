@@ -347,27 +347,32 @@ class TestOpenAIUsageParsing:
 
 
 class _FakeResponses:
-    def __init__(self) -> None:
+    def __init__(self, events: list[dict[str, object]] | None = None) -> None:
         self.last_kwargs: dict[str, object] | None = None
+        self.events = events
 
     async def create(self, **kwargs):
         self.last_kwargs = kwargs
 
         async def _stream():
-            yield {
-                "type": "response.completed",
-                "response": {
-                    "status": "completed",
-                    "usage": {"input_tokens": 1, "output_tokens": 1},
-                },
-            }
+            if self.events is not None:
+                for event in self.events:
+                    yield event
+            else:
+                yield {
+                    "type": "response.completed",
+                    "response": {
+                        "status": "completed",
+                        "usage": {"input_tokens": 1, "output_tokens": 1},
+                    },
+                }
 
         return _stream()
 
 
 class _FakeOpenAIClient:
-    def __init__(self) -> None:
-        self.responses = _FakeResponses()
+    def __init__(self, events: list[dict[str, object]] | None = None) -> None:
+        self.responses = _FakeResponses(events)
 
 
 @pytest.mark.asyncio
@@ -529,6 +534,108 @@ class TestStreamMessageTokenParams:
         assert fake_sdk.responses.last_kwargs["parallel_tool_calls"] is True
 
     @pytest.mark.asyncio
+    async def test_stream_collects_responses_tool_argument_events(self):
+        client = OpenAICompatibleClient(api_key="test-key")
+        fake_sdk = _FakeOpenAIClient([
+            {
+                "type": "response.output_item.added",
+                "item": {
+                    "id": "fc_1",
+                    "type": "function_call",
+                    "arguments": "",
+                    "call_id": "call_abc",
+                    "name": "bash",
+                },
+            },
+            {
+                "type": "response.function_call_arguments.delta",
+                "item_id": "fc_1",
+                "delta": '{"command":',
+            },
+            {
+                "type": "response.function_call_arguments.delta",
+                "item_id": "fc_1",
+                "delta": '"echo hi"}',
+            },
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "id": "fc_1",
+                    "type": "function_call",
+                    "arguments": "",
+                    "call_id": "call_abc",
+                    "name": "bash",
+                },
+            },
+            {
+                "type": "response.completed",
+                "response": {
+                    "status": "completed",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            },
+        ])
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="gpt-5.4",
+            messages=[ConversationMessage.from_user_text("Run a command")],
+            tools=[
+                {
+                    "name": "bash",
+                    "description": "Run shell",
+                    "input_schema": {"type": "object", "properties": {}},
+                }
+            ],
+        )
+
+        events = [event async for event in client.stream_message(request)]
+
+        complete = events[-1]
+        assert complete.message.tool_uses[0].input == {"command": "echo hi"}
+
+    @pytest.mark.asyncio
+    async def test_stream_collects_tool_arguments_by_output_index(self):
+        client = OpenAICompatibleClient(api_key="test-key")
+        fake_sdk = _FakeOpenAIClient([
+            {
+                "type": "response.function_call_arguments.delta",
+                "output_index": 0,
+                "delta": '{"query":"weather"}',
+            },
+            {
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": {
+                    "id": "fc_1",
+                    "type": "function_call",
+                    "arguments": "",
+                    "call_id": "call_abc",
+                    "name": "web_search",
+                },
+            },
+            {
+                "type": "response.completed",
+                "response": {
+                    "status": "completed",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            },
+        ])
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="gpt-5.4",
+            messages=[ConversationMessage.from_user_text("Search")],
+            tools=[{"name": "web_search", "description": "Search", "input_schema": {"type": "object"}}],
+        )
+
+        events = [event async for event in client.stream_message(request)]
+
+        complete = events[-1]
+        assert complete.message.tool_uses[0].input == {"query": "weather"}
+
+    @pytest.mark.asyncio
     async def test_gpt4o_stream_omits_reasoning(self):
         client = OpenAICompatibleClient(api_key="test-key")
         fake_sdk = _FakeOpenAIClient()
@@ -545,6 +652,112 @@ class TestStreamMessageTokenParams:
         assert fake_sdk.responses.last_kwargs is not None
         assert "reasoning" not in fake_sdk.responses.last_kwargs
         assert fake_sdk.responses.last_kwargs["max_output_tokens"] == 4096
+
+    @pytest.mark.asyncio
+    async def test_local_proxy_uses_responses_with_hosted_search_first(self):
+        client = OpenAICompatibleClient(api_key="test-key", base_url="http://localhost:3000/v1")
+        fake_sdk = _FakeOpenAIClient([
+            {
+                "type": "response.output_item.done",
+                "item": {"type": "function_call", "call_id": "call_abc", "name": "web_search"},
+            },
+            {
+                "type": "response.function_call_arguments.done",
+                "call_id": "call_abc",
+                "arguments": '{"query":"today AI news"}',
+            },
+            {
+                "type": "response.completed",
+                "response": {"status": "completed", "usage": {"input_tokens": 5, "output_tokens": 3}},
+            },
+        ])
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="gpt-5.5",
+            messages=[ConversationMessage.from_user_text("Search")],
+            tools=[
+                {
+                    "name": "web_search",
+                    "description": "Search",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                }
+            ],
+        )
+
+        events = [event async for event in client.stream_message(request)]
+
+        complete = events[-1]
+        assert complete.message.tool_uses[0].input == {"query": "today AI news"}
+        assert fake_sdk.responses.last_kwargs["tools"] == [{"type": "web_search"}]
+
+    @pytest.mark.asyncio
+    async def test_hosted_web_search_create_failure_falls_back_to_local_function(self):
+        class _UnsupportedWebSearchError(Exception):
+            status_code = 400
+            body = {"error": {"message": "Unsupported tool type web_search"}}
+
+        class _FallbackResponses:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            async def create(self, **kwargs):
+                self.calls.append(kwargs)
+                if len(self.calls) == 1:
+                    raise _UnsupportedWebSearchError("unsupported web_search")
+
+                async def _stream():
+                    yield {
+                        "type": "response.output_item.done",
+                        "item": {"type": "function_call", "call_id": "call_abc", "name": "web_search"},
+                    }
+                    yield {
+                        "type": "response.function_call_arguments.done",
+                        "call_id": "call_abc",
+                        "arguments": '{"query":"fallback"}',
+                    }
+                    yield {
+                        "type": "response.completed",
+                        "response": {"status": "completed", "usage": {"input_tokens": 5, "output_tokens": 3}},
+                    }
+
+                return _stream()
+
+        class _FallbackClient:
+            def __init__(self) -> None:
+                self.responses = _FallbackResponses()
+
+        client = OpenAICompatibleClient(api_key="test-key", base_url="http://localhost:3000/v1")
+        fake_sdk = _FallbackClient()
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="gpt-5.5",
+            messages=[ConversationMessage.from_user_text("Search")],
+            tools=[
+                {
+                    "name": "web_search",
+                    "description": "Search",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                }
+            ],
+        )
+
+        events = [event async for event in client.stream_message(request)]
+
+        complete = events[-1]
+        assert complete.message.tool_uses[0].input == {"query": "fallback"}
+        assert fake_sdk.responses.calls[0]["tools"][0] == {"type": "web_search"}
+        assert all(tool.get("type") != "web_search" for tool in fake_sdk.responses.calls[1]["tools"])
+        assert fake_sdk.responses.calls[1]["tools"][0]["name"] == "web_search"
 
 
 class TestStripThinkBlocks:

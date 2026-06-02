@@ -50,6 +50,16 @@ class WebFetchTool(BaseTool):
                 max_redirects=MAX_REDIRECTS,
             )
             response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 403:
+                return ToolResult(
+                    output=(
+                        "web_fetch failed: 403 Forbidden. "
+                        "目标站阻止了服务器端抓取；你在浏览器中能打开该网址，并不代表后端服务也能抓取。"
+                    ),
+                    is_error=True,
+                )
+            return ToolResult(output=f"web_fetch failed: {exc}", is_error=True)
         except (httpx.HTTPError, NetworkGuardError) as exc:
             return ToolResult(output=f"web_fetch failed: {exc}", is_error=True)
 

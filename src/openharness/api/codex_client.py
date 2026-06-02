@@ -133,6 +133,34 @@ def _convert_tools_to_codex(tools: list[dict[str, Any]]) -> list[dict[str, Any]]
     ]
 
 
+def _item_with_arguments(item: dict[str, Any], arguments: str) -> dict[str, Any]:
+    merged = dict(item)
+    merged["arguments"] = arguments
+    return merged
+
+
+def _function_argument_keys(*values: Any) -> list[str]:
+    keys: list[str] = []
+    for value in values:
+        if value is None or value == "":
+            continue
+        keys.append(str(value))
+    return keys
+
+
+def _function_argument_for_item(item: dict[str, Any], arguments_by_key: dict[str, str]) -> str | None:
+    keys = _function_argument_keys(
+        item.get("id"),
+        item.get("call_id"),
+        f"index:{item.get('output_index')}" if item.get("output_index") is not None else None,
+    )
+    for key in keys:
+        arguments = arguments_by_key.get(key)
+        if arguments:
+            return arguments
+    return None
+
+
 def _normalize_reasoning_effort(effort: str | None) -> str | None:
     normalized = (effort or "").strip().lower()
     if normalized == "max":
@@ -270,6 +298,8 @@ class CodexApiClient:
 
         content: list[TextBlock | ToolUseBlock] = []
         current_text_parts: list[str] = []
+        function_call_items: list[dict[str, Any]] = []
+        function_call_arguments: dict[str, str] = {}
         completed_response: dict[str, Any] | None = None
 
         headers = _build_codex_headers(self._auth_token)
@@ -307,20 +337,36 @@ class CodexApiClient:
                             if text:
                                 content.append(TextBlock(text=text))
                         elif item_type == "function_call":
-                            arguments = item.get("arguments")
-                            parsed_arguments: dict[str, Any]
-                            if isinstance(arguments, str) and arguments:
-                                try:
-                                    loaded = json.loads(arguments)
-                                except json.JSONDecodeError:
-                                    loaded = {}
-                            else:
-                                loaded = {}
-                            parsed_arguments = loaded if isinstance(loaded, dict) else {}
-                            call_id = item.get("call_id")
-                            name = item.get("name")
-                            if isinstance(call_id, str) and call_id and isinstance(name, str) and name:
-                                content.append(ToolUseBlock(id=call_id, name=name, input=parsed_arguments))
+                            output_index = event.get("output_index")
+                            if output_index is not None:
+                                item = {**item, "output_index": output_index}
+                            function_call_items.append(item)
+                    elif event_type == "response.function_call_arguments.delta":
+                        item_id = event.get("item_id")
+                        call_id = event.get("call_id")
+                        output_index = event.get("output_index")
+                        delta = event.get("delta", "")
+                        keys = _function_argument_keys(
+                            item_id,
+                            call_id,
+                            f"index:{output_index}" if output_index is not None else None,
+                        )
+                        if keys and isinstance(delta, str):
+                            key = keys[0]
+                            function_call_arguments[key] = function_call_arguments.get(key, "") + delta
+                    elif event_type == "response.function_call_arguments.done":
+                        item_id = event.get("item_id")
+                        call_id = event.get("call_id")
+                        output_index = event.get("output_index")
+                        arguments = event.get("arguments", "")
+                        keys = _function_argument_keys(
+                            item_id,
+                            call_id,
+                            f"index:{output_index}" if output_index is not None else None,
+                        )
+                        if keys and isinstance(arguments, str):
+                            for key in keys:
+                                function_call_arguments[key] = arguments
                     elif event_type == "response.completed":
                         response_payload = event.get("response")
                         if isinstance(response_payload, dict):
@@ -342,6 +388,25 @@ class CodexApiClient:
 
         if current_text_parts and not any(isinstance(block, TextBlock) for block in content):
             content.insert(0, TextBlock(text="".join(current_text_parts)))
+
+        for item in function_call_items:
+            streamed_arguments = _function_argument_for_item(item, function_call_arguments)
+            if streamed_arguments:
+                item = _item_with_arguments(item, streamed_arguments)
+            arguments = item.get("arguments")
+            parsed_arguments: dict[str, Any]
+            if isinstance(arguments, str) and arguments:
+                try:
+                    loaded = json.loads(arguments)
+                except json.JSONDecodeError:
+                    loaded = {}
+            else:
+                loaded = {}
+            parsed_arguments = loaded if isinstance(loaded, dict) else {}
+            call_id = item.get("call_id")
+            name = item.get("name")
+            if isinstance(call_id, str) and call_id and isinstance(name, str) and name:
+                content.append(ToolUseBlock(id=call_id, name=name, input=parsed_arguments))
 
         final_message = ConversationMessage(role="assistant", content=content)
         usage = _usage_from_response(completed_response or {})

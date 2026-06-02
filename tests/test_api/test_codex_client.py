@@ -242,3 +242,69 @@ async def test_codex_client_emits_tool_use(monkeypatch):
     assert tool_use.name == "glob"
     assert tool_use.input == {"pattern": "src/**/*.py"}
     assert sink["json"]["tools"][0]["name"] == "glob"
+
+
+@pytest.mark.asyncio
+async def test_codex_client_collects_streamed_tool_arguments(monkeypatch):
+    sink: dict[str, Any] = {}
+    response = _FakeStreamResponse(
+        lines=[
+            'data: {"type":"response.output_item.added","item":{"id":"fc_1","type":"function_call","arguments":"","call_id":"call_abc","name":"bash"}}',
+            "",
+            'data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"{\\"command\\":"}',
+            "",
+            'data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"\\"echo hi\\"}"}',
+            "",
+            'data: {"type":"response.output_item.done","item":{"id":"fc_1","type":"function_call","arguments":"","call_id":"call_abc","name":"bash"}}',
+            "",
+            'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":7,"output_tokens":2}}}',
+            "",
+        ]
+    )
+    monkeypatch.setattr(
+        "openharness.api.codex_client.httpx.AsyncClient",
+        lambda *args, **kwargs: _FakeAsyncClient(response, sink),
+    )
+
+    client = CodexApiClient(_fake_codex_token())
+    request = ApiMessageRequest(
+        model="gpt-5.4",
+        messages=[ConversationMessage.from_user_text("run")],
+        system_prompt="Use tools.",
+        tools=[{"name": "bash", "description": "run", "input_schema": {"type": "object"}}],
+    )
+    events = [event async for event in client.stream_message(request)]
+
+    complete = next(event for event in events if isinstance(event, ApiMessageCompleteEvent))
+    assert complete.message.tool_uses[0].input == {"command": "echo hi"}
+
+
+@pytest.mark.asyncio
+async def test_codex_client_collects_streamed_tool_arguments_by_output_index(monkeypatch):
+    sink: dict[str, Any] = {}
+    response = _FakeStreamResponse(
+        lines=[
+            'data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\\"query\\":\\"weather\\"}"}',
+            "",
+            'data: {"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","arguments":"","call_id":"call_abc","name":"web_search"}}',
+            "",
+            'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":7,"output_tokens":2}}}',
+            "",
+        ]
+    )
+    monkeypatch.setattr(
+        "openharness.api.codex_client.httpx.AsyncClient",
+        lambda *args, **kwargs: _FakeAsyncClient(response, sink),
+    )
+
+    client = CodexApiClient(_fake_codex_token())
+    request = ApiMessageRequest(
+        model="gpt-5.4",
+        messages=[ConversationMessage.from_user_text("search")],
+        system_prompt="Use tools.",
+        tools=[{"name": "web_search", "description": "search", "input_schema": {"type": "object"}}],
+    )
+    events = [event async for event in client.stream_message(request)]
+
+    complete = next(event for event in events if isinstance(event, ApiMessageCompleteEvent))
+    assert complete.message.tool_uses[0].input == {"query": "weather"}
