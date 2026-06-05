@@ -5,6 +5,7 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import openharness.skills.bundled as bundled_module
 from openharness.config.settings import Settings
 from openharness.skills import get_user_skills_dir, load_skill_registry
 from openharness.skills.loader import discover_project_skill_dirs, get_user_skill_dirs
@@ -17,14 +18,44 @@ def test_load_skill_registry_includes_bundled(tmp_path: Path, monkeypatch):
     registry = load_skill_registry()
 
     names = [skill.name for skill in registry.list_skills()]
-    assert "simplify" in names
-    assert "review" in names
+    assert "plan" in names
+    assert "research_report" in names
     assert "skill-creator" in names
+    assert "imagegen" in names
+    assert "media-generation" in names
 
     skill_creator = registry.get("skill-creator")
     assert skill_creator is not None
     assert skill_creator.source == "bundled"
     assert "Create, improve, and verify OpenHarness skills" in skill_creator.description
+
+
+def test_bundled_loader_includes_directory_skills(tmp_path: Path, monkeypatch):
+    bundled_root = tmp_path / "bundled"
+    skill_dir = bundled_root / "content" / "imagegen"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        textwrap.dedent("""\
+            ---
+            name: imagegen
+            description: Generate raster images.
+            aliases:
+              - image generation
+            ---
+
+            # Imagegen
+            """),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(bundled_module, "_BUNDLED_ROOT", bundled_root)
+
+    skills = bundled_module.get_bundled_skills()
+
+    assert [skill.name for skill in skills] == ["imagegen"]
+    assert skills[0].source == "bundled"
+    assert skills[0].command_name == "imagegen"
+    assert skills[0].base_dir == str(skill_dir)
+    assert "image generation" in skills[0].aliases
 
 
 def _write_skill(root: Path, name: str, body: str | None = None) -> Path:

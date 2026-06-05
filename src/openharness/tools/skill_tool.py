@@ -40,4 +40,12 @@ class SkillTool(BaseTool):
                 output=f"Skill {command_name} can only be invoked by the user as /{command_name}.",
                 is_error=True,
             )
+        if skill.base_dir:
+            return ToolResult(
+                output=(
+                    f"Base directory for this skill: {skill.base_dir}\n"
+                    "Use paths under this directory for bundled skill assets and scripts.\n\n"
+                    f"{skill.content}"
+                )
+            )
         return ToolResult(output=skill.content)

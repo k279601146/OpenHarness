@@ -50,12 +50,15 @@ class SkillInstallTool(BaseTool):
             # 路径 1: 单个逻辑技能 .md
             potential_md = bundled_root / "content" / f"{arguments.name}.md"
             # 路径 2: 完整技能包目录 (未来扩展用)
-            potential_dir = bundled_root / "packages" / arguments.name
+            potential_content_dir = bundled_root / "content" / arguments.name
+            potential_package_dir = bundled_root / "packages" / arguments.name
             
             if potential_md.exists():
                 source_dir = potential_md
-            elif potential_dir.exists():
-                source_dir = potential_dir
+            elif (potential_content_dir / "SKILL.md").exists():
+                source_dir = potential_content_dir
+            elif potential_package_dir.exists():
+                source_dir = potential_package_dir
                 
         if source_dir is None or not source_dir.exists():
             return ToolResult(output=f"Skill source for '{arguments.name}' not found.", is_error=True)
@@ -77,11 +80,11 @@ class SkillInstallTool(BaseTool):
                     skill_content = md_path.read_text(encoding="utf-8")
                 
                 try:
-                    # 存入用户专属能力库
-                    viking.client.add_memory(
-                        content=f"Installed Skill '{arguments.name}': {skill_content[:300]}...",
-                        target_uri=f"viking://user/{user_id}/memories/skills/{arguments.name}",
-                        tags=["skill", "installed", arguments.name]
+                    # 存入当前 OpenViking 身份隔离下的用户专属能力库
+                    await viking.client.write(
+                        f"viking://user/memories/skills/{arguments.name}.md",
+                        f"# Installed Skill: {arguments.name}\n\n{skill_content[:2000]}\n",
+                        mode="replace",
                     )
                 except Exception as ve:
                     # Viking 失败不影响物理安装

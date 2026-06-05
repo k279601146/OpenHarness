@@ -12,6 +12,7 @@ import asyncio
 import datetime
 import logging
 import os
+import shlex
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -115,6 +116,39 @@ def _ensure_persistent_dirs(data_root: Path, user_id: int, space_id: str) -> tup
     return str(workspace), str(home), str(local_bin)
 
 
+async def _ensure_imagegen_skill_in_sandbox(session: E2BSandboxSession) -> None:
+    """Sync the bundled imagegen skill package into the sandbox user skills dir."""
+    source_dir = Path(__file__).resolve().parents[1] / "skills" / "bundled" / "content" / "imagegen"
+    if not source_dir.is_dir():
+        logger.warning("Bundled imagegen skill package not found: %s", source_dir)
+        return
+
+    target_root = "/home/user/.agents/skills/imagegen"
+    try:
+        await session.exec_command(f"mkdir -p {shlex.quote(target_root)}")
+        for root, dirs, files in os.walk(source_dir):
+            root_path = Path(root)
+            rel_dir = root_path.relative_to(source_dir).as_posix()
+            sandbox_dir = target_root if rel_dir == "." else f"{target_root}/{rel_dir}"
+            await session.exec_command(f"mkdir -p {shlex.quote(sandbox_dir)}")
+
+            for dirname in dirs:
+                await session.exec_command(f"mkdir -p {shlex.quote(f'{sandbox_dir}/{dirname}')}")
+
+            for filename in files:
+                local_path = root_path / filename
+                sandbox_path = f"{sandbox_dir}/{filename}"
+                content = local_path.read_bytes()
+                if hasattr(session, "write_file_binary"):
+                    await session.write_file_binary(sandbox_path, content)
+                else:
+                    await session.write_file(sandbox_path, content.decode("utf-8", errors="replace"))
+        await session.exec_command(f"chmod +x {shlex.quote(target_root + '/scripts/image_gen.py')} || true")
+        logger.info("Synced bundled imagegen skill to sandbox: %s", target_root)
+    except Exception as exc:
+        logger.warning("Failed to sync bundled imagegen skill to sandbox: %s", exc)
+
+
 
 async def get_or_start_sandbox(
     settings: Settings,
@@ -152,6 +186,7 @@ async def get_or_start_sandbox(
         if existing is not None and existing.is_running:
             logger.info("Sandbox reused from registry: %s", existing.sandbox_id)
             _touch_last_active(db_session, thread_id)
+            await _ensure_imagegen_skill_in_sandbox(existing)
             return existing
 
         # ── 路径 2: DB 查找已有空间 ──
@@ -188,6 +223,7 @@ async def get_or_start_sandbox(
                     if db_session:
                         db_session.commit()
                     logger.info("Sandbox resumed: %s", space.container_name)
+                    await _ensure_imagegen_skill_in_sandbox(session)
                     return session
                 except Exception as e:
                     logger.warning("Resume failed, will recreate: %s", e)
@@ -203,6 +239,7 @@ async def get_or_start_sandbox(
                     _sandbox_registry[key] = session
                     if db_session:
                         db_session.commit()
+                    await _ensure_imagegen_skill_in_sandbox(session)
                     return session
 
             elif space.status == "running":
@@ -216,6 +253,7 @@ async def get_or_start_sandbox(
                     _sandbox_registry[key] = session
                     _touch_last_active(db_session, thread_id)
                     logger.info("Sandbox reconnected: %s", space.container_name)
+                    await _ensure_imagegen_skill_in_sandbox(session)
                     return session
                 except Exception:
                     # 重建
@@ -230,6 +268,7 @@ async def get_or_start_sandbox(
                     _sandbox_registry[key] = session
                     if db_session:
                         db_session.commit()
+                    await _ensure_imagegen_skill_in_sandbox(session)
                     return session
 
             space_id = space.id
@@ -301,6 +340,7 @@ async def get_or_start_sandbox(
                     
             _sandbox_registry[key] = session
             logger.info("Sandbox created: %s (space=%s)", session.sandbox_id, space_id)
+            await _ensure_imagegen_skill_in_sandbox(session)
             return session
             
         return session

@@ -98,8 +98,11 @@ def load_user_skills(
     normalize_path_func: Callable[[Path], str] | None = None,
 ) -> list[SkillDefinition]:
     """Load markdown skills from all standard user config directories."""
-    dirs = [get_user_skills_dir(), get_community_skills_dir()]
-    return load_skills_from_dirs(dirs, source="user", normalize_path_func=normalize_path_func)
+    return load_skills_from_dirs(
+        get_user_skill_dirs(),
+        source="user",
+        normalize_path_func=normalize_path_func,
+    )
 
 
 def discover_project_skill_dirs(

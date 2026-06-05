@@ -1,4 +1,4 @@
-"""Bundled skill definitions loaded from .md files."""
+"""Bundled skill definitions loaded from markdown files or SKILL.md directories."""
 
 from __future__ import annotations
 
@@ -22,10 +22,11 @@ def get_bundled_skills() -> list[SkillDefinition]:
         target_dir = _BUNDLED_ROOT / sub_dir
         if not target_dir.exists():
             continue
-        for path in sorted(target_dir.glob("*.md")):
+        for path in _iter_bundled_skill_files(target_dir):
             content = path.read_text(encoding="utf-8")
-            metadata = _parse_metadata(path.stem, content)
-            display_name = metadata["name"] if metadata["name"] != path.stem else None
+            command_name = path.stem if path.name != "SKILL.md" else path.parent.name
+            metadata = _parse_metadata(command_name, content)
+            display_name = metadata["name"] if metadata["name"] != command_name else None
             frontmatter = metadata["frontmatter"]
             skills.append(
                 SkillDefinition(
@@ -35,7 +36,7 @@ def get_bundled_skills() -> list[SkillDefinition]:
                     source="bundled",
                     path=str(path),
                     base_dir=str(path.parent),
-                    command_name=path.stem,
+                    command_name=command_name,
                     display_name=display_name,
                     aliases=_frontmatter_aliases(frontmatter),
                     user_invocable=metadata["user_invocable"],
@@ -47,6 +48,20 @@ def get_bundled_skills() -> list[SkillDefinition]:
                 )
             )
     return skills
+
+
+def _iter_bundled_skill_files(target_dir: Path) -> list[Path]:
+    """Return bundled skill files in stable command-name order."""
+    direct_files = sorted(target_dir.glob("*.md"))
+    directory_files = sorted(
+        skill_file
+        for child in target_dir.iterdir()
+        if child.is_dir() and (skill_file := child / "SKILL.md").exists()
+    )
+    return sorted(
+        [*direct_files, *directory_files],
+        key=lambda path: path.stem if path.name != "SKILL.md" else path.parent.name,
+    )
 
 
 def _parse_frontmatter(default_name: str, content: str) -> tuple[str, str]:

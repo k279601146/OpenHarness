@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Iterable
 
@@ -63,6 +64,7 @@ class BashTool(BaseTool):
                 user_id=context.metadata.get("user_id"),
                 thread_id=context.metadata.get("thread_id"),
                 db_session=context.metadata.get("db_session"),
+                env=_build_forwarded_sandbox_env(context) if _uses_e2b_sandbox(context) else None,
             )
         except SandboxUnavailableError as exc:
             return ToolResult(output=str(exc), is_error=True)
@@ -106,6 +108,78 @@ def _uses_e2b_sandbox(context: ToolExecutionContext) -> bool:
         getattr(sandbox, "enabled", False)
         and getattr(sandbox, "backend", None) == "e2b"
     )
+
+
+def _build_forwarded_sandbox_env(context: ToolExecutionContext) -> dict[str, str] | None:
+    """Forward only approved host/project env vars needed by sandbox commands."""
+    project_env = _load_nearest_dotenv(context.cwd)
+    forwarded: dict[str, str] = {}
+
+    for key in (
+        "GPT_IMAGEGEN_API_KEY",
+        "GPT_IMAGEGEN_BASE_URL",
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "NO_PROXY",
+        "https_proxy",
+        "http_proxy",
+        "no_proxy",
+    ):
+        value = os.getenv(key) or project_env.get(key)
+        if value:
+            forwarded[key] = value
+
+    if "GPT_IMAGEGEN_API_KEY" not in forwarded:
+        value = os.getenv("IMAGE_GEN_API_KEY") or project_env.get("IMAGE_GEN_API_KEY")
+        if value:
+            forwarded["GPT_IMAGEGEN_API_KEY"] = value
+    if "GPT_IMAGEGEN_BASE_URL" not in forwarded:
+        value = os.getenv("IMAGE_GEN_BASE_URL") or project_env.get("IMAGE_GEN_BASE_URL")
+        if value:
+            forwarded["GPT_IMAGEGEN_BASE_URL"] = value
+
+    return forwarded or None
+
+
+def _load_nearest_dotenv(cwd: Path) -> dict[str, str]:
+    try:
+        start = Path(cwd).expanduser().resolve()
+    except OSError:
+        start = Path.cwd()
+    if start.is_file():
+        start = start.parent
+
+    for directory in (start, *start.parents):
+        env_path = directory / ".env"
+        if not env_path.is_file():
+            continue
+        try:
+            from dotenv import dotenv_values
+
+            values = dotenv_values(env_path)
+            return {str(k): str(v) for k, v in values.items() if k and v is not None}
+        except Exception:
+            return _parse_simple_dotenv(env_path)
+    return {}
+
+
+def _parse_simple_dotenv(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return values
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        values[key] = value.strip().strip('"').strip("'")
+    return values
 
 
 def _normalize_e2b_cwd(raw_cwd: str | None, *, host_cwd: Path) -> str:

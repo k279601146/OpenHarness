@@ -19,9 +19,18 @@ from openharness.tools.file_read_tool import FileReadTool
 from openharness.tools.file_write_tool import FileWriteTool
 from openharness.tools.glob_tool import GlobTool
 from openharness.tools.grep_tool import GrepTool
-from openharness.tools.image_generation_tool import ImageGenerationTool
+from openharness.tools.imagegen_cli_tool import ImagegenCliTool
 from openharness.tools.image_to_text_tool import ImageToTextTool
 from openharness.tools.list_mcp_resources_tool import ListMcpResourcesTool
+# from openharness.tools.media_generation_tools import (
+    # AnimateFirstFrameTool,
+    # CreativeImageTool,
+    # CreativeVideoTool,
+    # EditImageTool,
+    # ImageFromReferenceTool,
+    # VideoInterpolationTool,
+    # VideoWithReferenceTool,
+# )
 from openharness.tools.mcp_auth_tool import McpAuthTool
 from openharness.tools.mcp_tool import McpToolAdapter
 from openharness.tools.read_mcp_resource_tool import ReadMcpResourceTool
@@ -42,15 +51,6 @@ from openharness.tools.todo_write_tool import TodoWriteTool
 from openharness.tools.tool_search_tool import ToolSearchTool
 from openharness.tools.web_fetch_tool import WebFetchTool
 from openharness.tools.web_search_tool import WebSearchTool
-from openharness.tools.media_generation_tools import (
-    CreativeImageTool,
-    EditImageTool,
-    ImageFromReferenceTool,
-    CreativeVideoTool,
-    AnimateFirstFrameTool,
-    VideoInterpolationTool,
-    VideoWithReferenceTool,
-)
 
 
 def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
@@ -66,7 +66,7 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         GlobTool(),
         GrepTool(),
         ImageToTextTool(),
-        ImageGenerationTool(),
+        ImagegenCliTool(),
         SkillTool(),
         ToolSearchTool(),
         WebFetchTool(),
@@ -94,14 +94,13 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         SendMessageTool(),
         TeamCreateTool(),
         TeamDeleteTool(),
-        CreativeImageTool(),
-        EditImageTool(),
-        ImageFromReferenceTool(),
-        CreativeVideoTool(),
-        AnimateFirstFrameTool(),
-        VideoInterpolationTool(),
-        VideoWithReferenceTool(),
-
+        # CreativeImageTool(),
+        # EditImageTool(),
+        # ImageFromReferenceTool(),
+        # CreativeVideoTool(),
+        # AnimateFirstFrameTool(),
+        # VideoInterpolationTool(),
+        # VideoWithReferenceTool(),
         QueryMemoryTool(),
     ):
         registry.register(tool)
@@ -113,70 +112,10 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
     return registry
 
 
-def create_mvp_safe_tool_registry(mcp_manager=None) -> ToolRegistry:
-    """Return the SaaS-safe tool registry with controlled file tools first."""
-    registry = ToolRegistry()
-
-    # Prefer controlled read/search tools for uploaded files and logs.
-    registry.register(QueryMemoryTool())
-    registry.register(GlobTool())
-    registry.register(GrepTool())
-    registry.register(FileReadTool())
-
-    registry.register(WebSearchTool())
-    registry.register(WebFetchTool())
-
-    registry.register(CreativeImageTool())
-    registry.register(EditImageTool())
-    registry.register(ImageFromReferenceTool())
-    registry.register(CreativeVideoTool())
-    registry.register(AnimateFirstFrameTool())
-    registry.register(VideoInterpolationTool())
-    registry.register(VideoWithReferenceTool())
-    registry.register(FileWriteTool())
-    registry.register(FileEditTool())
-    registry.register(CreateFolderTool())
-    registry.register(BriefTool())
-    registry.register(DeliverArtifactTool())
-
-    registry.register(CronCreateTool())
-    registry.register(CronListTool())
-    registry.register(CronDeleteTool())
-    registry.register(CronToggleTool())
-    registry.register(TaskCreateTool())
-    registry.register(TaskGetTool())
-    registry.register(TaskListTool())
-    registry.register(TaskStopTool())
-    registry.register(TaskOutputTool())
-    registry.register(TaskUpdateTool())
-    registry.register(AgentTool())
-
-    registry.register(McpAuthTool())
-    if mcp_manager is not None:
-        registry.register(ListMcpResourcesTool(mcp_manager))
-        registry.register(ReadMcpResourceTool(mcp_manager))
-        for tool_info in mcp_manager.list_tools():
-            registry.register(McpToolAdapter(mcp_manager, tool_info))
-
-    registry.register(AskUserQuestionTool())
-    registry.register(SkillTool())
-    registry.register(ToolSearchTool())
-    registry.register(ConfigTool())
-    registry.register(SleepTool())
-    registry.register(SendMessageTool())
-
-    # Keep bash available as a deliberate fallback; placing it last nudges models
-    # toward host-side file tools for ordinary attachment inspection.
-    registry.register(BashTool())
-
-    return registry
-
-
 __all__ = [
     "BaseTool",
     "ToolExecutionContext",
     "ToolRegistry",
     "ToolResult",
     "create_default_tool_registry",
-    "create_mvp_safe_tool_registry",
 ]
