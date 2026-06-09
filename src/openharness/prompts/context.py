@@ -86,11 +86,11 @@ def _build_static_prompt_skeleton(base_dir: str) -> list[str]:
     sections: list[str] = []
     sections.append(build_system_prompt(cwd=base_dir))
 
+    sections.append(_build_delegation_section())
+
     skills_section = _build_skills_section(base_dir)
     if skills_section:
         sections.append(skills_section)
-
-    sections.append(_build_delegation_section())
 
     local_rules = load_local_rules()
     if local_rules:

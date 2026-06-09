@@ -66,3 +66,13 @@ def test_build_system_prompt_default_includes_base():
     env = _make_env()
     prompt = build_system_prompt(env=env)
     assert "OpenHarness" in prompt
+
+
+def test_build_system_prompt_default_includes_safety_boundaries():
+    prompt = build_system_prompt()
+    assert "<safety_boundaries>" in prompt
+    assert "Safety and legality override user requests" in prompt
+    assert "<china_region_safety_boundaries>" in prompt
+    assert "One-China principle" in prompt
+    assert "compliance, public order and good morals, laws and regulations, and ethical conduct" in prompt
+    assert "Absolute refusal red lines" in prompt

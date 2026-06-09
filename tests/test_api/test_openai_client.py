@@ -17,8 +17,11 @@ from openharness.api.openai_client import (
     _convert_tools_to_responses,
     _convert_tools_to_openai,
     _normalize_openai_base_url,
+    _looks_like_prompt_cache_unsupported,
+    _prompt_cache_params_for_request,
     _reasoning_effort_param_for_model,
     _responses_reasoning_param_for_model,
+    _strip_prompt_cache_params,
     _usage_snapshot_from_openai_usage,
     _strip_think_blocks,
     _token_limit_param_for_model,
@@ -346,6 +349,45 @@ class TestOpenAIUsageParsing:
         assert usage.cache_creation_input_tokens == 12
 
 
+class TestOpenAIPromptCaching:
+    def test_builds_stable_prompt_cache_params_for_gpt5(self, monkeypatch):
+        monkeypatch.delenv("OPENHARNESS_OPENAI_DISABLE_PROMPT_CACHE", raising=False)
+        monkeypatch.delenv("OPENHARNESS_OPENAI_PROMPT_CACHE_KEY", raising=False)
+        monkeypatch.delenv("OPENHARNESS_OPENAI_PROMPT_CACHE_RETENTION", raising=False)
+
+        tools = [{"type": "function", "name": "read_file", "description": "Read a file"}]
+        first = _prompt_cache_params_for_request(model="gpt-5.5", instructions="static prompt", tools=tools)
+        second = _prompt_cache_params_for_request(model="gpt-5.5", instructions="static prompt", tools=tools)
+
+        assert first == second
+        assert first["prompt_cache_key"].startswith("openharness:gpt-5.5:")
+        assert first["prompt_cache_retention"] == "24h"
+
+    def test_prompt_cache_env_overrides(self, monkeypatch):
+        monkeypatch.setenv("OPENHARNESS_OPENAI_PROMPT_CACHE_KEY", "shared-agent-prefix")
+        monkeypatch.setenv("OPENHARNESS_OPENAI_PROMPT_CACHE_RETENTION", "off")
+
+        params = _prompt_cache_params_for_request(model="gpt-5.5", instructions="static prompt", tools=[])
+
+        assert params == {"prompt_cache_key": "shared-agent-prefix"}
+
+    def test_prompt_cache_can_be_disabled(self, monkeypatch):
+        monkeypatch.setenv("OPENHARNESS_OPENAI_DISABLE_PROMPT_CACHE", "true")
+
+        assert _prompt_cache_params_for_request(model="gpt-5.5", instructions="static prompt", tools=[]) == {}
+
+    def test_strip_prompt_cache_params(self):
+        params = {"model": "gpt-5.5", "prompt_cache_key": "x", "prompt_cache_retention": "24h"}
+
+        assert _strip_prompt_cache_params(params) is True
+        assert params == {"model": "gpt-5.5"}
+
+    def test_detects_prompt_cache_unsupported_error(self):
+        exc = ValueError("Unknown parameter: prompt_cache_retention")
+
+        assert _looks_like_prompt_cache_unsupported(exc)
+
+
 class _FakeResponses:
     def __init__(self, events: list[dict[str, object]] | None = None) -> None:
         self.last_kwargs: dict[str, object] | None = None
@@ -505,6 +547,28 @@ class TestStreamMessageTokenParams:
         assert events
         assert fake_sdk.responses.last_kwargs is not None
         assert fake_sdk.responses.last_kwargs["reasoning"] == {"effort": "medium"}
+
+    @pytest.mark.asyncio
+    async def test_gpt5_stream_includes_prompt_cache_params(self, monkeypatch):
+        monkeypatch.delenv("OPENHARNESS_OPENAI_DISABLE_PROMPT_CACHE", raising=False)
+        monkeypatch.delenv("OPENHARNESS_OPENAI_PROMPT_CACHE_KEY", raising=False)
+        monkeypatch.delenv("OPENHARNESS_OPENAI_PROMPT_CACHE_RETENTION", raising=False)
+        client = OpenAICompatibleClient(api_key="test-key")
+        fake_sdk = _FakeOpenAIClient()
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="gpt-5.5",
+            messages=[ConversationMessage.from_user_text("Explain the codebase")],
+            system_prompt="static prompt",
+        )
+
+        events = [event async for event in client.stream_message(request)]
+
+        assert events
+        assert fake_sdk.responses.last_kwargs is not None
+        assert fake_sdk.responses.last_kwargs["prompt_cache_key"].startswith("openharness:gpt-5.5:")
+        assert fake_sdk.responses.last_kwargs["prompt_cache_retention"] == "24h"
 
     @pytest.mark.asyncio
     async def test_stream_uses_responses_tool_schema(self):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import logging
@@ -50,8 +51,12 @@ HEARTBEAT_INTERVAL = 30.0
 
 _MAX_COMPLETION_TOKEN_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 _REASONING_EFFORT_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+_EXTENDED_PROMPT_CACHE_MODEL_PREFIXES = ("gpt-5", "gpt-4.1")
 _DISABLE_STREAMING_ENV = "OPENHARNESS_OPENAI_DISABLE_STREAMING"
 _DISABLE_STREAM_USAGE_ENV = "OPENHARNESS_OPENAI_DISABLE_STREAM_USAGE"
+_DISABLE_PROMPT_CACHE_ENV = "OPENHARNESS_OPENAI_DISABLE_PROMPT_CACHE"
+_PROMPT_CACHE_KEY_ENV = "OPENHARNESS_OPENAI_PROMPT_CACHE_KEY"
+_PROMPT_CACHE_RETENTION_ENV = "OPENHARNESS_OPENAI_PROMPT_CACHE_RETENTION"
 
 
 def _token_limit_param_for_model(model: str, max_tokens: int) -> dict[str, int]:
@@ -115,6 +120,95 @@ def _openai_streaming_disabled() -> bool:
 def _openai_stream_usage_disabled() -> bool:
     raw = os.environ.get(_DISABLE_STREAM_USAGE_ENV, "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
+
+
+def _openai_prompt_cache_disabled() -> bool:
+    raw = os.environ.get(_DISABLE_PROMPT_CACHE_ENV, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _supports_extended_prompt_cache(model: str) -> bool:
+    return _normalized_model_name(model).startswith(_EXTENDED_PROMPT_CACHE_MODEL_PREFIXES)
+
+
+def _prompt_cache_params_for_request(
+    *,
+    model: str,
+    instructions: str | None,
+    tools: list[dict[str, Any]] | None,
+) -> dict[str, str]:
+    if _openai_prompt_cache_disabled():
+        return {}
+
+    explicit_key = os.environ.get(_PROMPT_CACHE_KEY_ENV, "").strip()
+    if explicit_key:
+        cache_key = explicit_key[:64]
+    else:
+        tool_fingerprint_source = [
+            {
+                "type": tool.get("type"),
+                "name": tool.get("name") or _usage_attr(tool.get("function"), "name"),
+                "description": tool.get("description") or _usage_attr(tool.get("function"), "description"),
+            }
+            for tool in tools or []
+        ]
+        prefix_source = json.dumps(
+            {
+                "model": _normalized_model_name(model),
+                "instructions_prefix": (instructions or "")[:8192],
+                "tools": tool_fingerprint_source,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        digest = hashlib.sha256(prefix_source.encode("utf-8")).hexdigest()[:24]
+        cache_key = f"openharness:{_normalized_model_name(model)}:{digest}"[:64]
+
+    params = {"prompt_cache_key": cache_key}
+    explicit_retention = os.environ.get(_PROMPT_CACHE_RETENTION_ENV, "").strip().lower()
+    if explicit_retention in {"off", "none", "false", "0"}:
+        return params
+    if explicit_retention:
+        params["prompt_cache_retention"] = explicit_retention
+    elif _supports_extended_prompt_cache(model):
+        params["prompt_cache_retention"] = "24h"
+    return params
+
+
+def _strip_prompt_cache_params(params: dict[str, Any]) -> bool:
+    removed = False
+    for key in ("prompt_cache_key", "prompt_cache_retention"):
+        if key in params:
+            params.pop(key, None)
+            removed = True
+    return removed
+
+
+def _looks_like_prompt_cache_unsupported(exc: Exception) -> bool:
+    text = " ".join(
+        str(part)
+        for part in (
+            exc,
+            getattr(exc, "body", None),
+            getattr(exc, "response", None),
+        )
+        if part is not None
+    ).lower()
+    if "prompt_cache_key" not in text and "prompt_cache_retention" not in text:
+        return False
+    return any(
+        term in text
+        for term in (
+            "unknown",
+            "unsupported",
+            "unrecognized",
+            "invalid",
+            "extra",
+            "not permitted",
+            "not supported",
+        )
+    )
 
 
 def _usage_attr(obj: Any, name: str, default: Any = None) -> Any:
@@ -723,10 +817,28 @@ class OpenAICompatibleClient:
             params["tools"] = responses_tools
             params["tool_choice"] = "auto"
             params["parallel_tool_calls"] = True
+        prompt_cache_params = _prompt_cache_params_for_request(
+            model=request.model,
+            instructions=instructions,
+            tools=responses_tools,
+        )
+        params.update(prompt_cache_params)
+
+        async def _create_response_with_prompt_cache_fallback(create_params: dict[str, Any]) -> Any:
+            try:
+                return await self._client.responses.create(**create_params)
+            except Exception as exc:
+                if _looks_like_prompt_cache_unsupported(exc) and _strip_prompt_cache_params(create_params):
+                    log.warning(
+                        "[OpenAICompat:%s] prompt cache params unsupported by upstream; retrying without them",
+                        request_id,
+                    )
+                    return await self._client.responses.create(**create_params)
+                raise
 
         log.info(
             "[OpenAICompat:%s] responses request model=%s stream=%s input_items=%d system=%s "
-            "tools=%d tool_names=%s max_output_tokens=%s reasoning=%s base_url=%s",
+            "tools=%d tool_names=%s max_output_tokens=%s reasoning=%s prompt_cache=%s retention=%s base_url=%s",
             request_id,
             request.model,
             params.get("stream"),
@@ -736,13 +848,15 @@ class OpenAICompatibleClient:
             [tool.get("name") or tool.get("type") for tool in (responses_tools or [])[:8]],
             params.get("max_output_tokens"),
             params.get("reasoning"),
+            "yes" if params.get("prompt_cache_key") else "no",
+            params.get("prompt_cache_retention"),
             getattr(self._client, "base_url", None),
         )
 
         if not params.get("stream"):
             response: Any | None = None
             try:
-                response = await self._client.responses.create(**params)
+                response = await _create_response_with_prompt_cache_fallback(params)
             except Exception as exc:
                 if _has_hosted_web_search(responses_tools) and _looks_like_hosted_web_search_unsupported(exc):
                     fallback_tools = _convert_tools_to_responses_local_web_search_fallback(request.tools)
@@ -752,7 +866,7 @@ class OpenAICompatibleClient:
                             "[OpenAICompat:%s] hosted web_search unsupported; retrying non-stream with local web_search function fallback",
                             request_id,
                         )
-                        response = await self._client.responses.create(**params)
+                        response = await _create_response_with_prompt_cache_fallback(params)
                     else:
                         raise
                 else:
@@ -815,7 +929,7 @@ class OpenAICompatibleClient:
         _think_buf = ""
 
         try:
-            response_stream = await self._client.responses.create(**params)
+            response_stream = await _create_response_with_prompt_cache_fallback(params)
         except Exception as exc:
             if _has_hosted_web_search(responses_tools) and _looks_like_hosted_web_search_unsupported(exc):
                 fallback_tools = _convert_tools_to_responses_local_web_search_fallback(request.tools)
@@ -826,7 +940,7 @@ class OpenAICompatibleClient:
                         request_id,
                     )
                     try:
-                        response_stream = await self._client.responses.create(**params)
+                        response_stream = await _create_response_with_prompt_cache_fallback(params)
                     except Exception as fallback_exc:
                         log.warning(
                             "[OpenAICompat:%s] responses fallback create failed type=%s status=%s body=%s message=%s",
