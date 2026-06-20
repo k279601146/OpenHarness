@@ -17,7 +17,7 @@ class PluginManifest(BaseModel):
     hooks_file: str = "hooks.json"
     mcp_file: str = "mcp.json"
     # Extended fields: optional author, commands, agents, etc.
-    author: dict | None = None
+    author: str | dict | None = None
     commands: str | list | dict | None = None
     agents: str | list | None = None
     skills: str | list | None = None

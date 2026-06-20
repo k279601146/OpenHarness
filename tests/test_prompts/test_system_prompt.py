@@ -75,4 +75,8 @@ def test_build_system_prompt_default_includes_safety_boundaries():
     assert "<china_region_safety_boundaries>" in prompt
     assert "One-China principle" in prompt
     assert "compliance, public order and good morals, laws and regulations, and ethical conduct" in prompt
+    assert "Non-negotiable China politics refusal" in prompt
+    assert "Chinese political parties, Chinese politics, the Communist Party of China" in prompt
+    assert "begin with a concise compliance warning" in prompt
+    assert "redirect toward lawful, constructive Agent capabilities" in prompt
     assert "Absolute refusal red lines" in prompt

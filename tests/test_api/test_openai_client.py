@@ -18,9 +18,12 @@ from openharness.api.openai_client import (
     _convert_tools_to_openai,
     _normalize_openai_base_url,
     _looks_like_prompt_cache_unsupported,
+    _looks_like_service_tier_unsupported,
     _prompt_cache_params_for_request,
     _reasoning_effort_param_for_model,
     _responses_reasoning_param_for_model,
+    _service_tier_param,
+    _strip_service_tier_param,
     _strip_prompt_cache_params,
     _usage_snapshot_from_openai_usage,
     _strip_think_blocks,
@@ -287,6 +290,9 @@ class TestReasoningEffortParams:
     def test_gpt5_passes_supported_reasoning_effort(self):
         assert _reasoning_effort_param_for_model("gpt-5.4", "medium") == {"reasoning_effort": "medium"}
 
+    def test_gpt5_chat_allows_none_reasoning_effort(self):
+        assert _reasoning_effort_param_for_model("gpt-5.4", "none") == {"reasoning_effort": "none"}
+
     def test_gpt5_maps_xhigh_to_high_for_chat_completions(self):
         assert _reasoning_effort_param_for_model("gpt-5.4", "xhigh") == {"reasoning_effort": "high"}
 
@@ -301,6 +307,14 @@ class TestReasoningEffortParams:
     def test_responses_reasoning_allows_minimal(self):
         assert _responses_reasoning_param_for_model("gpt-5.4", "minimal") == {
             "reasoning": {"effort": "minimal"}
+        }
+
+    def test_responses_reasoning_allows_none_and_xhigh(self):
+        assert _responses_reasoning_param_for_model("gpt-5.5", "none") == {
+            "reasoning": {"effort": "none"}
+        }
+        assert _responses_reasoning_param_for_model("gpt-5.5", "xhigh") == {
+            "reasoning": {"effort": "xhigh"}
         }
 
 
@@ -386,6 +400,24 @@ class TestOpenAIPromptCaching:
         exc = ValueError("Unknown parameter: prompt_cache_retention")
 
         assert _looks_like_prompt_cache_unsupported(exc)
+
+
+class TestOpenAIServiceTier:
+    def test_service_tier_env_param(self, monkeypatch):
+        monkeypatch.setenv("OPENHARNESS_OPENAI_SERVICE_TIER", "priority")
+
+        assert _service_tier_param() == {"service_tier": "priority"}
+
+    def test_strip_service_tier_param(self):
+        params = {"model": "gpt-5.5", "service_tier": "priority"}
+
+        assert _strip_service_tier_param(params) is True
+        assert params == {"model": "gpt-5.5"}
+
+    def test_detects_service_tier_unsupported_error(self):
+        exc = ValueError("Unknown parameter: service_tier")
+
+        assert _looks_like_service_tier_unsupported(exc)
 
 
 class _FakeResponses:

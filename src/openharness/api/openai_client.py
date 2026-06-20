@@ -57,6 +57,7 @@ _DISABLE_STREAM_USAGE_ENV = "OPENHARNESS_OPENAI_DISABLE_STREAM_USAGE"
 _DISABLE_PROMPT_CACHE_ENV = "OPENHARNESS_OPENAI_DISABLE_PROMPT_CACHE"
 _PROMPT_CACHE_KEY_ENV = "OPENHARNESS_OPENAI_PROMPT_CACHE_KEY"
 _PROMPT_CACHE_RETENTION_ENV = "OPENHARNESS_OPENAI_PROMPT_CACHE_RETENTION"
+_SERVICE_TIER_ENV = "OPENHARNESS_OPENAI_SERVICE_TIER"
 
 
 def _token_limit_param_for_model(model: str, max_tokens: int) -> dict[str, int]:
@@ -90,6 +91,8 @@ def _reasoning_effort_param_for_model(model: str, effort: str | None) -> dict[st
         return {}
 
     normalized_effort = (effort or "low").strip().lower()
+    if normalized_effort == "none":
+        return {"reasoning_effort": "none"}
     if normalized_effort == "max":
         normalized_effort = "high"
     if normalized_effort == "xhigh":
@@ -105,9 +108,9 @@ def _responses_reasoning_param_for_model(model: str, effort: str | None) -> dict
         return {}
 
     normalized_effort = (effort or "low").strip().lower()
-    if normalized_effort == "xhigh":
-        normalized_effort = "high"
-    if normalized_effort not in {"minimal", "low", "medium", "high"}:
+    if normalized_effort == "max":
+        normalized_effort = "xhigh"
+    if normalized_effort not in {"none", "minimal", "low", "medium", "high", "xhigh"}:
         normalized_effort = "low"
     return {"reasoning": {"effort": normalized_effort}}
 
@@ -196,6 +199,44 @@ def _looks_like_prompt_cache_unsupported(exc: Exception) -> bool:
         if part is not None
     ).lower()
     if "prompt_cache_key" not in text and "prompt_cache_retention" not in text:
+        return False
+    return any(
+        term in text
+        for term in (
+            "unknown",
+            "unsupported",
+            "unrecognized",
+            "invalid",
+            "extra",
+            "not permitted",
+            "not supported",
+        )
+    )
+
+
+def _service_tier_param() -> dict[str, str]:
+    service_tier = os.environ.get(_SERVICE_TIER_ENV, "").strip()
+    return {"service_tier": service_tier} if service_tier else {}
+
+
+def _strip_service_tier_param(params: dict[str, Any]) -> bool:
+    if "service_tier" not in params:
+        return False
+    params.pop("service_tier", None)
+    return True
+
+
+def _looks_like_service_tier_unsupported(exc: Exception) -> bool:
+    text = " ".join(
+        str(part)
+        for part in (
+            exc,
+            getattr(exc, "body", None),
+            getattr(exc, "response", None),
+        )
+        if part is not None
+    ).lower()
+    if "service_tier" not in text:
         return False
     return any(
         term in text
@@ -823,8 +864,9 @@ class OpenAICompatibleClient:
             tools=responses_tools,
         )
         params.update(prompt_cache_params)
+        params.update(_service_tier_param())
 
-        async def _create_response_with_prompt_cache_fallback(create_params: dict[str, Any]) -> Any:
+        async def _create_response_with_optional_param_fallback(create_params: dict[str, Any]) -> Any:
             try:
                 return await self._client.responses.create(**create_params)
             except Exception as exc:
@@ -834,11 +876,17 @@ class OpenAICompatibleClient:
                         request_id,
                     )
                     return await self._client.responses.create(**create_params)
+                if _looks_like_service_tier_unsupported(exc) and _strip_service_tier_param(create_params):
+                    log.warning(
+                        "[OpenAICompat:%s] service_tier unsupported by upstream; retrying without it",
+                        request_id,
+                    )
+                    return await self._client.responses.create(**create_params)
                 raise
 
         log.info(
             "[OpenAICompat:%s] responses request model=%s stream=%s input_items=%d system=%s "
-            "tools=%d tool_names=%s max_output_tokens=%s reasoning=%s prompt_cache=%s retention=%s base_url=%s",
+            "tools=%d tool_names=%s max_output_tokens=%s reasoning=%s prompt_cache=%s retention=%s service_tier=%s base_url=%s",
             request_id,
             request.model,
             params.get("stream"),
@@ -850,13 +898,14 @@ class OpenAICompatibleClient:
             params.get("reasoning"),
             "yes" if params.get("prompt_cache_key") else "no",
             params.get("prompt_cache_retention"),
+            params.get("service_tier"),
             getattr(self._client, "base_url", None),
         )
 
         if not params.get("stream"):
             response: Any | None = None
             try:
-                response = await _create_response_with_prompt_cache_fallback(params)
+                response = await _create_response_with_optional_param_fallback(params)
             except Exception as exc:
                 if _has_hosted_web_search(responses_tools) and _looks_like_hosted_web_search_unsupported(exc):
                     fallback_tools = _convert_tools_to_responses_local_web_search_fallback(request.tools)
@@ -866,7 +915,7 @@ class OpenAICompatibleClient:
                             "[OpenAICompat:%s] hosted web_search unsupported; retrying non-stream with local web_search function fallback",
                             request_id,
                         )
-                        response = await _create_response_with_prompt_cache_fallback(params)
+                        response = await _create_response_with_optional_param_fallback(params)
                     else:
                         raise
                 else:
@@ -928,8 +977,15 @@ class OpenAICompatibleClient:
         usage = UsageSnapshot()
         _think_buf = ""
 
+        request_started_at = asyncio.get_event_loop().time()
         try:
-            response_stream = await _create_response_with_prompt_cache_fallback(params)
+            response_stream = await _create_response_with_optional_param_fallback(params)
+            stream_opened_at = asyncio.get_event_loop().time()
+            log.info(
+                "[OpenAICompat:%s] stream_open latency=%.3fs",
+                request_id,
+                stream_opened_at - request_started_at,
+            )
         except Exception as exc:
             if _has_hosted_web_search(responses_tools) and _looks_like_hosted_web_search_unsupported(exc):
                 fallback_tools = _convert_tools_to_responses_local_web_search_fallback(request.tools)
@@ -940,7 +996,13 @@ class OpenAICompatibleClient:
                         request_id,
                     )
                     try:
-                        response_stream = await _create_response_with_prompt_cache_fallback(params)
+                        response_stream = await _create_response_with_optional_param_fallback(params)
+                        stream_opened_at = asyncio.get_event_loop().time()
+                        log.info(
+                            "[OpenAICompat:%s] stream_open latency=%.3fs fallback=yes",
+                            request_id,
+                            stream_opened_at - request_started_at,
+                        )
                     except Exception as fallback_exc:
                         log.warning(
                             "[OpenAICompat:%s] responses fallback create failed type=%s status=%s body=%s message=%s",
@@ -985,9 +1047,18 @@ class OpenAICompatibleClient:
                     break
 
         try:
-            request_started_at = asyncio.get_event_loop().time()
             first_visible_delta_at: float | None = None
+            first_stream_event_at: float | None = None
             async for event in _watchdog_iterator():
+                if first_stream_event_at is None:
+                    first_stream_event_at = asyncio.get_event_loop().time()
+                    log.info(
+                        "[OpenAICompat:%s] first_stream_event total_latency=%.3fs stream_latency=%.3fs type=%s",
+                        request_id,
+                        first_stream_event_at - request_started_at,
+                        first_stream_event_at - stream_opened_at,
+                        _response_event_type(event),
+                    )
                 event_type = _response_event_type(event)
 
                 if event_type == "response.output_text.delta":
@@ -1001,9 +1072,10 @@ class OpenAICompatibleClient:
                         if first_visible_delta_at is None:
                             first_visible_delta_at = asyncio.get_event_loop().time()
                             log.info(
-                                "[OpenAICompat:%s] first_visible_delta latency=%.3fs chars=%d",
+                                "[OpenAICompat:%s] first_visible_delta total_latency=%.3fs stream_latency=%.3fs chars=%d",
                                 request_id,
                                 first_visible_delta_at - request_started_at,
+                                first_visible_delta_at - stream_opened_at,
                                 len(visible),
                             )
                         yield ApiTextDeltaEvent(text=visible)
@@ -1113,9 +1185,10 @@ class OpenAICompatibleClient:
                         if first_visible_delta_at is None:
                             first_visible_delta_at = asyncio.get_event_loop().time()
                             log.info(
-                                "[OpenAICompat:%s] first_visible_delta latency=%.3fs chars=%d",
+                                "[OpenAICompat:%s] first_visible_delta total_latency=%.3fs stream_latency=%.3fs chars=%d",
                                 request_id,
                                 first_visible_delta_at - request_started_at,
+                                first_visible_delta_at - stream_opened_at,
                                 len(visible),
                             )
                         yield ApiTextDeltaEvent(text=visible)

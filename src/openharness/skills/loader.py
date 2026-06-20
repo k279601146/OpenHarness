@@ -59,14 +59,17 @@ def load_skill_registry(
     extra_skill_dirs: Iterable[str | Path] | None = None,
     extra_plugin_roots: Iterable[str | Path] | None = None,
     settings=None,
+    include_default_user_skills: bool = True,
+    include_default_plugin_roots: bool = True,
     normalize_path_func: Callable[[Path], str] | None = None,
 ) -> SkillRegistry:
     """Load bundled, user-defined, project, and plugin skills."""
     registry = SkillRegistry()
     for skill in get_bundled_skills():
         registry.register(skill)
-    for skill in load_user_skills(normalize_path_func=normalize_path_func):
-        registry.register(skill)
+    if include_default_user_skills:
+        for skill in load_user_skills(normalize_path_func=normalize_path_func):
+            registry.register(skill)
     for skill in load_skills_from_dirs(
         extra_skill_dirs,
         source="user",
@@ -86,7 +89,12 @@ def load_skill_registry(
     if cwd is not None:
         from openharness.plugins.loader import load_plugins
 
-        for plugin in load_plugins(resolved_settings, cwd, extra_roots=extra_plugin_roots):
+        for plugin in load_plugins(
+            resolved_settings,
+            cwd,
+            extra_roots=extra_plugin_roots,
+            include_default_roots=include_default_plugin_roots,
+        ):
             if not plugin.enabled:
                 continue
             for skill in plugin.skills:

@@ -52,6 +52,7 @@ def _find_manifest(plugin_dir: Path) -> Path | None:
     for candidate in [
         plugin_dir / "plugin.json",
         plugin_dir / ".claude-plugin" / "plugin.json",
+        plugin_dir / ".codex-plugin" / "plugin.json",
     ]:
         if candidate.exists():
             return candidate
@@ -82,10 +83,11 @@ def discover_plugin_paths_for_settings(
     settings,
     cwd: str | Path,
     extra_roots: Iterable[str | Path] | None = None,
+    include_default_roots: bool = True,
 ) -> list[Path]:
     """Find plugin directories that are permitted by the active settings."""
-    roots = [get_user_plugins_dir()]
-    if getattr(settings, "allow_project_plugins", False):
+    roots = [get_user_plugins_dir()] if include_default_roots else []
+    if include_default_roots and getattr(settings, "allow_project_plugins", False):
         roots.append(get_project_plugins_dir(cwd))
     if extra_roots:
         for root in extra_roots:
@@ -104,19 +106,31 @@ def discover_plugin_paths_for_settings(
     return paths
 
 
-def load_plugins(settings, cwd: str | Path, extra_roots: Iterable[str | Path] | None = None) -> list[LoadedPlugin]:
+def load_plugins(
+    settings,
+    cwd: str | Path,
+    extra_roots: Iterable[str | Path] | None = None,
+    *,
+    include_default_roots: bool = True,
+) -> list[LoadedPlugin]:
     """Load plugins from disk."""
-    project_plugins_dir = get_project_plugins_dir(cwd)
-    if not getattr(settings, "allow_project_plugins", False) and any(
-        path.is_dir() and _find_manifest(path) is not None for path in sorted(project_plugins_dir.iterdir())
-    ):
-        logger.warning(
-            "Found project-local plugins in %s, but they are disabled by default. "
-            "Set allow_project_plugins=true if you trust this workspace.",
-            project_plugins_dir,
-        )
+    if include_default_roots:
+        project_plugins_dir = get_project_plugins_dir(cwd)
+        if not getattr(settings, "allow_project_plugins", False) and any(
+            path.is_dir() and _find_manifest(path) is not None for path in sorted(project_plugins_dir.iterdir())
+        ):
+            logger.warning(
+                "Found project-local plugins in %s, but they are disabled by default. "
+                "Set allow_project_plugins=true if you trust this workspace.",
+                project_plugins_dir,
+            )
     plugins: list[LoadedPlugin] = []
-    for path in discover_plugin_paths_for_settings(settings, cwd, extra_roots=extra_roots):
+    for path in discover_plugin_paths_for_settings(
+        settings,
+        cwd,
+        extra_roots=extra_roots,
+        include_default_roots=include_default_roots,
+    ):
         plugin = load_plugin(path, settings.enabled_plugins)
         if plugin is not None:
             plugins.append(plugin)
@@ -135,7 +149,14 @@ def load_plugin(path: Path, enabled_plugins: dict[str, bool]) -> LoadedPlugin | 
         return None
     enabled = enabled_plugins.get(manifest.name, manifest.enabled_by_default)
 
-    skills = _load_plugin_skills(path / manifest.skills_dir)
+    skills: list[SkillDefinition] = []
+    seen_skill_paths: set[str] = set()
+    for skills_dir in _plugin_skill_dirs(path, manifest):
+        for skill in _load_plugin_skills(skills_dir):
+            if skill.path in seen_skill_paths:
+                continue
+            seen_skill_paths.add(skill.path)
+            skills.append(skill)
     commands = _load_plugin_commands(path, manifest)
     agents = _load_plugin_agents(path, manifest)
     tools = _load_plugin_tools(path, manifest) if enabled else []
@@ -315,6 +336,26 @@ def _coerce_path_list(raw: Any) -> list[str]:
     if isinstance(raw, list):
         return [str(item) for item in raw]
     return []
+
+
+def _plugin_skill_dirs(path: Path, manifest: PluginManifest) -> list[Path]:
+    raw_dirs = _coerce_path_list(manifest.skills)
+    if not raw_dirs:
+        raw_dirs = [manifest.skills_dir]
+    dirs: list[Path] = []
+    seen: set[Path] = set()
+    for raw_dir in raw_dirs:
+        candidate = (path / raw_dir).resolve()
+        try:
+            candidate.relative_to(path.resolve())
+        except ValueError:
+            logger.warning("Ignoring plugin skill path outside plugin root: %s", raw_dir)
+            continue
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        dirs.append(candidate)
+    return dirs
 
 
 def _load_plugin_commands(path: Path, manifest: PluginManifest) -> list[PluginCommandDefinition]:

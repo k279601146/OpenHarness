@@ -5,6 +5,33 @@ from openharness.tools.agent_tool import AgentTool
 from openharness.tools.bash_tool import BashTool
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
 from openharness.tools.brief_tool import BriefTool
+from openharness.tools.canvas_ops_tool import (
+    CanvasApplyOpsTool,
+    CanvasConnectNodesTool,
+    CanvasCreateConfigNodeTool,
+    CanvasCreateGenerationFlowTool,
+    CanvasCreateLegacyImageFlowTool,
+    CanvasCreateImageFlowTool,
+    CanvasCreateNodeTool,
+    CanvasCreateTextNodeTool,
+    CanvasCreateTextNodesTool,
+    CanvasCreateVideoFlowTool,
+    CanvasDeleteNodesTool,
+    CanvasExportSnapshotTool,
+    CanvasGenerateAudioTool,
+    CanvasGenerateImageTool,
+    CanvasGenerateTextTool,
+    CanvasGenerateVideoTool,
+    CanvasGetSelectionTool,
+    CanvasGetStateTool,
+    CanvasMoveNodesTool,
+    CanvasResizeNodeTool,
+    CanvasRunGenerationTool,
+    CanvasSelectNodesTool,
+    CanvasSetViewportTool,
+    CanvasUpdateNodeTextTool,
+    CanvasUpdateNodeTool,
+)
 from openharness.tools.config_tool import ConfigTool
 from openharness.tools.create_folder_tool import CreateFolderTool
 from openharness.tools.cron_create_tool import CronCreateTool
@@ -22,15 +49,15 @@ from openharness.tools.grep_tool import GrepTool
 from openharness.tools.imagegen_cli_tool import ImagegenCliTool
 from openharness.tools.image_to_text_tool import ImageToTextTool
 from openharness.tools.list_mcp_resources_tool import ListMcpResourcesTool
-# from openharness.tools.media_generation_tools import (
-    # AnimateFirstFrameTool,
-    # CreativeImageTool,
-    # CreativeVideoTool,
-    # EditImageTool,
-    # ImageFromReferenceTool,
-    # VideoInterpolationTool,
-    # VideoWithReferenceTool,
-# )
+from openharness.tools.media_generation_tools import (
+    AnimateFirstFrameTool,
+    CreativeImageTool,
+    CreativeVideoTool,
+    EditImageTool,
+    ImageFromReferenceTool,
+    VideoInterpolationTool,
+    VideoWithReferenceTool,
+)
 from openharness.tools.mcp_auth_tool import McpAuthTool
 from openharness.tools.mcp_tool import McpToolAdapter
 from openharness.tools.read_mcp_resource_tool import ReadMcpResourceTool
@@ -74,6 +101,31 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         ConfigTool(),
         CreateFolderTool(),
         BriefTool(),
+        CanvasGetStateTool(),
+        CanvasGetSelectionTool(),
+        CanvasExportSnapshotTool(),
+        CanvasApplyOpsTool(),
+        CanvasCreateNodeTool(),
+        CanvasCreateTextNodeTool(),
+        CanvasCreateTextNodesTool(),
+        CanvasCreateConfigNodeTool(),
+        CanvasCreateImageFlowTool(),
+        CanvasCreateLegacyImageFlowTool(),
+        CanvasCreateVideoFlowTool(),
+        CanvasCreateGenerationFlowTool(),
+        CanvasGenerateTextTool(),
+        CanvasGenerateImageTool(),
+        CanvasGenerateVideoTool(),
+        CanvasGenerateAudioTool(),
+        CanvasUpdateNodeTool(),
+        CanvasUpdateNodeTextTool(),
+        CanvasMoveNodesTool(),
+        CanvasResizeNodeTool(),
+        CanvasDeleteNodesTool(),
+        CanvasConnectNodesTool(),
+        CanvasSelectNodesTool(),
+        CanvasSetViewportTool(),
+        CanvasRunGenerationTool(),
         SleepTool(),
         TodoWriteTool(),
         EnterPlanModeTool(),
@@ -94,13 +146,13 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         SendMessageTool(),
         TeamCreateTool(),
         TeamDeleteTool(),
-        # CreativeImageTool(),
-        # EditImageTool(),
-        # ImageFromReferenceTool(),
-        # CreativeVideoTool(),
-        # AnimateFirstFrameTool(),
-        # VideoInterpolationTool(),
-        # VideoWithReferenceTool(),
+        CreativeImageTool(),
+        EditImageTool(),
+        ImageFromReferenceTool(),
+        CreativeVideoTool(),
+        AnimateFirstFrameTool(),
+        VideoInterpolationTool(),
+        VideoWithReferenceTool(),
         QueryMemoryTool(),
     ):
         registry.register(tool)

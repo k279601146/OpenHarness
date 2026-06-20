@@ -52,6 +52,8 @@ def _build_skills_section(
     extra_skill_dirs: Iterable[str | Path] | None = None,
     extra_plugin_roots: Iterable[str | Path] | None = None,
     settings: Settings | None = None,
+    include_default_user_skills: bool = True,
+    include_default_plugin_roots: bool = True,
 ) -> str | None:
     """Build a system prompt section listing available skills."""
     registry = load_skill_registry(
@@ -59,6 +61,8 @@ def _build_skills_section(
         extra_skill_dirs=extra_skill_dirs,
         extra_plugin_roots=extra_plugin_roots,
         settings=settings,
+        include_default_user_skills=include_default_user_skills,
+        include_default_plugin_roots=include_default_plugin_roots,
     )
     skills = [skill for skill in registry.list_skills() if not skill.disable_model_invocation]
     if not skills:
@@ -79,8 +83,51 @@ def _build_skills_section(
     return "\n".join(lines)
 
 
-@functools.lru_cache(maxsize=4)
-def _build_static_prompt_skeleton(base_dir: str) -> list[str]:
+def _build_extra_skills_section(
+    cwd: str | Path,
+    *,
+    extra_skill_dirs: Iterable[str | Path] | None = None,
+    extra_plugin_roots: Iterable[str | Path] | None = None,
+    settings: Settings | None = None,
+    include_default_user_skills: bool = True,
+    include_default_plugin_roots: bool = True,
+) -> str | None:
+    """Build a dynamic prompt section for SaaS user and plugin skills."""
+    skills = [
+        skill
+        for skill in load_skill_registry(
+            cwd,
+            extra_skill_dirs=extra_skill_dirs,
+            extra_plugin_roots=extra_plugin_roots,
+            settings=settings,
+            include_default_user_skills=include_default_user_skills,
+            include_default_plugin_roots=include_default_plugin_roots,
+        ).list_skills()
+        if not skill.disable_model_invocation and skill.source in {"user", "plugin"}
+    ]
+    if not skills:
+        return None
+    lines = [
+        "# User And Plugin Skills",
+        "",
+        "The current user has added these private skills or enabled plugins that provide skills. "
+        "They are available via the `skill` tool. "
+        "When the request matches one of them, invoke `skill(name=\"<skill_name>\")` before proceeding.",
+        "",
+    ]
+    for skill in skills:
+        command_name = skill.command_name or skill.name
+        display = f" ({skill.display_name})" if skill.display_name else ""
+        lines.append(f"- **{command_name}**{display}: {skill.description}")
+    return "\n".join(lines)
+
+
+@functools.lru_cache(maxsize=8)
+def _build_static_prompt_skeleton(
+    base_dir: str,
+    include_default_user_skills: bool = True,
+    include_default_plugin_roots: bool = True,
+) -> list[str]:
     """Build and cache the static skeleton of the system prompt."""
     logger.info("--- [Cache MISS] Building system prompt skeleton for: %s ---", base_dir)
     sections: list[str] = []
@@ -88,7 +135,11 @@ def _build_static_prompt_skeleton(base_dir: str) -> list[str]:
 
     sections.append(_build_delegation_section())
 
-    skills_section = _build_skills_section(base_dir)
+    skills_section = _build_skills_section(
+        base_dir,
+        include_default_user_skills=include_default_user_skills,
+        include_default_plugin_roots=include_default_plugin_roots,
+    )
     if skills_section:
         sections.append(skills_section)
 
@@ -106,6 +157,8 @@ def build_runtime_system_prompt(
     latest_user_prompt: str | None = None,
     extra_skill_dirs: Iterable[str | Path] | None = None,
     extra_plugin_roots: Iterable[str | Path] | None = None,
+    include_default_user_skills: bool = True,
+    include_default_plugin_roots: bool = True,
     include_project_memory: bool = True,
 ) -> str:
     """Build the runtime system prompt with project instructions and memory."""
@@ -124,8 +177,25 @@ def build_runtime_system_prompt(
             idx = parts.index("temp_workspaces")
             cache_key = str(Path(*parts[: idx + 1]))
 
-        sections = list(_build_static_prompt_skeleton(cache_key))
+        sections = list(
+            _build_static_prompt_skeleton(
+                cache_key,
+                include_default_user_skills,
+                include_default_plugin_roots,
+            )
+        )
         logger.info("--- [Prompt Skeleton] Using skeleton for key: %s ---", cache_key)
+
+    extra_skills_section = _build_extra_skills_section(
+        cwd,
+        extra_skill_dirs=extra_skill_dirs,
+        extra_plugin_roots=extra_plugin_roots,
+        settings=settings,
+        include_default_user_skills=include_default_user_skills,
+        include_default_plugin_roots=include_default_plugin_roots,
+    )
+    if extra_skills_section:
+        sections.append(extra_skills_section)
 
     from openharness.prompts.environment import get_environment_info
 

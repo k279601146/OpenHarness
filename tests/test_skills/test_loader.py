@@ -22,12 +22,19 @@ def test_load_skill_registry_includes_bundled(tmp_path: Path, monkeypatch):
     assert "research_report" in names
     assert "skill-creator" in names
     assert "imagegen" in names
-    assert "media-generation" in names
+    assert "social-media-visuals" in names
+    assert "agent-reach" in names
 
     skill_creator = registry.get("skill-creator")
     assert skill_creator is not None
     assert skill_creator.source == "bundled"
     assert "Create, improve, and verify OpenHarness skills" in skill_creator.description
+
+    agent_reach = registry.get("agent-reach")
+    assert agent_reach is not None
+    assert agent_reach.source == "bundled"
+    assert agent_reach.command_name == "agent-reach"
+    assert "Agent Reach bundled skill adapter" in agent_reach.description
 
 
 def test_bundled_loader_includes_directory_skills(tmp_path: Path, monkeypatch):

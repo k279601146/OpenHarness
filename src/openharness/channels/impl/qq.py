@@ -2,7 +2,9 @@
 
 import asyncio
 import logging
+import os
 from collections import deque
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 
@@ -12,6 +14,8 @@ from openharness.channels.impl.base import BaseChannel
 from openharness.config.schema import QQConfig
 
 logger = logging.getLogger(__name__)
+PROJECT_ROOT = Path(__file__).resolve().parents[5]
+WEB_PUBLIC_DIR = PROJECT_ROOT / "apps" / "web" / "public"
 
 try:
     import botpy
@@ -66,7 +70,8 @@ class QQChannel(BaseChannel):
             logger.error("QQ SDK not installed. Run: pip install qq-botpy")
             return
 
-        if not self.config.app_id or not self.config.secret:
+        secret = getattr(self.config, "secret", None) or getattr(self.config, "app_secret", "")
+        if not self.config.app_id or not secret:
             logger.error("QQ app_id and secret not configured")
             return
 
@@ -81,7 +86,8 @@ class QQChannel(BaseChannel):
         """Run the bot connection with auto-reconnect."""
         while self._running:
             try:
-                await self._client.start(appid=self.config.app_id, secret=self.config.secret)
+                secret = getattr(self.config, "secret", None) or getattr(self.config, "app_secret", "")
+                await self._client.start(appid=self.config.app_id, secret=secret)
             except Exception as e:
                 logger.warning("QQ bot error: %s", e)
             if self._running:
@@ -105,16 +111,57 @@ class QQChannel(BaseChannel):
             return
         try:
             msg_id = msg.metadata.get("message_id")
-            self._msg_seq += 1  # 递增序列号
-            await self._client.api.post_c2c_message(
-                openid=msg.chat_id,
-                msg_type=0,
-                content=msg.content,
-                msg_id=msg_id,
-                msg_seq=self._msg_seq,  # 添加序列号避免去重
-            )
+            if msg.content and msg.content.strip():
+                self._msg_seq += 1  # 递增序列号
+                await self._client.api.post_c2c_message(
+                    openid=msg.chat_id,
+                    msg_type=0,
+                    content=msg.content,
+                    msg_id=msg_id,
+                    msg_seq=self._msg_seq,  # 添加序列号避免去重
+                )
+
+            for media_ref in msg.media:
+                media_url = self._resolve_media_url(media_ref)
+                if not media_url:
+                    logger.warning("QQ media requires a public URL, skipped: %s", media_ref)
+                    continue
+                uploaded = await self._client.api.post_c2c_file(
+                    openid=msg.chat_id,
+                    file_type=1,
+                    url=media_url,
+                    srv_send_msg=False,
+                )
+                self._msg_seq += 1
+                await self._client.api.post_c2c_message(
+                    openid=msg.chat_id,
+                    msg_type=7,
+                    media=uploaded,
+                    msg_id=msg_id,
+                    msg_seq=self._msg_seq,
+                )
         except Exception as e:
             logger.error("Error sending QQ message: %s", e)
+
+    def _resolve_media_url(self, media_ref: str) -> str | None:
+        if not media_ref:
+            return None
+        if media_ref.startswith(("http://", "https://")):
+            return media_ref
+
+        public_base_url = os.getenv("EXTERNAL_CHANNEL_PUBLIC_BASE_URL", "").strip().rstrip("/")
+        if not public_base_url:
+            return None
+
+        try:
+            path = Path(media_ref).resolve()
+            public_root = WEB_PUBLIC_DIR.resolve()
+            if path.is_file() and path.is_relative_to(public_root):
+                rel_url = path.relative_to(public_root).as_posix()
+                return f"{public_base_url}/{rel_url}"
+        except Exception:
+            return None
+        return None
 
     async def _on_message(self, data: "C2CMessage") -> None:
         """Handle incoming message from QQ."""
@@ -138,4 +185,3 @@ class QQChannel(BaseChannel):
             )
         except Exception:
             logger.exception("Error handling QQ message")
-
