@@ -22,7 +22,13 @@ def test_load_skill_registry_includes_bundled(tmp_path: Path, monkeypatch):
     assert "research_report" in names
     assert "skill-creator" in names
     assert "imagegen" in names
-    assert "social-media-visuals" in names
+    assert "videogen" in names
+    assert "generate_video" not in names
+    assert "seedance_video" not in names
+    assert "social-media-visuals" not in names
+    assert "logo-brand-design" not in names
+    assert "marketing-brochures" not in names
+    assert "ecommerce-product-listing" not in names
     assert "agent-reach" in names
 
     skill_creator = registry.get("skill-creator")

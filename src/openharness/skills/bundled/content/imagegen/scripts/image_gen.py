@@ -22,6 +22,9 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from io import BytesIO
 
+from imagegen_runtime import get_model_spec, run_non_gpt_image
+from imagegen_runtime.providers import ImagegenProviderError, emit_metadata, provider_metadata
+
 DEFAULT_MODEL = "gpt-image-2"
 DEFAULT_SIZE = "auto"
 DEFAULT_QUALITY = "medium"
@@ -152,6 +155,8 @@ def _validate_gpt_image_2_size(size: str) -> None:
 
 
 def _validate_size(size: str, model: str) -> None:
+    if get_model_spec(model).provider != "gpt_image":
+        return
     if model == GPT_IMAGE_2_MODEL:
         _validate_gpt_image_2_size(size)
         return
@@ -178,6 +183,8 @@ def _validate_input_fidelity(input_fidelity: Optional[str]) -> None:
 
 
 def _validate_model(model: str) -> None:
+    if get_model_spec(model).provider != "gpt_image":
+        return
     if not model.startswith(GPT_IMAGE_MODEL_PREFIX):
         _die(
             "model must be a GPT Image model (for example gpt-image-1.5, gpt-image-1, or gpt-image-1-mini)."
@@ -195,6 +202,8 @@ def _validate_model_specific_options(
     background: Optional[str],
     input_fidelity: Optional[str] = None,
 ) -> None:
+    if get_model_spec(model).provider != "gpt_image":
+        return
     if model != GPT_IMAGE_2_MODEL:
         return
     if background == "transparent":
@@ -712,6 +721,8 @@ async def _run_generate_batch(args: argparse.Namespace) -> int:
 
 
 def _generate_batch(args: argparse.Namespace) -> None:
+    if get_model_spec(args.model).provider != "gpt_image":
+        _die("generate-batch is currently supported only for GPT Image models. Use repeated generate calls for other providers.")
     exit_code = asyncio.run(_run_generate_batch(args))
     if exit_code:
         raise SystemExit(exit_code)
@@ -720,6 +731,17 @@ def _generate_batch(args: argparse.Namespace) -> None:
 def _generate(args: argparse.Namespace) -> None:
     prompt = _read_prompt(args.prompt, args.prompt_file)
     prompt = _augment_prompt(args, prompt)
+    output_format = _normalize_output_format(args.output_format)
+    output_paths = _build_output_paths(args.out, output_format, args.n, args.out_dir)
+    spec = get_model_spec(args.model)
+
+    if spec.provider != "gpt_image":
+        try:
+            metadata = run_non_gpt_image(args, output_paths, prompt)
+        except ImagegenProviderError as exc:
+            _die(str(exc))
+        emit_metadata(metadata)
+        return
 
     payload = {
         "model": args.model,
@@ -734,10 +756,8 @@ def _generate(args: argparse.Namespace) -> None:
     }
     payload = {k: v for k, v in payload.items() if v is not None}
 
-    output_format = _normalize_output_format(args.output_format)
     _validate_transparency(args.background, output_format)
     payload["output_format"] = output_format
-    output_paths = _build_output_paths(args.out, output_format, args.n, args.out_dir)
     downscaled = None
     if args.downscale_max_dim is not None:
         downscaled = [str(_derive_downscale_path(p, args.downscale_suffix)) for p in output_paths]
@@ -751,6 +771,9 @@ def _generate(args: argparse.Namespace) -> None:
                 **payload,
             }
         )
+        metadata = provider_metadata(spec, output_paths)
+        metadata["dry_run"] = True
+        emit_metadata(metadata)
         return
 
     print(
@@ -772,6 +795,7 @@ def _generate(args: argparse.Namespace) -> None:
         downscale_suffix=args.downscale_suffix,
         output_format=output_format,
     )
+    emit_metadata(provider_metadata(spec, output_paths))
 
 
 def _edit(args: argparse.Namespace) -> None:
@@ -779,6 +803,18 @@ def _edit(args: argparse.Namespace) -> None:
     prompt = _augment_prompt(args, prompt)
 
     image_paths = _check_image_paths(args.image)
+    output_format = _normalize_output_format(args.output_format)
+    output_paths = _build_output_paths(args.out, output_format, args.n, args.out_dir)
+    spec = get_model_spec(args.model)
+
+    if spec.provider != "gpt_image":
+        try:
+            metadata = run_non_gpt_image(args, output_paths, prompt)
+        except ImagegenProviderError as exc:
+            _die(str(exc))
+        emit_metadata(metadata)
+        return
+
     mask_path = Path(args.mask) if args.mask else None
     if mask_path:
         if not mask_path.exists():
@@ -802,11 +838,9 @@ def _edit(args: argparse.Namespace) -> None:
     }
     payload = {k: v for k, v in payload.items() if v is not None}
 
-    output_format = _normalize_output_format(args.output_format)
     _validate_transparency(args.background, output_format)
     payload["output_format"] = output_format
     _validate_input_fidelity(args.input_fidelity)
-    output_paths = _build_output_paths(args.out, output_format, args.n, args.out_dir)
     downscaled = None
     if args.downscale_max_dim is not None:
         downscaled = [str(_derive_downscale_path(p, args.downscale_suffix)) for p in output_paths]
@@ -824,6 +858,9 @@ def _edit(args: argparse.Namespace) -> None:
                 **payload_preview,
             }
         )
+        metadata = provider_metadata(spec, output_paths)
+        metadata["dry_run"] = True
+        emit_metadata(metadata)
         return
 
     print(
@@ -851,6 +888,7 @@ def _edit(args: argparse.Namespace) -> None:
         downscale_suffix=args.downscale_suffix,
         output_format=output_format,
     )
+    emit_metadata(provider_metadata(spec, output_paths))
 
 
 def _open_files(paths: List[Path]):
@@ -913,6 +951,7 @@ def _add_shared_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--prompt-file")
     parser.add_argument("--n", type=int, default=1)
     parser.add_argument("--size", default=DEFAULT_SIZE)
+    parser.add_argument("--aspect-ratio")
     parser.add_argument("--quality", default=DEFAULT_QUALITY)
     parser.add_argument("--background")
     parser.add_argument("--output-format")
@@ -987,7 +1026,8 @@ def main() -> int:
         _die("--downscale-max-dim must be >= 1")
 
     _validate_model(args.model)
-    _validate_size(args.size, args.model)
+    if get_model_spec(args.model).provider == "gpt_image":
+        _validate_size(args.size, args.model)
     _validate_quality(args.quality)
     _validate_background(args.background)
     _validate_model_specific_options(
@@ -995,7 +1035,8 @@ def main() -> int:
         background=args.background,
         input_fidelity=getattr(args, "input_fidelity", None),
     )
-    _ensure_api_key(args.dry_run)
+    if get_model_spec(args.model).provider == "gpt_image":
+        _ensure_api_key(args.dry_run)
 
     args.func(args)
     return 0

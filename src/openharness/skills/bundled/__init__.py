@@ -16,37 +16,36 @@ _BUNDLED_ROOT = Path(__file__).parent
 
 
 def get_bundled_skills() -> list[SkillDefinition]:
-    """Load all bundled skills from content/ and aesthetics/ directories."""
+    """Load all bundled skills from the content/ directory."""
     skills: list[SkillDefinition] = []
-    for sub_dir, skill_type in (("content", "logic"), ("aesthetics", "aesthetic")):
-        target_dir = _BUNDLED_ROOT / sub_dir
-        if not target_dir.exists():
-            continue
-        for path in _iter_bundled_skill_files(target_dir):
-            content = path.read_text(encoding="utf-8")
-            command_name = path.stem if path.name != "SKILL.md" else path.parent.name
-            metadata = _parse_metadata(command_name, content)
-            display_name = metadata["name"] if metadata["name"] != command_name else None
-            frontmatter = metadata["frontmatter"]
-            skills.append(
-                SkillDefinition(
-                    name=metadata["name"],
-                    description=metadata["description"],
-                    content=content,
-                    source="bundled",
-                    path=str(path),
-                    base_dir=str(path.parent),
-                    command_name=command_name,
-                    display_name=display_name,
-                    aliases=_frontmatter_aliases(frontmatter),
-                    user_invocable=metadata["user_invocable"],
-                    disable_model_invocation=metadata["disable_model_invocation"],
-                    model=metadata["model"],
-                    argument_hint=metadata["argument_hint"],
-                    skill_type=skill_type,
-                    metadata=dict(frontmatter),
-                )
+    target_dir = _BUNDLED_ROOT / "content"
+    if not target_dir.exists():
+        return skills
+    for path in _iter_bundled_skill_files(target_dir):
+        content = path.read_text(encoding="utf-8")
+        command_name = path.stem if path.name != "SKILL.md" else path.parent.name
+        metadata = _parse_metadata(command_name, content)
+        display_name = metadata["name"] if metadata["name"] != command_name else None
+        frontmatter = metadata["frontmatter"]
+        skills.append(
+            SkillDefinition(
+                name=metadata["name"],
+                description=metadata["description"],
+                content=content,
+                source="bundled",
+                path=str(path),
+                base_dir=str(path.parent),
+                command_name=command_name,
+                display_name=display_name,
+                aliases=_frontmatter_aliases(frontmatter),
+                user_invocable=metadata["user_invocable"],
+                disable_model_invocation=metadata["disable_model_invocation"],
+                model=metadata["model"],
+                argument_hint=metadata["argument_hint"],
+                skill_type="logic",
+                metadata=dict(frontmatter),
             )
+        )
     return skills
 
 

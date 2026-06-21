@@ -1,0 +1,8 @@
+interface:
+  display_name: "Veo Video Expert"
+  short_description: "Professional Veo/video3 video prompting"
+  brand_color: "#4285F4"
+  default_prompt: "Use $veo-video to turn this video idea into a production-ready Veo/video3 prompt with mode selection, reference roles, audio direction, and source-gated model constraints."
+
+policy:
+  allow_implicit_invocation: true

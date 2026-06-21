@@ -49,15 +49,6 @@ from openharness.tools.grep_tool import GrepTool
 from openharness.tools.imagegen_cli_tool import ImagegenCliTool
 from openharness.tools.image_to_text_tool import ImageToTextTool
 from openharness.tools.list_mcp_resources_tool import ListMcpResourcesTool
-from openharness.tools.media_generation_tools import (
-    AnimateFirstFrameTool,
-    CreativeImageTool,
-    CreativeVideoTool,
-    EditImageTool,
-    ImageFromReferenceTool,
-    VideoInterpolationTool,
-    VideoWithReferenceTool,
-)
 from openharness.tools.mcp_auth_tool import McpAuthTool
 from openharness.tools.mcp_tool import McpToolAdapter
 from openharness.tools.read_mcp_resource_tool import ReadMcpResourceTool
@@ -76,6 +67,7 @@ from openharness.tools.team_create_tool import TeamCreateTool
 from openharness.tools.team_delete_tool import TeamDeleteTool
 from openharness.tools.todo_write_tool import TodoWriteTool
 from openharness.tools.tool_search_tool import ToolSearchTool
+from openharness.tools.videogen_cli_tool import VideogenCliTool
 from openharness.tools.web_fetch_tool import WebFetchTool
 from openharness.tools.web_search_tool import WebSearchTool
 
@@ -94,6 +86,7 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         GrepTool(),
         ImageToTextTool(),
         ImagegenCliTool(),
+        VideogenCliTool(),
         SkillTool(),
         ToolSearchTool(),
         WebFetchTool(),
@@ -146,13 +139,6 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         SendMessageTool(),
         TeamCreateTool(),
         TeamDeleteTool(),
-        CreativeImageTool(),
-        EditImageTool(),
-        ImageFromReferenceTool(),
-        CreativeVideoTool(),
-        AnimateFirstFrameTool(),
-        VideoInterpolationTool(),
-        VideoWithReferenceTool(),
         QueryMemoryTool(),
     ):
         registry.register(tool)

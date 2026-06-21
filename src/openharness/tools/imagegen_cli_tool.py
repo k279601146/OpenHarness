@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -28,9 +29,12 @@ class ImagegenCliInput(BaseModel):
     input_file: str | None = Field(default=None, description="JSONL input file for generate-batch.")
     out: str = Field(default="output/imagegen/output.png", description="Output file path.")
     out_dir: str | None = Field(default=None, description="Output directory for multiple images or batch jobs.")
-    model: str = Field(default="gpt-image-2")
+    model: str | None = Field(default=None, description="Image model id. Uses the selected UI image model when omitted.")
+    provider: str | None = Field(default=None, description="Optional provider hint; model id is preferred for routing.")
     n: int = Field(default=1, ge=1, le=10)
+    num_images: int | None = Field(default=None, ge=1, le=10, description="Alias for n.")
     size: str = Field(default="auto")
+    aspect_ratio: str | None = Field(default=None, description="Aspect ratio such as 1:1, 16:9, 9:16, 4:3, or 3:4.")
     quality: str = Field(default="medium")
     background: Literal["transparent", "opaque", "auto"] | None = Field(
         default=None,
@@ -86,6 +90,7 @@ class ImagegenCliTool(BaseTool):
 
         cwd = context.cwd.resolve()
         cwd.mkdir(parents=True, exist_ok=True)
+        arguments = _apply_context_defaults(arguments, context)
         argv = _build_argv(script, arguments, cwd)
         env = os.environ.copy()
         env.update(_build_forwarded_sandbox_env(context) or {})
@@ -113,7 +118,8 @@ class ImagegenCliTool(BaseTool):
         if completed.returncode != 0:
             return ToolResult(output=output or f"imagegen CLI failed with code {completed.returncode}", is_error=True)
 
-        artifacts = [] if arguments.dry_run else _expected_artifacts(arguments, cwd)
+        parsed_metadata = _parse_cli_metadata(output)
+        artifacts = [] if arguments.dry_run else _expected_artifacts(arguments, cwd, parsed_metadata)
         missing = [path for path in artifacts if not path.is_file()]
         if missing:
             missing_text = "\n".join(f"- {path}" for path in missing)
@@ -138,7 +144,10 @@ class ImagegenCliTool(BaseTool):
             lines.extend(["", "CLI output:", output])
         return ToolResult(
             output="\n".join(lines),
-            metadata={"artifact_paths": [str(path) for path in artifacts]},
+            metadata={
+                **parsed_metadata,
+                "artifact_paths": [str(path) for path in artifacts],
+            },
         )
 
 
@@ -158,8 +167,9 @@ def _build_argv(script: Path, arguments: ImagegenCliInput, cwd: Path) -> list[st
     argv = [sys.executable, str(script), arguments.command]
 
     _add_value(argv, "--model", arguments.model)
-    _add_value(argv, "--n", str(arguments.n))
+    _add_value(argv, "--n", str(arguments.num_images or arguments.n))
     _add_value(argv, "--size", arguments.size)
+    _add_value(argv, "--aspect-ratio", arguments.aspect_ratio)
     _add_value(argv, "--quality", arguments.quality)
     _add_value(argv, "--output-format", arguments.output_format)
     _add_value(argv, "--out", _as_cli_path(arguments.out, cwd))
@@ -195,6 +205,22 @@ def _build_argv(script: Path, arguments: ImagegenCliInput, cwd: Path) -> list[st
     return argv
 
 
+def _apply_context_defaults(arguments: ImagegenCliInput, context: ToolExecutionContext) -> ImagegenCliInput:
+    updates: dict[str, object] = {}
+    media_preferences = context.metadata.get("media_preferences")
+    if not arguments.model and isinstance(media_preferences, dict) and not media_preferences.get("is_auto", True):
+        preferred_model = str(media_preferences.get("image_model") or "").strip()
+        if preferred_model:
+            updates["model"] = preferred_model
+    if not arguments.model and "model" not in updates:
+        updates["model"] = "gpt-image-2"
+    if arguments.num_images is not None:
+        updates["n"] = arguments.num_images
+    if not updates:
+        return arguments
+    return arguments.model_copy(update=updates)
+
+
 def _add_value(argv: list[str], flag: str, value: str | None) -> None:
     if value is None or value == "":
         return
@@ -210,7 +236,12 @@ def _as_cli_path(raw: str | None, cwd: Path) -> str | None:
     return str((cwd / path).resolve())
 
 
-def _expected_artifacts(arguments: ImagegenCliInput, cwd: Path) -> list[Path]:
+def _expected_artifacts(arguments: ImagegenCliInput, cwd: Path, metadata: dict[str, object] | None = None) -> list[Path]:
+    if metadata:
+        paths = metadata.get("artifact_paths")
+        if isinstance(paths, list):
+            resolved = [Path(str(path)).expanduser() for path in paths if str(path).strip()]
+            return [path if path.is_absolute() else (cwd / path).resolve() for path in resolved]
     output_format = (arguments.output_format or "png").lower()
     if output_format == "jpg":
         output_format = "jpeg"
@@ -224,7 +255,7 @@ def _expected_artifacts(arguments: ImagegenCliInput, cwd: Path) -> list[Path]:
             if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
         )
 
-    return _build_output_paths(arguments.out, output_format, arguments.n, arguments.out_dir, cwd)
+    return _build_output_paths(arguments.out, output_format, arguments.num_images or arguments.n, arguments.out_dir, cwd)
 
 
 def _build_output_paths(out: str, output_format: str, count: int, out_dir: str | None, cwd: Path) -> list[Path]:
@@ -243,3 +274,16 @@ def _build_output_paths(out: str, output_format: str, count: int, out_dir: str |
     if count == 1:
         return [out_path]
     return [out_path.with_name(f"{out_path.stem}-{i}{out_path.suffix}") for i in range(1, count + 1)]
+
+
+def _parse_cli_metadata(output: str) -> dict[str, object]:
+    prefix = "IMAGEGEN_METADATA:"
+    for line in reversed((output or "").splitlines()):
+        if not line.startswith(prefix):
+            continue
+        try:
+            parsed = json.loads(line[len(prefix):])
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}

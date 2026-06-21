@@ -12,10 +12,12 @@ Generates or edits images for the current project (for example website assets, g
 These rules are authoritative in the OpenHarness SaaS agent runtime.
 
 - Loading this skill is not image generation. After reading these instructions, you must call `imagegen_cli` before claiming that an image was generated.
-- In OpenHarness SaaS, use the `imagegen_cli` tool as the default execution path for generation and editing. It runs this skill's bundled `scripts/image_gen.py` on the host and publishes artifacts to the UI.
+- In OpenHarness SaaS, `imagegen_cli` is the only image generation/editing tool. It routes GPT Image, Nano Banana/Gemini, Doubao Seedream, and Kolors/OpenAI-compatible models through the bundled provider registry, runs on the host, and publishes artifacts to the UI.
 - Do not call legacy media tools such as `gen_creative_image`, `edit_image`, or `image_from_reference`.
+- If the user names a model, pass that exact model id to `imagegen_cli.model`. If the UI selected an image model and the user did not override it, omit `model` and let the runtime use the selected preference.
+- For model-specific limits, read `references/providers/capability-matrix.md` and then the provider-specific file only when needed.
 - For text-to-image requests, call `imagegen_cli` with `command="generate"`, a detailed `prompt`, and an `out` path under `output/imagegen/`.
-- For editing an existing image, call `imagegen_cli` with `command="edit"`, `images=[...]`, a detailed `prompt`, and an `out` path under `output/imagegen/`.
+- For editing an existing image or using reference images, call `imagegen_cli` with `command="edit"`, `images=[...]`, a detailed `prompt`, and an `out` path under `output/imagegen/`.
 - Only set `imagegen_cli.background` to `transparent`, `opaque`, or `auto`. Do not put visual scene/background descriptions there; put them in `prompt` or `scene`.
 - Do not use `bash` to run `scripts/image_gen.py` in OpenHarness SaaS; `bash` runs in E2B and may not have the host Python dependencies.
 - Do not claim success unless `imagegen_cli` reports success and returns artifact path(s). If the script, dependencies, API key, or output file is missing, tell the user the exact failure instead.
