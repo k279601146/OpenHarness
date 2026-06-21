@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -18,6 +19,49 @@ class ConfigToolInput(BaseModel):
     value: str | None = Field(default=None)
 
 
+_SECRET_KEY_PARTS = (
+    "api_key",
+    "apikey",
+    "auth_token",
+    "access_token",
+    "refresh_token",
+    "token",
+    "secret",
+    "password",
+    "authorization",
+    "credential",
+    "private_key",
+)
+_REDACTED = "[REDACTED]"
+
+
+def _is_secret_key(key: object) -> bool:
+    normalized = str(key).lower().replace("-", "_")
+    return any(part in normalized for part in _SECRET_KEY_PARTS)
+
+
+def _redact_config_value(value: object, *, key: object | None = None) -> object:
+    if key is not None and _is_secret_key(key):
+        return _REDACTED
+    if isinstance(value, dict):
+        return {item_key: _redact_config_value(item_value, key=item_key) for item_key, item_value in value.items()}
+    if isinstance(value, list):
+        return [_redact_config_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_redact_config_value(item) for item in value]
+    if isinstance(value, str) and value.lower().startswith(("bearer ", "basic ")):
+        return _REDACTED
+    return value
+
+
+def _settings_json_for_display(settings: Any) -> str:
+    if hasattr(settings, "model_dump"):
+        raw = settings.model_dump()
+    else:
+        raw = settings
+    return json.dumps(_redact_config_value(raw), indent=2, default=str)
+
+
 class ConfigTool(BaseTool):
     """Read or update OpenHarness settings."""
 
@@ -26,11 +70,13 @@ class ConfigTool(BaseTool):
     input_model = ConfigToolInput
 
     async def execute(self, arguments: ConfigToolInput, context: ToolExecutionContext) -> ToolResult:
-        del context
-        settings = load_settings()
+        is_saas_workspace = bool(context.metadata.get("saas_api_dir") or context.metadata.get("thread_id"))
+        settings = context.metadata.get("settings") if is_saas_workspace and context.metadata.get("settings") is not None else load_settings()
         if arguments.action == "show":
-            return ToolResult(output=settings.model_dump_json(indent=2))
+            return ToolResult(output=_settings_json_for_display(settings))
         if arguments.action == "set" and arguments.key and arguments.value is not None:
+            if is_saas_workspace:
+                return ToolResult(output="OpenHarness settings are managed by the SaaS runtime and cannot be changed from this workspace.", is_error=True)
             target: Any = settings
             parts = arguments.key.split(".")
             for part in parts[:-1]:
