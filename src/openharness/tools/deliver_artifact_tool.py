@@ -59,11 +59,15 @@ class DeliverArtifactTool(BaseTool):
         context: ToolExecutionContext,
     ) -> ToolResult:
         session = _resolve_sandbox_session(context)
-        if session is None or not getattr(session, "is_running", False):
-            return ToolResult(output="No active sandbox session is available for artifact delivery.", is_error=True)
 
         raw_paths = arguments.paths or ([arguments.sandbox_path] if arguments.sandbox_path else [])
         requested_paths = [_normalize_sandbox_path(path) for path in raw_paths if path]
+        if not requested_paths:
+            return ToolResult(output="No sandbox paths were provided.", is_error=True)
+
+        if session is None or not getattr(session, "is_running", False):
+            return await _deliver_host_paths(arguments, context, requested_paths)
+
         sandbox_paths = await _expand_requested_paths(session, requested_paths)
         if not sandbox_paths:
             return ToolResult(output="No sandbox paths were provided.", is_error=True)
@@ -133,6 +137,104 @@ def _resolve_sandbox_session(context: ToolExecutionContext):
         except (TypeError, ValueError):
             pass
     return get_sandbox_session()
+
+
+async def _deliver_host_paths(
+    arguments: DeliverArtifactInput,
+    context: ToolExecutionContext,
+    requested_paths: list[str],
+) -> ToolResult:
+    cwd = Path(context.cwd).resolve()
+    host_paths = [_resolve_host_path(cwd, path) for path in requested_paths]
+    missing = [str(path) for path in host_paths if not path.exists()]
+    if missing:
+        return ToolResult(
+            output=(
+                "No active sandbox session is available, and these host paths were not found:\n"
+                + "\n".join(f"- {path}" for path in missing)
+            ),
+            is_error=True,
+        )
+    outside = [str(path) for path in host_paths if not _is_allowed_host_path(cwd, path)]
+    if outside:
+        return ToolResult(
+            output="Refusing to deliver host path outside the workspace:\n" + "\n".join(f"- {path}" for path in outside),
+            is_error=True,
+        )
+
+    thread_id = str(context.metadata.get("thread_id") or "default")
+    output_dir = _resolve_output_dir(cwd, thread_id)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    delivered: list[Path] = []
+    try:
+        if arguments.package_as_zip or any(path.is_dir() for path in host_paths):
+            zip_name = _safe_filename(arguments.filename or "artifacts.zip")
+            if not zip_name.lower().endswith(".zip"):
+                zip_name += ".zip"
+            local_zip = _unique_path(output_dir / zip_name)
+            with zipfile.ZipFile(local_zip, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+                for host_path in host_paths:
+                    for file_path in _iter_host_files(host_path):
+                        bundle.write(file_path, _safe_host_archive_name(cwd, file_path))
+            delivered.append(local_zip)
+        else:
+            for index, host_path in enumerate(host_paths):
+                filename = (
+                    _safe_filename(arguments.filename)
+                    if arguments.filename and len(host_paths) == 1
+                    else _safe_filename(host_path.name or f"artifact_{index + 1}")
+                )
+                local_path = _unique_path(output_dir / filename)
+                if host_path.resolve() == local_path.resolve():
+                    delivered.append(host_path)
+                else:
+                    local_path.write_bytes(host_path.read_bytes())
+                    delivered.append(local_path)
+    except Exception as exc:
+        return ToolResult(output=f"Failed to deliver host artifact: {exc}", is_error=True)
+
+    hook = context.metadata.get("hook")
+    if hook is not None:
+        for local_path in delivered:
+            await hook.on_artifact(str(local_path), reason=f"Delivered host artifact: {local_path.name}")
+
+    lines = ["Delivered artifact(s):"]
+    lines.extend(f"- {path}" for path in delivered)
+    return ToolResult(output="\n".join(lines), metadata={"artifact_paths": [str(path) for path in delivered]})
+
+
+def _resolve_host_path(cwd: Path, path: str) -> Path:
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = cwd / candidate
+    return candidate.resolve()
+
+
+def _is_allowed_host_path(cwd: Path, path: Path) -> bool:
+    try:
+        path.resolve().relative_to(cwd)
+        return True
+    except ValueError:
+        return False
+
+
+def _iter_host_files(path: Path):
+    if path.is_file():
+        yield path
+        return
+    for item in path.rglob("*"):
+        if item.is_file():
+            yield item
+
+
+def _safe_host_archive_name(cwd: Path, path: Path) -> str:
+    try:
+        rel = path.resolve().relative_to(cwd)
+    except ValueError:
+        rel = Path(path.name)
+    parts = [_safe_filename(part) for part in rel.parts if part not in {"", ".", ".."}]
+    return "/".join(parts) or "artifact"
 
 
 def _resolve_output_dir(cwd: Path, thread_id: str) -> Path:

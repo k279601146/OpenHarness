@@ -69,6 +69,10 @@ class EmptyInput(_CanvasModel):
     pass
 
 
+class CanvasGetRequestReferencesInput(_CanvasModel):
+    include_state_fallback: bool | None = Field(default=True)
+
+
 class CanvasApplyOpsInput(_CanvasModel):
     ops: list[CanvasOp] = Field(description="Structured canvas operations to apply in the browser.")
 
@@ -268,6 +272,80 @@ def _connections(state: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _find_node(state: dict[str, Any], node_id: str) -> dict[str, Any] | None:
     return next((node for node in _nodes(state) if isinstance(node, dict) and node.get("id") == node_id), None)
+
+
+def _canvas_request(context: ToolExecutionContext) -> dict[str, Any]:
+    request = context.metadata.get("canvas_request")
+    return request if isinstance(request, dict) else {}
+
+
+def _active_media_canvas_request(context: ToolExecutionContext) -> str | None:
+    kind = str(_canvas_request(context).get("kind") or "")
+    return kind if kind in {"image_generation", "video_generation"} else None
+
+
+def _media_request_guidance(kind: str, mode: str) -> str:
+    tool_name = "videogen_cli" if kind == "video_generation" else "imagegen_cli"
+    return (
+        f"当前正在处理真实 canvas_request 媒体生成任务（{kind}）。"
+        f"不要递归调用 canvas_generate_{mode} 或 canvas_run_generation；"
+        f"请直接使用 {tool_name}，并在完成后返回 agent_artifact。"
+    )
+
+
+def _collect_upstream_node_ids(state: dict[str, Any], node_id: str) -> list[str]:
+    result: list[str] = []
+    visited: set[str] = set()
+    queue = [str(conn.get("fromNodeId")) for conn in _connections(state) if isinstance(conn, dict) and conn.get("toNodeId") == node_id]
+    while queue:
+        current = queue.pop(0)
+        if not current or current in visited:
+            continue
+        visited.add(current)
+        result.append(current)
+        queue.extend(
+            str(conn.get("fromNodeId"))
+            for conn in _connections(state)
+            if isinstance(conn, dict) and conn.get("toNodeId") == current
+        )
+    return result
+
+
+def _node_reference(node: dict[str, Any], role: str) -> dict[str, Any]:
+    return {
+        "nodeId": node.get("id"),
+        "role": role,
+        "type": node.get("type"),
+        "title": node.get("title"),
+        "position": node.get("position"),
+        "width": node.get("width"),
+        "height": node.get("height"),
+        "metadata": node.get("metadata"),
+    }
+
+
+def _request_references_from_state(state: dict[str, Any]) -> dict[str, Any]:
+    selected_ids = [item for item in state.get("selectedNodeIds") or [] if isinstance(item, str)]
+    source_id = selected_ids[0] if selected_ids else ""
+    source = _find_node(state, source_id) if source_id else None
+    reference_nodes: list[dict[str, Any]] = []
+    if source:
+        reference_nodes.append(_node_reference(source, "source"))
+        for upstream_id in _collect_upstream_node_ids(state, source_id):
+            upstream = _find_node(state, upstream_id)
+            if upstream:
+                reference_nodes.append(_node_reference(upstream, "upstream"))
+    node_ids = {str(node.get("nodeId")) for node in reference_nodes if node.get("nodeId")}
+    reference_connections = [
+        {
+            "id": conn.get("id"),
+            "fromNodeId": conn.get("fromNodeId"),
+            "toNodeId": conn.get("toNodeId"),
+        }
+        for conn in _connections(state)
+        if isinstance(conn, dict) and conn.get("fromNodeId") in node_ids and conn.get("toNodeId") in node_ids
+    ]
+    return {"referenceNodes": reference_nodes, "referenceConnections": reference_connections}
 
 
 def _next_canvas_x(state: dict[str, Any]) -> float:
@@ -575,6 +653,38 @@ class CanvasGetSelectionTool(BaseTool):
         return ToolResult(output=json.dumps({"nodes": nodes}, ensure_ascii=False))
 
 
+class CanvasGetRequestReferencesTool(BaseTool):
+    name = "canvas_get_request_references"
+    description = "读取本轮 canvas_request 的精确节点引用包，包括当前源节点、上游节点、连线、附件和用户提示。"
+    input_model = CanvasGetRequestReferencesInput
+
+    def is_read_only(self, arguments: BaseModel) -> bool:
+        return True
+
+    async def execute(self, arguments: CanvasGetRequestReferencesInput, context: ToolExecutionContext) -> ToolResult:
+        request = _canvas_request(context)
+        references = {
+            "requestId": request.get("id"),
+            "kind": request.get("kind"),
+            "sourceNodeId": request.get("sourceNodeId"),
+            "targetNodeId": request.get("targetNodeId"),
+            "targetNodeIds": request.get("targetNodeIds"),
+            "outputCount": request.get("outputCount"),
+            "userPrompt": request.get("userPrompt"),
+            "attachments": request.get("attachments") or [],
+            "referenceNodes": request.get("referenceNodes") or [],
+            "referenceConnections": request.get("referenceConnections") or [],
+        }
+        if arguments.include_state_fallback and not references["referenceNodes"]:
+            fallback = _request_references_from_state(_state_from_context(context))
+            references["referenceNodes"] = fallback["referenceNodes"]
+            references["referenceConnections"] = fallback["referenceConnections"]
+        return ToolResult(
+            output=json.dumps(references, ensure_ascii=False),
+            metadata={"canvas_request_references": references},
+        )
+
+
 class CanvasExportSnapshotTool(CanvasGetStateTool):
     name = "canvas_export_snapshot"
     description = "导出当前画布快照，用于理解布局和节点关系。"
@@ -664,31 +774,6 @@ class CanvasCreateConfigNodeTool(BaseTool):
         return await _CanvasEmitter.emit(context, ops)
 
 
-class CanvasCreateImageFlowTool(BaseTool):
-    name = "canvas_create_image_prompt_flow"
-    description = "创建提示词文本节点和图片生成配置节点，并自动连线，可选择立即触发生图。"
-    input_model = GenerationFlowInput
-
-    async def execute(self, arguments: GenerationFlowInput, context: ToolExecutionContext) -> ToolResult:
-        state = _state_from_context(context)
-        return await _CanvasEmitter.emit(context, _generation_flow_ops({**arguments.model_dump(exclude_none=True), "mode": "image"}, state))
-
-
-class CanvasCreateLegacyImageFlowTool(CanvasCreateImageFlowTool):
-    name = "canvas_create_image_flow"
-    description = "兼容旧名称：创建图片生成流程。"
-
-
-class CanvasCreateVideoFlowTool(BaseTool):
-    name = "canvas_create_video_flow"
-    description = "兼容旧名称：创建视频生成流程。"
-    input_model = GenerationFlowInput
-
-    async def execute(self, arguments: GenerationFlowInput, context: ToolExecutionContext) -> ToolResult:
-        state = _state_from_context(context)
-        return await _CanvasEmitter.emit(context, _generation_flow_ops({**arguments.model_dump(exclude_none=True), "mode": "video"}, state))
-
-
 class CanvasCreateGenerationFlowTool(BaseTool):
     name = "canvas_create_generation_flow"
     description = "创建通用生成流程：提示词文本节点、生成配置节点、参考节点连线，可用于文案、生图、视频或音频。"
@@ -703,6 +788,9 @@ class _CanvasGenerateFlowTool(CanvasCreateGenerationFlowTool):
     generation_mode: GenerationMode = "image"
 
     async def execute(self, arguments: GenerationFlowInput, context: ToolExecutionContext) -> ToolResult:
+        active_kind = _active_media_canvas_request(context)
+        if active_kind and self.generation_mode in {"image", "video"}:
+            return ToolResult(output=_media_request_guidance(active_kind, self.generation_mode))
         state = _state_from_context(context)
         return await _CanvasEmitter.emit(
             context,
@@ -867,6 +955,10 @@ class CanvasRunGenerationTool(BaseTool):
 
     async def execute(self, arguments: CanvasRunGenerationInput, context: ToolExecutionContext) -> ToolResult:
         mode = _generation_mode(arguments.mode)
+        active_kind = _active_media_canvas_request(context)
+        if active_kind and mode in {"image", "video"}:
+            return ToolResult(output=_media_request_guidance(active_kind, mode))
         if mode == "audio":
             return ToolResult(output="音频真实生成暂未启用，请只创建音频占位节点。", is_error=True)
         return await _CanvasEmitter.emit(context, [_run_generation_op(arguments.nodeId, mode, arguments.prompt)])
+

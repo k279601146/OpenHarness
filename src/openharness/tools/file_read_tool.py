@@ -9,6 +9,12 @@ from pydantic import BaseModel, Field
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.utils.paths import normalize_host_path
 
+BINARY_READABLE_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif",
+    ".mp4", ".webm", ".mov", ".mp3", ".wav", ".m4a",
+    ".pdf", ".pptx", ".ppt", ".docx", ".doc", ".xlsx", ".xls", ".zip",
+}
+
 
 class FileReadToolInput(BaseModel):
     """Arguments for the file read tool."""
@@ -36,6 +42,25 @@ class FileReadTool(BaseTool):
         context: ToolExecutionContext,
     ) -> ToolResult:
         path = _resolve_path(Path(context.cwd), arguments.path)
+        if path.suffix.lower() in BINARY_READABLE_EXTENSIONS:
+            allowed, error_msg = _validate_readable_binary_path(path, Path(context.cwd))
+            if not allowed:
+                return ToolResult(output=error_msg, is_error=True)
+            if not path.exists():
+                return ToolResult(output=f"File not found: {path}", is_error=True)
+            if path.is_dir():
+                return ToolResult(output=f"Cannot read directory: {path}", is_error=True)
+            size = path.stat().st_size
+            return ToolResult(
+                output=(
+                    f"Binary file is readable: {path}\n"
+                    f"Type: {path.suffix.lower() or 'unknown'}\n"
+                    f"Size: {size} bytes\n"
+                    "Use a media-aware tool or pass this path as an attachment/reference; "
+                    "read_file only returns text contents."
+                ),
+                metadata={"path": str(path), "size_bytes": size, "binary": True},
+            )
         from openharness.tools.safe_file_validator import validate_safe_file_operation
 
         is_safe, error_msg = validate_safe_file_operation(
@@ -69,3 +94,18 @@ class FileReadTool(BaseTool):
 
 def _resolve_path(base: Path, candidate: str) -> Path:
     return normalize_host_path(base, candidate)
+
+
+def _validate_readable_binary_path(path: Path, cwd: Path) -> tuple[bool, str]:
+    try:
+        resolved = path.resolve()
+        workspace = cwd.resolve()
+        resolved.relative_to(workspace)
+    except ValueError:
+        return False, f"Security restriction: cannot read files outside the workspace: {path}"
+    except Exception as exc:
+        return False, f"Path validation failed: {exc}"
+    dangerous = {".ssh", ".env", ".git", "credentials", "secrets", ".aws", ".azure", ".gcp", "private"}
+    if set(resolved.parts) & dangerous:
+        return False, f"Security restriction: cannot access sensitive path: {path}"
+    return True, ""
