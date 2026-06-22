@@ -116,10 +116,14 @@ class TestImageToTextToolInput:
         assert inp.max_tokens == 4096
 
     def test_neither_image_data_nor_path(self) -> None:
-        """Both fields are optional in the model, but the tool will error."""
-        inp = ImageToTextToolInput()
-        assert inp.image_data is None
-        assert inp.image_path is None
+        """The model requires one concrete image source."""
+        with pytest.raises(ValueError, match="provide exactly one"):
+            ImageToTextToolInput()
+
+    def test_both_image_data_and_path(self) -> None:
+        """Ambiguous image sources are rejected."""
+        with pytest.raises(ValueError, match="provide exactly one"):
+            ImageToTextToolInput(image_data="data", image_path="/tmp/test.png")
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +136,7 @@ async def test_execute_no_input(tmp_path: Path) -> None:
     tool = ImageToTextTool()
     context = ToolExecutionContext(cwd=tmp_path)
     result = await tool.execute(
-        ImageToTextToolInput(),
+        ImageToTextToolInput.model_construct(),
         context,
     )
     assert result.is_error
@@ -274,5 +278,9 @@ def test_tool_registered() -> None:
     assert tool is not None
     assert tool.name == "image_to_text"
     assert "vision" in tool.description.lower()
+    assert "fallback-only" in tool.description.lower()
     assert tool.input_model.__name__ == "ImageToTextToolInput"
     assert tool.input_model.__module__ == "openharness.tools.image_to_text_tool"
+    schema = tool.to_api_schema()["input_schema"]
+    assert {"required": ["image_data"]} in schema["anyOf"]
+    assert {"required": ["image_path"]} in schema["anyOf"]

@@ -293,6 +293,49 @@ def _media_request_guidance(kind: str, mode: str) -> str:
     )
 
 
+def _canvas_request_target_ids(context: ToolExecutionContext) -> set[str]:
+    request = _canvas_request(context)
+    ids: set[str] = set()
+    for key in ("targetNodeId", "target_node_id"):
+        value = request.get(key)
+        if value:
+            ids.add(str(value))
+    for key in ("targetNodeIds", "target_node_ids"):
+        values = request.get(key)
+        if isinstance(values, list):
+            ids.update(str(value) for value in values if value)
+    return ids
+
+
+def _update_metadata(op: dict[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    patch = op.get("patch") if isinstance(op.get("patch"), dict) else {}
+    patch_metadata = patch.get("metadata") if isinstance(patch.get("metadata"), dict) else {}
+    direct_metadata = op.get("metadata") if isinstance(op.get("metadata"), dict) else {}
+    metadata.update(patch_metadata)
+    metadata.update(direct_metadata)
+    return metadata
+
+
+def _has_non_metadata_patch(op: dict[str, Any]) -> bool:
+    patch = op.get("patch")
+    return isinstance(patch, dict) and any(key != "metadata" for key in patch)
+
+
+def _is_redundant_media_success_update(context: ToolExecutionContext, op: dict[str, Any]) -> bool:
+    if _active_media_canvas_request(context) not in {"image_generation", "video_generation"}:
+        return False
+    if op.get("type") != "update_node" or _has_non_metadata_patch(op):
+        return False
+    target_ids = _canvas_request_target_ids(context)
+    if target_ids and str(op.get("id") or "") not in target_ids:
+        return False
+    metadata = _update_metadata(op)
+    status = str(metadata.get("status") or "").lower()
+    has_media_ref = any(metadata.get(key) for key in ("content", "path", "url", "file_path"))
+    return status == "success" and has_media_ref
+
+
 def _collect_upstream_node_ids(state: dict[str, Any], node_id: str) -> list[str]:
     result: list[str] = []
     visited: set[str] = set()
@@ -596,6 +639,19 @@ def _generation_flow_ops(data: dict[str, Any], state: dict[str, Any]) -> list[di
 class _CanvasEmitter:
     @staticmethod
     async def emit(context: ToolExecutionContext, ops: list[dict[str, Any]]) -> ToolResult:
+        skipped_redundant = [op for op in ops if _is_redundant_media_success_update(context, op)]
+        if skipped_redundant:
+            skipped_ids = {id(op) for op in skipped_redundant}
+            ops = [op for op in ops if id(op) not in skipped_ids]
+            if not ops:
+                return ToolResult(
+                    output=(
+                        "Skipped redundant canvas node update. Media artifacts are already applied "
+                        "to target canvas nodes from agent_artifact canvas_request fields."
+                    ),
+                    metadata={"skipped_redundant_canvas_updates": len(skipped_redundant)},
+                )
+
         state = _state_from_context(context)
         apply_ops = [op for op in ops if op.get("type") != "run_generation"]
         if apply_ops:

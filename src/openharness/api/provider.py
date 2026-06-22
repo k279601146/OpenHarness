@@ -138,6 +138,7 @@ _MULTIMODAL_MODEL_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^claude-(?:sonnet|opus|haiku)-\d"),
     # OpenAI GPT-4o / o-series
     re.compile(r"^gpt-4o"),
+    re.compile(r"^gpt-5(?:[.-]|$)"),
     re.compile(r"^o[1349]-"),
     # Google Gemini
     re.compile(r"^gemini-(?:pro-)?vision"),

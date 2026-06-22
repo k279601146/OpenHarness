@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from openharness.api.openai_client import OpenAICompatibleClient
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
@@ -32,6 +32,15 @@ _DEFAULT_VISION_PROMPT = (
 
 class ImageToTextToolInput(BaseModel):
     """Arguments for converting an image to text."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "anyOf": [
+                {"required": ["image_data"]},
+                {"required": ["image_path"]},
+            ],
+        }
+    )
 
     image_data: str | None = Field(
         default=None,
@@ -58,15 +67,24 @@ class ImageToTextToolInput(BaseModel):
         description="Maximum tokens for the vision model response.",
     )
 
+    @model_validator(mode="after")
+    def _require_image_source(self) -> "ImageToTextToolInput":
+        if bool(self.image_data) == bool(self.image_path):
+            raise ValueError("provide exactly one of image_data or image_path")
+        return self
+
 
 class ImageToTextTool(BaseTool):
     """Use a multimodal model to describe an image and return text."""
 
     name = "image_to_text"
     description = (
-        "Convert an image to a detailed text description using a vision-capable model. "
-        "Use this when you need to understand the content of an image but your current "
-        "model does not support image input."
+        "Fallback-only tool for text-only models. Convert one image to a detailed text "
+        "description using the separately configured vision model. Use only when the "
+        "active model cannot process image input natively, and always provide exactly "
+        "one image source: image_data for an attached/base64 image or image_path for a "
+        "local file. Do not use this tool with multimodal/vision-capable models; those "
+        "models should inspect images directly."
     )
     input_model = ImageToTextToolInput
 

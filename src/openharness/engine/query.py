@@ -105,6 +105,20 @@ def _bounded_completion_tokens(max_tokens: int, context_window_tokens: int | Non
     return max(1, min(int(max_tokens), limit))
 
 
+def _tool_available_for_context(tool_name: str, context: QueryContext) -> bool:
+    if tool_name == "image_to_text" and is_model_multimodal(context.model):
+        return False
+    return True
+
+
+def _tool_schemas_for_context(context: QueryContext) -> list[dict[str, Any]]:
+    return [
+        tool.to_api_schema()
+        for tool in context.tool_registry.list_tools()
+        if _tool_available_for_context(tool.name, context)
+    ]
+
+
 def _extract_completion_token_limit(exc: Exception) -> int | None:
     """Parse provider errors such as "supports at most 128000 completion tokens"."""
     text = str(exc).lower().replace(",", "")
@@ -736,7 +750,7 @@ async def run_query(
                     messages=messages,
                     system_prompt=context.system_prompt,
                     max_tokens=effective_max_tokens,
-                    tools=context.tool_registry.to_api_schema(),
+                    tools=_tool_schemas_for_context(context),
                     effort=context.effort,
                 )
             ):
@@ -934,6 +948,16 @@ async def _execute_tool_call(
         return ToolResultBlock(
             tool_use_id=tool_use_id,
             content=f"Unknown tool: {tool_name}",
+            is_error=True,
+        )
+
+    if not _tool_available_for_context(tool_name, context):
+        return ToolResultBlock(
+            tool_use_id=tool_use_id,
+            content=(
+                f"{tool_name} is not available for the active model. "
+                "Use the model's native image understanding instead."
+            ),
             is_error=True,
         )
 
