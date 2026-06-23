@@ -36,10 +36,16 @@ class FakeSandbox:
 class FakeHook:
     def __init__(self) -> None:
         self.artifacts: list[tuple[str, str]] = []
+        self.existing_artifact: dict[str, str] | None = None
 
     async def on_artifact(self, file_path: str, reason: str, sandbox_session=None, url=None) -> None:
         del sandbox_session, url
         self.artifacts.append((file_path, reason))
+
+    def find_artifact_by_content(self, content: bytes) -> dict[str, str] | None:
+        if content == b"# done\n":
+            return self.existing_artifact
+        return None
 
 
 @pytest.mark.asyncio
@@ -59,6 +65,28 @@ async def test_deliver_single_artifact_to_workspace(tmp_path: Path, monkeypatch)
     assert result.is_error is False
     assert (tmp_path / "result.md").read_bytes() == b"# done\n"
     assert hook.artifacts == [(str(tmp_path / "result.md"), "Delivered sandbox artifact: result.md")]
+
+
+@pytest.mark.asyncio
+async def test_deliver_reuses_existing_artifact_content(tmp_path: Path, monkeypatch):
+    sandbox = FakeSandbox({"/home/user/result.md": b"# done\n"})
+    hook = FakeHook()
+    hook.existing_artifact = {"url": "/artifacts/files/20990101/t1/result.md"}
+    monkeypatch.setattr(
+        "openharness.tools.deliver_artifact_tool.get_sandbox_session",
+        lambda: sandbox,
+    )
+
+    result = await DeliverArtifactTool().execute(
+        DeliverArtifactInput(sandbox_path="/home/user/result.md"),
+        ToolExecutionContext(cwd=tmp_path, metadata={"hook": hook, "thread_id": "t1"}),
+    )
+
+    assert result.is_error is False
+    assert result.metadata["artifact_paths"] == []
+    assert result.metadata["reused_artifact_paths"] == ["/artifacts/files/20990101/t1/result.md"]
+    assert not (tmp_path / "result.md").exists()
+    assert hook.artifacts == []
 
 
 @pytest.mark.asyncio

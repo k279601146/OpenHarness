@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import io
 import json
 import os
 import posixpath
@@ -10,9 +12,11 @@ import re
 import shlex
 import tarfile
 import tempfile
+import time
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Awaitable, TypeVar
 
+from openharness.config.paths import get_data_dir
 from openharness.sandbox import SandboxUnavailableError
 from openharness.tools.base import ToolExecutionContext
 from openharness.utils.paths import normalize_host_path
@@ -24,6 +28,9 @@ SANDBOX_READ_ROOTS = (SANDBOX_WORKSPACE, "/code", "/tmp")
 SANDBOX_WRITE_ROOTS = (SANDBOX_WORKSPACE,)
 SKILL_ARCHIVE_SYNC_FILE_THRESHOLD = 128
 SKILL_ARCHIVE_SYNC_SIZE_THRESHOLD = 8 * 1024 * 1024
+SKILL_SYNC_PROGRESS_INTERVAL_SECONDS = 8.0
+
+T = TypeVar("T")
 
 
 async def _emit_progress(
@@ -51,6 +58,37 @@ async def _emit_progress(
     if metadata:
         payload["metadata"] = metadata
     await context.progress_callback(payload)
+
+
+async def _await_with_progress(
+    awaitable: Awaitable[T],
+    context: ToolExecutionContext,
+    phase: str,
+    message: str,
+    *,
+    path: str | None = None,
+    detail: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> T:
+    task = asyncio.create_task(awaitable)
+    started = time.monotonic()
+    while True:
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), timeout=SKILL_SYNC_PROGRESS_INTERVAL_SECONDS)
+        except asyncio.TimeoutError:
+            elapsed = int(time.monotonic() - started)
+            heartbeat_detail = f"{detail}; elapsed {elapsed}s" if detail else f"elapsed {elapsed}s"
+            await _emit_progress(
+                context,
+                phase,
+                message,
+                path=path,
+                detail=heartbeat_detail,
+                metadata=metadata,
+            )
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
 
 
 def uses_e2b_task_workspace(context: ToolExecutionContext) -> bool:
@@ -437,6 +475,87 @@ def _should_archive_sync(manifest: dict[str, int]) -> bool:
     )
 
 
+def _skill_archive_cache_path(skill_safe_name: str, fingerprint: str) -> Path:
+    cache_dir = get_data_dir() / "skill_archives"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / f"{skill_safe_name}-{fingerprint}.tar.gz"
+
+
+def _write_skill_archive(source_dir: Path, archive_path: Path, marker_payload: str) -> None:
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(prefix=f"{archive_path.name}.", suffix=".tmp", dir=archive_path.parent, delete=False) as tmp:
+        temp_path = Path(tmp.name)
+    try:
+        with tarfile.open(temp_path, "w:gz") as archive:
+            for path, rel, _stat in _iter_skill_files(source_dir):
+                archive.add(path, arcname=rel, recursive=False)
+            marker_info = tarfile.TarInfo(".openharness-sync.json")
+            marker_bytes = marker_payload.encode("utf-8")
+            marker_info.size = len(marker_bytes)
+            marker_info.mode = 0o644
+            archive.addfile(marker_info, io.BytesIO(marker_bytes))
+        os.replace(temp_path, archive_path)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+async def _get_or_create_skill_archive(
+    source_dir: Path,
+    safe_name: str,
+    fingerprint: str,
+    marker_payload: str,
+    *,
+    context: ToolExecutionContext,
+    skill_name: str,
+    target_root: str,
+    manifest: dict[str, int],
+) -> tuple[Path, bool]:
+    archive_path = _skill_archive_cache_path(safe_name, fingerprint)
+    if archive_path.exists() and archive_path.stat().st_size > 0:
+        await _emit_progress(
+            context,
+            "skill_package",
+            f"已复用本地缓存的 {skill_name} 技能归档。",
+            status="success",
+            path=target_root,
+            detail=f"{archive_path.stat().st_size} bytes",
+            metadata={"skill": skill_name, "archive_cache_hit": True, **manifest},
+        )
+        return archive_path, True
+
+    package_detail = f"{manifest['file_count']} files, {manifest['total_size']} bytes"
+    await _emit_progress(
+        context,
+        "skill_package",
+        f"正在打包 {skill_name} 技能文件...",
+        path=target_root,
+        detail=package_detail,
+        metadata={"skill": skill_name, "archive_cache_hit": False, **manifest},
+    )
+    await _await_with_progress(
+        asyncio.to_thread(_write_skill_archive, source_dir, archive_path, marker_payload),
+        context,
+        "skill_package",
+        f"正在打包 {skill_name} 技能文件...",
+        path=target_root,
+        detail=package_detail,
+        metadata={"skill": skill_name, "archive_cache_hit": False, **manifest},
+    )
+    await _emit_progress(
+        context,
+        "skill_package",
+        f"{skill_name} 技能归档已打包完成。",
+        status="success",
+        path=target_root,
+        detail=f"{archive_path.stat().st_size} bytes",
+        metadata={"skill": skill_name, "archive_cache_hit": False, "archive_size": archive_path.stat().st_size, **manifest},
+    )
+    return archive_path, False
+
+
 async def _sync_skill_archive(
     session: Any,
     source_dir: Path,
@@ -448,70 +567,85 @@ async def _sync_skill_archive(
     manifest: dict[str, int],
 ) -> None:
     safe_name = _safe_sandbox_name(source_dir.name)
-    archive_path = f"/tmp/openharness-skill-{safe_name}-{fingerprint[:12]}.tar.gz"
+    sandbox_archive_path = f"/tmp/openharness-skill-{safe_name}-{fingerprint[:12]}.tar.gz"
     temp_target = f"{target_root}.tmp-{fingerprint[:12]}"
     marker_payload = json.dumps({"fingerprint": fingerprint}, ensure_ascii=False, sort_keys=True)
 
-    with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
-        local_archive = Path(tmp.name)
-    try:
-        await _emit_progress(
-            context,
-            "skill_package",
-            f"正在打包 {skill_name} 技能文件...",
-            path=target_root,
-            detail=f"{manifest['file_count']} files, {manifest['total_size']} bytes",
-            metadata={"skill": skill_name, **manifest},
-        )
-        with tarfile.open(local_archive, "w:gz") as archive:
-            for path, rel, _stat in _iter_skill_files(source_dir):
-                archive.add(path, arcname=rel, recursive=False)
-            marker_info = tarfile.TarInfo(".openharness-sync.json")
-            marker_bytes = marker_payload.encode("utf-8")
-            marker_info.size = len(marker_bytes)
-            marker_info.mode = 0o644
-            import io
-
-            archive.addfile(marker_info, io.BytesIO(marker_bytes))
-
-        await _emit_progress(
-            context,
-            "skill_upload",
-            f"正在上传 {skill_name} 技能归档到 E2B 沙箱...",
-            path=archive_path,
-            detail=f"{local_archive.stat().st_size} bytes",
-            metadata={"skill": skill_name, "archive_size": local_archive.stat().st_size, **manifest},
-        )
-        await session.write_file_binary(archive_path, local_archive.read_bytes())
-        await _emit_progress(
-            context,
-            "skill_extract",
-            f"正在沙箱内解压安装 {skill_name} 技能...",
-            path=target_root,
-            metadata={"skill": skill_name, **manifest},
-        )
-        command = (
-            "set -e; "
-            f"trap 'rm -f {shlex.quote(archive_path)}' EXIT; "
-            f"rm -rf {shlex.quote(temp_target)} && "
-            f"mkdir -p {shlex.quote(temp_target)} && "
-            f"tar -xzf {shlex.quote(archive_path)} -C {shlex.quote(temp_target)} && "
-            f"rm -rf {shlex.quote(target_root)} && "
-            f"mv {shlex.quote(temp_target)} {shlex.quote(target_root)} && "
-            f"(test -d {shlex.quote(target_root + '/scripts')} && "
-            f"find {shlex.quote(target_root + '/scripts')} -type f -name '*.py' "
-            "-exec chmod +x {} \\; 2>/dev/null || true)"
-        )
-        process = await session.exec_command(command)
-        stdout, stderr = await process.communicate()
-        if getattr(process, "returncode", 0) != 0:
-            details = (stderr or stdout or b"").decode("utf-8", errors="replace")
-            raise RuntimeError(f"Failed to extract skill archive in sandbox: {details.strip()}")
-    finally:
-        try:
-            local_archive.unlink()
-        except FileNotFoundError:
-            pass
+    local_archive, cache_hit = await _get_or_create_skill_archive(
+        source_dir,
+        safe_name,
+        fingerprint,
+        marker_payload,
+        context=context,
+        skill_name=skill_name,
+        target_root=target_root,
+        manifest=manifest,
+    )
+    archive_size = local_archive.stat().st_size
+    await _emit_progress(
+        context,
+        "skill_upload",
+        f"正在上传 {skill_name} 技能归档到 E2B 沙箱...",
+        path=sandbox_archive_path,
+        detail=f"{archive_size} bytes",
+        metadata={"skill": skill_name, "archive_size": archive_size, "archive_cache_hit": cache_hit, **manifest},
+    )
+    archive_bytes = await _await_with_progress(
+        asyncio.to_thread(local_archive.read_bytes),
+        context,
+        "skill_upload",
+        f"正在读取 {skill_name} 技能归档准备上传...",
+        path=sandbox_archive_path,
+        detail=f"{archive_size} bytes",
+        metadata={"skill": skill_name, "archive_size": archive_size, "archive_cache_hit": cache_hit, **manifest},
+    )
+    await _await_with_progress(
+        session.write_file_binary(sandbox_archive_path, archive_bytes),
+        context,
+        "skill_upload",
+        f"正在上传 {skill_name} 技能归档到 E2B 沙箱...",
+        path=sandbox_archive_path,
+        detail=f"{archive_size} bytes",
+        metadata={"skill": skill_name, "archive_size": archive_size, "archive_cache_hit": cache_hit, **manifest},
+    )
+    await _emit_progress(
+        context,
+        "skill_extract",
+        f"正在沙箱内解压安装 {skill_name} 技能...",
+        path=target_root,
+        metadata={"skill": skill_name, **manifest},
+    )
+    command = (
+        "set -e; "
+        f"trap 'rm -f {shlex.quote(sandbox_archive_path)}' EXIT; "
+        f"rm -rf {shlex.quote(temp_target)} && "
+        f"mkdir -p {shlex.quote(temp_target)} && "
+        f"tar -xzf {shlex.quote(sandbox_archive_path)} -C {shlex.quote(temp_target)} && "
+        f"rm -rf {shlex.quote(target_root)} && "
+        f"mv {shlex.quote(temp_target)} {shlex.quote(target_root)} && "
+        f"(test -d {shlex.quote(target_root + '/scripts')} && "
+        f"find {shlex.quote(target_root + '/scripts')} -type f -name '*.py' "
+        "-exec chmod +x {} \\; 2>/dev/null || true)"
+    )
+    process = await _await_with_progress(
+        session.exec_command(command),
+        context,
+        "skill_extract",
+        f"正在沙箱内解压安装 {skill_name} 技能...",
+        path=target_root,
+        metadata={"skill": skill_name, **manifest},
+    )
+    stdout, stderr = await _await_with_progress(
+        process.communicate(),
+        context,
+        "skill_extract",
+        f"正在沙箱内解压安装 {skill_name} 技能...",
+        path=target_root,
+        metadata={"skill": skill_name, **manifest},
+    )
+    if getattr(process, "returncode", 0) != 0:
+        details = (stderr or stdout or b"").decode("utf-8", errors="replace")
+        raise RuntimeError(f"Failed to extract skill archive in sandbox: {details.strip()}")
 
 
 async def _touch_sandbox_last_active(context: ToolExecutionContext) -> None:

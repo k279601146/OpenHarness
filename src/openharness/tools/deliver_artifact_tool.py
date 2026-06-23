@@ -109,6 +109,7 @@ class DeliverArtifactTool(BaseTool):
         output_dir.mkdir(parents=True, exist_ok=True)
 
         delivered: list[Path] = []
+        reused: list[dict] = []
         try:
             if arguments.package_as_zip or _contains_directory_request(requested_paths, sandbox_paths):
                 await _emit_progress(
@@ -139,9 +140,15 @@ class DeliverArtifactTool(BaseTool):
                         if arguments.filename and len(sandbox_paths) == 1
                         else _safe_filename(os.path.basename(sandbox_path) or f"artifact_{index + 1}")
                     )
-                    local_path = _unique_path(output_dir / filename)
                     content = await session.read_file_binary(sandbox_path)
-                    local_path.write_bytes(_ensure_bytes(content))
+                    content_bytes = _ensure_bytes(content)
+                    existing = _find_existing_artifact(context, content_bytes)
+                    if existing:
+                        reused.append(existing)
+                        continue
+
+                    local_path = _unique_path(output_dir / filename)
+                    local_path.write_bytes(content_bytes)
                     delivered.append(local_path)
         except Exception as exc:
             await _emit_progress(context, "artifact_ready", "产物交付失败。", status="error", detail=str(exc))
@@ -162,22 +169,30 @@ class DeliverArtifactTool(BaseTool):
                     reason=f"Delivered sandbox artifact: {local_path.name}",
                     sandbox_session=session,
                 )
+            reemit = getattr(hook, "reemit_artifact", None)
+            if reemit is not None:
+                for artifact in reused:
+                    await reemit(artifact, reason="Delivered existing sandbox artifact")
 
         lines = ["Delivered artifact(s):"]
         lines.extend(f"- {path}" for path in delivered)
+        if reused:
+            lines.append("Reused existing artifact(s):")
+            lines.extend(f"- {path}" for path in (_artifact_display_path(artifact) for artifact in reused) if path)
         await _emit_progress(
             context,
             "artifact_ready",
-            "产物已可下载。",
+            "产物已可下载。" if delivered else "产物已存在，已复用下载链接。",
             status="success",
             workspace="e2b" if uses_e2b_task_workspace(context) else "host",
-            detail="\n".join(str(path) for path in delivered),
-            metadata={"artifact_paths": [str(path) for path in delivered]},
+            detail="\n".join([*(str(path) for path in delivered), *(_artifact_display_path(artifact) or "" for artifact in reused)]),
+            metadata={"artifact_paths": [str(path) for path in delivered], "reused_artifact_paths": [_artifact_display_path(artifact) for artifact in reused if _artifact_display_path(artifact)]},
         )
         return ToolResult(
             output="\n".join(lines),
             metadata={
                 "artifact_paths": [str(path) for path in delivered],
+                "reused_artifact_paths": [_artifact_display_path(artifact) for artifact in reused if _artifact_display_path(artifact)],
                 **({"workspace": "e2b"} if uses_e2b_task_workspace(context) else {}),
             },
         )
@@ -194,6 +209,25 @@ def _resolve_sandbox_session(context: ToolExecutionContext):
         except (TypeError, ValueError):
             pass
     return get_sandbox_session()
+
+
+def _find_existing_artifact(context: ToolExecutionContext, content: bytes) -> dict | None:
+    hook = context.metadata.get("hook")
+    finder = getattr(hook, "find_artifact_by_content", None)
+    if finder is None:
+        return None
+    try:
+        existing = finder(content)
+    except Exception:
+        return None
+    if not isinstance(existing, dict):
+        return None
+    return existing
+
+
+def _artifact_display_path(artifact: dict) -> str | None:
+    value = artifact.get("url") or artifact.get("file_path") or artifact.get("path")
+    return str(value) if value else None
 
 
 async def _deliver_host_paths(
