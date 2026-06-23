@@ -103,12 +103,13 @@ class E2BSandboxSession:
         if not self._sandbox:
             return
         self.sandbox_id = self._sandbox.sandbox_id
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._sandbox.pause)
         self._sandbox = None
         logger.info(f"E2B sandbox suspended. sandbox_id: {self.sandbox_id}")
 
     async def resume(self) -> None:
         """从已有的 sandbox_id 恢复。"""
-        from e2b_code_interpreter import Sandbox
         if not self.sandbox_id:
             raise SandboxUnavailableError("No sandbox_id to resume from E2B")
         
@@ -120,7 +121,7 @@ class E2BSandboxSession:
             try:
                 self._sandbox = await loop.run_in_executor(
                     None,
-                    lambda: Sandbox.connect(self.sandbox_id)
+                    self._connect_existing_sandbox
                 )
                 logger.info(f"E2B sandbox resumed: {self.sandbox_id}")
                 return
@@ -132,18 +133,35 @@ class E2BSandboxSession:
                     
         raise SandboxUnavailableError(f"Failed to resume E2B sandbox: {last_error}")
 
+    def _connect_existing_sandbox(self):
+        """Connect to an existing sandbox and keep the running TTL short."""
+        from e2b_code_interpreter import Sandbox
+
+        try:
+            return Sandbox.connect(
+                self.sandbox_id,
+                timeout=self.settings.sandbox.idle_timeout_seconds,
+            )
+        except TypeError:
+            return Sandbox.connect(self.sandbox_id)
+
     async def destroy(self) -> None:
         """彻底终止沙箱"""
         if self._sandbox:
-            self._sandbox.kill()
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._sandbox.kill)
             self._sandbox = None
         elif self.sandbox_id:
             from e2b_code_interpreter import Sandbox
             try:
-                sbx = Sandbox.connect(self.sandbox_id)
-                sbx.kill()
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, lambda: Sandbox.kill(self.sandbox_id))
             except Exception:
-                pass
+                try:
+                    sbx = await loop.run_in_executor(None, self._connect_existing_sandbox)
+                    await loop.run_in_executor(None, sbx.kill)
+                except Exception:
+                    pass
         self.sandbox_id = None
         logger.info("E2B sandbox destroyed")
 

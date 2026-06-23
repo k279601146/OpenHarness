@@ -116,15 +116,34 @@ def _ensure_persistent_dirs(data_root: Path, user_id: int, space_id: str) -> tup
     return str(workspace), str(home), str(local_bin)
 
 
-async def _ensure_imagegen_skill_in_sandbox(session: E2BSandboxSession) -> None:
-    """Sync the bundled imagegen skill package into the sandbox user skills dir."""
-    source_dir = Path(__file__).resolve().parents[1] / "skills" / "bundled" / "content" / "imagegen"
+async def _ensure_bundled_skills_in_sandbox(
+    session: E2BSandboxSession,
+    skill_names: tuple[str, ...] = ("imagegen", "ppt-master"),
+) -> None:
+    """Sync required bundled skill packages into the sandbox user skills dir."""
+    bundled_root = Path(__file__).resolve().parents[1] / "skills" / "bundled" / "content"
+    for skill_name in skill_names:
+        await _ensure_bundled_skill_in_sandbox(session, bundled_root, skill_name)
+
+
+async def _ensure_bundled_skill_in_sandbox(
+    session: E2BSandboxSession,
+    bundled_root: Path,
+    skill_name: str,
+) -> None:
+    source_dir = bundled_root / skill_name
     if not source_dir.is_dir():
-        logger.warning("Bundled imagegen skill package not found: %s", source_dir)
+        logger.warning("Bundled skill package not found: %s", source_dir)
         return
 
-    target_root = "/home/user/.agents/skills/imagegen"
+    target_root = f"/home/user/.agents/skills/{skill_name}"
+    skill_manifest = f"{target_root}/SKILL.md"
     try:
+        exists = await session.exec_command(f"test -f {shlex.quote(skill_manifest)}")
+        if getattr(exists, "returncode", 1) == 0:
+            logger.debug("Bundled skill already present in sandbox: %s", target_root)
+            return
+
         await session.exec_command(f"mkdir -p {shlex.quote(target_root)}")
         for root, dirs, files in os.walk(source_dir):
             root_path = Path(root)
@@ -143,10 +162,13 @@ async def _ensure_imagegen_skill_in_sandbox(session: E2BSandboxSession) -> None:
                     await session.write_file_binary(sandbox_path, content)
                 else:
                     await session.write_file(sandbox_path, content.decode("utf-8", errors="replace"))
-        await session.exec_command(f"chmod +x {shlex.quote(target_root + '/scripts/image_gen.py')} || true")
-        logger.info("Synced bundled imagegen skill to sandbox: %s", target_root)
+        await session.exec_command(
+            f"find {shlex.quote(target_root + '/scripts')} -type f -name '*.py' "
+            "-exec chmod +x {} \\; 2>/dev/null || true"
+        )
+        logger.info("Synced bundled skill to sandbox: %s", target_root)
     except Exception as exc:
-        logger.warning("Failed to sync bundled imagegen skill to sandbox: %s", exc)
+        logger.warning("Failed to sync bundled skill %s to sandbox: %s", skill_name, exc)
 
 
 
@@ -186,7 +208,7 @@ async def get_or_start_sandbox(
         if existing is not None and existing.is_running:
             logger.info("Sandbox reused from registry: %s", existing.sandbox_id)
             _touch_last_active(db_session, thread_id)
-            await _ensure_imagegen_skill_in_sandbox(existing)
+            await _ensure_bundled_skills_in_sandbox(existing)
             return existing
 
         # ── 路径 2: DB 查找已有空间 ──
@@ -223,10 +245,15 @@ async def get_or_start_sandbox(
                     if db_session:
                         db_session.commit()
                     logger.info("Sandbox resumed: %s", space.container_name)
-                    await _ensure_imagegen_skill_in_sandbox(session)
+                    await _ensure_bundled_skills_in_sandbox(session)
                     return session
                 except Exception as e:
-                    logger.warning("Resume failed, will recreate: %s", e)
+                    logger.warning(
+                        "sandbox_resume_failed_recreated: thread=%s sandbox=%s error=%s",
+                        thread_id,
+                        space.container_name,
+                        e,
+                    )
                     # 恢复失败，新建
                     session = E2BSandboxSession(
                         settings=settings,
@@ -239,7 +266,7 @@ async def get_or_start_sandbox(
                     _sandbox_registry[key] = session
                     if db_session:
                         db_session.commit()
-                    await _ensure_imagegen_skill_in_sandbox(session)
+                    await _ensure_bundled_skills_in_sandbox(session)
                     return session
 
             elif space.status == "running":
@@ -253,9 +280,15 @@ async def get_or_start_sandbox(
                     _sandbox_registry[key] = session
                     _touch_last_active(db_session, thread_id)
                     logger.info("Sandbox reconnected: %s", space.container_name)
-                    await _ensure_imagegen_skill_in_sandbox(session)
+                    await _ensure_bundled_skills_in_sandbox(session)
                     return session
-                except Exception:
+                except Exception as e:
+                    logger.warning(
+                        "sandbox_resume_failed_recreated: thread=%s sandbox=%s error=%s",
+                        thread_id,
+                        space.container_name,
+                        e,
+                    )
                     # 重建
                     session = E2BSandboxSession(
                         settings=settings,
@@ -268,7 +301,7 @@ async def get_or_start_sandbox(
                     _sandbox_registry[key] = session
                     if db_session:
                         db_session.commit()
-                    await _ensure_imagegen_skill_in_sandbox(session)
+                    await _ensure_bundled_skills_in_sandbox(session)
                     return session
 
             space_id = space.id
@@ -340,7 +373,7 @@ async def get_or_start_sandbox(
                     
             _sandbox_registry[key] = session
             logger.info("Sandbox created: %s (space=%s)", session.sandbox_id, space_id)
-            await _ensure_imagegen_skill_in_sandbox(session)
+            await _ensure_bundled_skills_in_sandbox(session)
             return session
             
         return session

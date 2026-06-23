@@ -219,6 +219,17 @@ NODE_DEFAULTS: dict[str, dict[str, Any]] = {
 }
 
 
+NODE_DEFAULTS.update(
+    {
+        "text": {**NODE_DEFAULTS["text"], "width": 340, "height": 240},
+        "image": {**NODE_DEFAULTS["image"], "width": 340, "height": 240},
+        "video": {**NODE_DEFAULTS["video"], "width": 420, "height": 236},
+        "audio": {**NODE_DEFAULTS["audio"], "width": 340, "height": 120},
+        "config": {**NODE_DEFAULTS["config"], "width": 340, "height": 240},
+    }
+)
+
+
 def _uid(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:12]}"
 
@@ -450,6 +461,8 @@ def _create_node(
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     spec = NODE_DEFAULTS.get(node_type, NODE_DEFAULTS["text"])
+    width_value = _normalize_node_dimension(width, float(spec["width"]))
+    height_value = _normalize_node_dimension(height, float(spec["height"]))
     return {
         "id": node_id or _uid(node_type),
         "type": node_type,
@@ -458,9 +471,32 @@ def _create_node(
             "x": float(position.get("x", 0)),
             "y": float(position.get("y", 0)),
         },
-        "width": float(width or spec["width"]),
-        "height": float(height or spec["height"]),
+        "width": width_value,
+        "height": height_value,
         "metadata": {**dict(spec.get("metadata") or {}), **dict(metadata or {})},
+    }
+
+
+def _normalize_node_dimension(value: float | None, default_value: float) -> float:
+    if value is None:
+        return default_value
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return default_value
+    return numeric if numeric > default_value else default_value
+
+
+def _normalize_add_node_op(op: dict[str, Any]) -> dict[str, Any]:
+    if op.get("type") != "add_node":
+        return op
+    node_type = op.get("nodeType") if op.get("nodeType") in NODE_DEFAULTS else "text"
+    spec = NODE_DEFAULTS[node_type]
+    return {
+        **op,
+        "nodeType": node_type,
+        "width": _normalize_node_dimension(op.get("width"), float(spec["width"])),
+        "height": _normalize_node_dimension(op.get("height"), float(spec["height"])),
     }
 
 
@@ -639,6 +675,7 @@ def _generation_flow_ops(data: dict[str, Any], state: dict[str, Any]) -> list[di
 class _CanvasEmitter:
     @staticmethod
     async def emit(context: ToolExecutionContext, ops: list[dict[str, Any]]) -> ToolResult:
+        ops = [_normalize_add_node_op(op) for op in ops]
         skipped_redundant = [op for op in ops if _is_redundant_media_success_update(context, op)]
         if skipped_redundant:
             skipped_ids = {id(op) for op in skipped_redundant}

@@ -40,6 +40,7 @@ from openharness.engine.stream_events import (
 from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
 from openharness.services.tool_outputs import tool_output_inline_chars, tool_output_preview_chars
+from openharness.tools.ask_user_question_tool import AskUserQuestionPaused
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.base import ToolRegistry
 from openharness.utils.paths import normalize_host_path
@@ -52,7 +53,7 @@ log = logging.getLogger(__name__)
 
 
 PermissionPrompt = Callable[[str, str], Awaitable[bool]]
-AskUserPrompt = Callable[[str], Awaitable[str]]
+AskUserPrompt = Callable[[str | dict[str, Any]], Awaitable[str]]
 
 MAX_TRACKED_READ_FILES = 6
 MAX_TRACKED_SKILLS = 8
@@ -862,6 +863,8 @@ async def run_query(
             yield ToolExecutionStarted(tool_name=tc.name, tool_input=tc.input), None
             try:
                 result = await _execute_tool_call(context, tc.name, tc.id, tc.input)
+            except AskUserQuestionPaused:
+                raise
             except Exception as exc:
                 log.exception("tool execution raised: name=%s id=%s", tc.name, tc.id)
                 result = ToolResultBlock(
@@ -893,6 +896,8 @@ async def run_query(
             )
             tool_results = []
             for tc, result in zip(tool_calls, raw_results):
+                if isinstance(result, AskUserQuestionPaused):
+                    raise result
                 if isinstance(result, BaseException):
                     log.exception(
                         "tool execution raised: name=%s id=%s",

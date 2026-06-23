@@ -27,6 +27,7 @@ from openharness.engine.stream_events import (
 from openharness.permissions import PermissionChecker, PermissionMode
 from openharness.tasks import get_task_manager
 from openharness.tools import create_default_tool_registry
+from openharness.tools.ask_user_question_tool import AskUserQuestionPaused
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
 from openharness.tools.glob_tool import GlobTool
 from openharness.tools.grep_tool import GrepTool
@@ -1126,6 +1127,47 @@ async def test_query_engine_executes_ask_user_tool(tmp_path: Path):
     assert tool_results[0].output == "green"
     assert isinstance(events[-1], AssistantTurnComplete)
     assert events[-1].message.text == "Picked green."
+
+
+@pytest.mark.asyncio
+async def test_query_engine_propagates_ask_user_pause(tmp_path: Path):
+    async def _pause(_payload):
+        raise AskUserQuestionPaused("paused")
+
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(
+                                id="toolu_ask",
+                                name="ask_user_question",
+                                input={"question": "Which color?"},
+                            ),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+            ]
+        ),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings()),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        ask_user_prompt=_pause,
+        tool_metadata={"ask_user_prompt_accepts_structured": True},
+    )
+
+    events = []
+    with pytest.raises(AskUserQuestionPaused):
+        async for event in engine.submit_message("pick a color"):
+            events.append(event)
+
+    assert any(isinstance(event, ToolExecutionStarted) for event in events)
+    assert not any(isinstance(event, ToolExecutionCompleted) for event in events)
 
 
 @pytest.mark.asyncio
