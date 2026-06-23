@@ -530,7 +530,14 @@ def _record_tool_carryover(
         _remember_work_log(context.tool_metadata, entry="Exited plan mode")
 
 
-def _tool_artifact_dir() -> Path:
+def _tool_artifact_dir(workspace_dir: Path | None = None) -> Path:
+    if workspace_dir is not None:
+        try:
+            artifact_dir = workspace_dir.resolve() / ".openharness" / "tool_artifacts"
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            return artifact_dir
+        except OSError:
+            pass
     artifact_dir = get_data_dir() / "tool_artifacts"
     artifact_dir.mkdir(parents=True, exist_ok=True)
     return artifact_dir
@@ -546,13 +553,15 @@ def _offload_tool_output_if_needed(
     tool_name: str,
     tool_use_id: str,
     output: str,
+    workspace_dir: Path | None = None,
+    expose_artifact_path: bool = True,
 ) -> tuple[str, Path | None]:
     inline_limit = tool_output_inline_chars()
     if len(output) <= inline_limit:
         return output, None
 
     artifact_path = (
-        _tool_artifact_dir()
+        _tool_artifact_dir(workspace_dir)
         / f"{time.strftime('%Y%m%d-%H%M%S')}-{_safe_tool_artifact_name(tool_name)}-{uuid4().hex[:12]}.txt"
     )
     artifact_path.write_text(output, encoding="utf-8", errors="replace")
@@ -563,9 +572,13 @@ def _offload_tool_output_if_needed(
         f"Tool: {tool_name}\n"
         f"Tool use id: {tool_use_id}\n"
         f"Original size: {len(output)} chars\n"
-        f"Full output saved to: {artifact_path}\n"
         f"Inline preview: first {len(preview)} chars"
     )
+    if expose_artifact_path:
+        inline = inline.replace(
+            f"Inline preview: first {len(preview)} chars",
+            f"Full output saved to: {artifact_path}\nInline preview: first {len(preview)} chars",
+        )
     if omitted:
         inline += f" ({omitted} chars omitted)"
     if preview:
@@ -1039,6 +1052,8 @@ async def _execute_tool_call(
         tool_name=tool_name,
         tool_use_id=tool_use_id,
         output=result.output,
+        workspace_dir=_concrete_path(context.cwd),
+        expose_artifact_path=str((context.tool_metadata or {}).get("workspace_backend") or "").lower() != "e2b",
     )
     if artifact_path is not None:
         _remember_active_artifact(context.tool_metadata, str(artifact_path))

@@ -10,6 +10,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.tools.sandbox_workspace import get_e2b_task_session, sandbox_grep, to_sandbox_path, uses_e2b_task_workspace
 from openharness.utils.paths import normalize_host_path
 
 
@@ -40,6 +41,22 @@ class GrepTool(BaseTool):
         return True
 
     async def execute(self, arguments: GrepToolInput, context: ToolExecutionContext) -> ToolResult:
+        if uses_e2b_task_workspace(context):
+            try:
+                session = await get_e2b_task_session(context)
+                root = to_sandbox_path(context, arguments.root)
+                output = await sandbox_grep(
+                    session,
+                    root,
+                    pattern=arguments.pattern,
+                    file_glob=arguments.file_glob,
+                    case_sensitive=arguments.case_sensitive,
+                    limit=arguments.limit,
+                )
+            except Exception as exc:
+                return ToolResult(output=f"Sandbox workspace error: {exc}", is_error=True)
+            return ToolResult(output=output, metadata={"root": root, "workspace": "e2b"})
+
         root = _resolve_path(context.cwd, arguments.root) if arguments.root else context.cwd
         if not root.exists():
             return ToolResult(

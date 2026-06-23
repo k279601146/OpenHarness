@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic import AliasChoices, BaseModel, Field
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.tools.sandbox_workspace import get_e2b_task_session, sandbox_glob, to_sandbox_path, uses_e2b_task_workspace
 from openharness.utils.paths import normalize_host_path
 
 
@@ -35,6 +36,17 @@ class GlobTool(BaseTool):
         return True
 
     async def execute(self, arguments: GlobToolInput, context: ToolExecutionContext) -> ToolResult:
+        if uses_e2b_task_workspace(context):
+            try:
+                session = await get_e2b_task_session(context)
+                root = to_sandbox_path(context, arguments.root)
+                matches = await sandbox_glob(session, root, arguments.pattern, limit=arguments.limit)
+            except Exception as exc:
+                return ToolResult(output=f"Sandbox workspace error: {exc}", is_error=True)
+            if not matches:
+                return ToolResult(output="(no matches)")
+            return ToolResult(output="\n".join(matches), metadata={"root": root, "workspace": "e2b"})
+
         root, pattern = _resolve_glob_request(context.cwd, arguments.root, arguments.pattern)
         matches = await _glob(root, pattern, limit=arguments.limit)
         if not matches:

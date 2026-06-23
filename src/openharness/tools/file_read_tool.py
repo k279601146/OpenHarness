@@ -7,6 +7,13 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.tools.sandbox_workspace import (
+    get_e2b_task_session,
+    sandbox_file_size,
+    sandbox_path_status,
+    to_sandbox_path,
+    uses_e2b_task_workspace,
+)
 from openharness.utils.paths import normalize_host_path
 
 BINARY_READABLE_EXTENSIONS = {
@@ -41,6 +48,9 @@ class FileReadTool(BaseTool):
         arguments: FileReadToolInput,
         context: ToolExecutionContext,
     ) -> ToolResult:
+        if uses_e2b_task_workspace(context):
+            return await _read_sandbox_file(arguments, context)
+
         path = _resolve_path(Path(context.cwd), arguments.path)
         if path.suffix.lower() in BINARY_READABLE_EXTENSIONS:
             allowed, error_msg = _validate_readable_binary_path(path, Path(context.cwd))
@@ -109,3 +119,54 @@ def _validate_readable_binary_path(path: Path, cwd: Path) -> tuple[bool, str]:
     if set(resolved.parts) & dangerous:
         return False, f"Security restriction: cannot access sensitive path: {path}"
     return True, ""
+
+
+async def _read_sandbox_file(arguments: FileReadToolInput, context: ToolExecutionContext) -> ToolResult:
+    try:
+        session = await get_e2b_task_session(context)
+        sandbox_path = to_sandbox_path(context, arguments.path)
+    except Exception as exc:
+        return ToolResult(output=f"Sandbox workspace error: {exc}", is_error=True)
+
+    status = await sandbox_path_status(session, sandbox_path)
+    if status == "missing":
+        return ToolResult(output=f"File not found in sandbox: {sandbox_path}", is_error=True)
+    if status == "dir":
+        return ToolResult(output=f"Cannot read sandbox directory: {sandbox_path}", is_error=True)
+    if status != "file":
+        return ToolResult(output=f"Cannot read non-file sandbox path: {sandbox_path}", is_error=True)
+
+    suffix = Path(sandbox_path).suffix.lower()
+    if suffix in BINARY_READABLE_EXTENSIONS:
+        size = await sandbox_file_size(session, sandbox_path)
+        return ToolResult(
+            output=(
+                f"Binary file is readable in sandbox: {sandbox_path}\n"
+                f"Type: {suffix or 'unknown'}\n"
+                f"Size: {size} bytes\n"
+                "Use deliver_artifact for user-needed files; read_file only returns text contents."
+            ),
+            metadata={"path": sandbox_path, "size_bytes": size, "binary": True, "workspace": "e2b"},
+        )
+
+    try:
+        raw = await session.read_file_binary(sandbox_path)
+    except Exception as exc:
+        return ToolResult(output=f"Failed to read sandbox file {sandbox_path}: {exc}", is_error=True)
+    data = bytes(raw) if isinstance(raw, (bytearray, memoryview)) else raw
+    if isinstance(data, str):
+        text = data
+    else:
+        if b"\x00" in data:
+            return ToolResult(output=f"Binary file cannot be read as text in sandbox: {sandbox_path}", is_error=True)
+        text = data.decode("utf-8", errors="replace")
+
+    lines = text.splitlines()
+    selected = lines[arguments.offset : arguments.offset + arguments.limit]
+    numbered = [
+        f"{arguments.offset + index + 1:>6}\t{line}"
+        for index, line in enumerate(selected)
+    ]
+    if not numbered:
+        return ToolResult(output=f"(no content in selected range for {sandbox_path})")
+    return ToolResult(output="\n".join(numbered), metadata={"path": sandbox_path, "workspace": "e2b"})

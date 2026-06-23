@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.tools.safe_file_validator import DANGEROUS_PATHS
+from openharness.tools.sandbox_workspace import get_e2b_task_session, to_sandbox_path, uses_e2b_task_workspace
 
 
 class CreateFolderToolInput(BaseModel):
@@ -31,6 +32,26 @@ class CreateFolderTool(BaseTool):
         arguments: CreateFolderToolInput,
         context: ToolExecutionContext,
     ) -> ToolResult:
+        if uses_e2b_task_workspace(context):
+            try:
+                session = await get_e2b_task_session(context)
+                sandbox_path = to_sandbox_path(context, arguments.path, for_write=True)
+                flags = "-p " if arguments.parents else ""
+                command = f"mkdir {flags}{_shell_quote(sandbox_path)}"
+                if arguments.exist_ok and not arguments.parents:
+                    command += " 2>/dev/null || test -d " + _shell_quote(sandbox_path)
+                process = await session.exec_command(command)
+                await process.wait()
+                if process.returncode != 0:
+                    _stdout, stderr = await process.communicate()
+                    return ToolResult(
+                        output=f"Failed to create sandbox directory {sandbox_path}: {stderr.decode('utf-8', errors='replace')}",
+                        is_error=True,
+                    )
+                return ToolResult(output=f"Created sandbox directory: {sandbox_path}", metadata={"path": sandbox_path, "workspace": "e2b"})
+            except Exception as exc:
+                return ToolResult(output=f"Sandbox workspace error: {exc}", is_error=True)
+
         path = _resolve_path(context.cwd, arguments.path)
         is_safe, error_msg = _validate_safe_directory(path, context.cwd)
         if not is_safe:
@@ -76,3 +97,9 @@ def _validate_safe_directory(path: Path, workspace: Path) -> tuple[bool, str]:
         )
 
     return True, ""
+
+
+def _shell_quote(value: str) -> str:
+    import shlex
+
+    return shlex.quote(value)

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import difflib
+import posixpath
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.tools.sandbox_workspace import get_e2b_task_session, to_sandbox_path, uses_e2b_task_workspace
 
 
 class FileWriteToolInput(BaseModel):
@@ -30,6 +32,17 @@ class FileWriteTool(BaseTool):
         arguments: FileWriteToolInput,
         context: ToolExecutionContext,
     ) -> ToolResult:
+        if uses_e2b_task_workspace(context):
+            try:
+                session = await get_e2b_task_session(context)
+                sandbox_path = to_sandbox_path(context, arguments.path, for_write=True)
+                if arguments.create_directories:
+                    await session.exec_command(f"mkdir -p {_shell_quote(posixpath.dirname(sandbox_path) or '/home/user')}")
+                await session.write_file(sandbox_path, arguments.content)
+                return ToolResult(output=f"Wrote sandbox file: {sandbox_path}", metadata={"path": sandbox_path, "workspace": "e2b"})
+            except Exception as exc:
+                return ToolResult(output=f"Sandbox workspace error: {exc}", is_error=True)
+
         path = _resolve_path(context.cwd, arguments.path)
 
         from openharness.sandbox.session import is_docker_sandbox_active
@@ -85,3 +98,9 @@ def _compute_diff(filename: str, original: str, updated: str) -> tuple[str, int,
 _ANSI_GREEN = "\033[32m"
 _ANSI_RED = "\033[31m"
 _ANSI_RESET = "\033[0m"
+
+
+def _shell_quote(value: str) -> str:
+    import shlex
+
+    return shlex.quote(value)

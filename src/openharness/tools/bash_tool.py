@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from openharness.sandbox import SandboxUnavailableError
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.tools.sandbox_workspace import sandbox_primary_workspace, uses_e2b_task_workspace
 from openharness.utils.shell import create_shell_subprocess
 
 
@@ -38,8 +39,9 @@ class BashTool(BaseTool):
 
     async def execute(self, arguments: BashToolInput, context: ToolExecutionContext) -> ToolResult:
         cwd = context.cwd
-        if _uses_e2b_sandbox(context):
-            cwd = _normalize_e2b_cwd(arguments.cwd, host_cwd=context.cwd)
+        uses_e2b = uses_e2b_task_workspace(context)
+        if uses_e2b:
+            cwd = _normalize_e2b_cwd(arguments.cwd, host_cwd=context.cwd, default_cwd=sandbox_primary_workspace(context))
         elif arguments.cwd:
             cwd = Path(arguments.cwd).expanduser()
             if not cwd.is_absolute():
@@ -64,7 +66,8 @@ class BashTool(BaseTool):
                 user_id=context.metadata.get("user_id"),
                 thread_id=context.metadata.get("thread_id"),
                 db_session=context.metadata.get("db_session"),
-                env=_build_forwarded_sandbox_env(context) if _uses_e2b_sandbox(context) else None,
+                workspace_backend=context.metadata.get("workspace_backend"),
+                env=_build_forwarded_sandbox_env(context) if uses_e2b else None,
             )
         except SandboxUnavailableError as exc:
             return ToolResult(output=str(exc), is_error=True)
@@ -97,17 +100,8 @@ class BashTool(BaseTool):
         return ToolResult(
             output=text,
             is_error=process.returncode != 0,
-            metadata={"returncode": process.returncode},
+            metadata={"returncode": process.returncode, **({"workspace": "e2b"} if uses_e2b else {})},
         )
-
-
-def _uses_e2b_sandbox(context: ToolExecutionContext) -> bool:
-    settings = context.metadata.get("settings")
-    sandbox = getattr(settings, "sandbox", None)
-    return bool(
-        getattr(sandbox, "enabled", False)
-        and getattr(sandbox, "backend", None) == "e2b"
-    )
 
 
 def _build_forwarded_sandbox_env(context: ToolExecutionContext) -> dict[str, str] | None:
@@ -199,15 +193,15 @@ def _parse_simple_dotenv(path: Path) -> dict[str, str]:
     return values
 
 
-def _normalize_e2b_cwd(raw_cwd: str | None, *, host_cwd: Path) -> str:
+def _normalize_e2b_cwd(raw_cwd: str | None, *, host_cwd: Path, default_cwd: str = "/home/user") -> str:
     if raw_cwd is None or not str(raw_cwd).strip():
-        return "/home/user"
+        return default_cwd
 
     raw = str(raw_cwd).strip()
     normalized = raw.replace("\\", "/")
     if normalized in {".", "~"}:
-        return "/home/user"
-    if normalized == "/home/user" or normalized.startswith("/home/user/"):
+        return default_cwd
+    if normalized == default_cwd or normalized.startswith(default_cwd.rstrip("/") + "/"):
         return normalized.rstrip("/") or "/home/user"
     if normalized.startswith("/") and ":" not in normalized:
         return normalized.rstrip("/") or "/home/user"
@@ -223,8 +217,8 @@ def _normalize_e2b_cwd(raw_cwd: str | None, *, host_cwd: Path) -> str:
 
     rel_text = rel.as_posix().strip("/")
     if not rel_text or rel_text == ".":
-        return "/home/user"
-    return f"/home/user/{rel_text}"
+        return default_cwd
+    return f"{default_cwd.rstrip('/')}/{rel_text}"
 
 
 async def _terminate_process(process: asyncio.subprocess.Process, *, force: bool) -> None:

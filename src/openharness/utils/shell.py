@@ -62,6 +62,7 @@ async def create_shell_subprocess(
     user_id: str | int | None = None,
     thread_id: str | None = None,
     db_session: Any | None = None,
+    workspace_backend: str | None = None,
 ) -> asyncio.subprocess.Process:
     """Spawn a shell command with platform-aware shell selection and sandboxing."""
     resolved_settings = settings or load_settings()
@@ -69,7 +70,8 @@ async def create_shell_subprocess(
     # E2B backend: route shell commands through the active per-user/thread sandbox
     # when the caller is running inside a SaaS mission context. Plain local
     # helper calls still use the host shell, even if e2b is the default backend.
-    if resolved_settings.sandbox.enabled and resolved_settings.sandbox.backend == "e2b":
+    explicit_e2b_workspace = str(workspace_backend or "").lower() == "e2b"
+    if explicit_e2b_workspace or (resolved_settings.sandbox.enabled and resolved_settings.sandbox.backend == "e2b"):
         from openharness.sandbox.session import (
             get_active_sandbox,
             get_or_start_sandbox,
@@ -82,7 +84,7 @@ async def create_shell_subprocess(
                 session = get_active_sandbox(int(user_id), thread_id)
             except (TypeError, ValueError):
                 session = None
-        if session is None:
+        if session is None and not explicit_e2b_workspace:
             session = get_sandbox_session()
         if session is None and user_id is not None and thread_id:
             try:
@@ -103,7 +105,7 @@ async def create_shell_subprocess(
                 stderr=stderr,
                 env=dict(env) if env is not None else None,
             )
-        if user_id is not None and thread_id and resolved_settings.sandbox.fail_if_unavailable:
+        if explicit_e2b_workspace or (user_id is not None and thread_id and resolved_settings.sandbox.fail_if_unavailable):
             from openharness.sandbox import SandboxUnavailableError
 
             raise SandboxUnavailableError("E2B sandbox session is not running")

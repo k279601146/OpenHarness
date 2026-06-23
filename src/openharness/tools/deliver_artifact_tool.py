@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from openharness.sandbox.session import get_active_sandbox, get_sandbox_session
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.tools.sandbox_workspace import get_e2b_task_session, to_sandbox_path, uses_e2b_task_workspace
 
 
 class DeliverArtifactInput(BaseModel):
@@ -58,12 +59,25 @@ class DeliverArtifactTool(BaseTool):
         arguments: DeliverArtifactInput,
         context: ToolExecutionContext,
     ) -> ToolResult:
-        session = _resolve_sandbox_session(context)
-
         raw_paths = arguments.paths or ([arguments.sandbox_path] if arguments.sandbox_path else [])
-        requested_paths = [_normalize_sandbox_path(path) for path in raw_paths if path]
+        try:
+            requested_paths = [
+                to_sandbox_path(context, path) if uses_e2b_task_workspace(context) else _normalize_sandbox_path(path)
+                for path in raw_paths
+                if path
+            ]
+        except Exception as exc:
+            return ToolResult(output=f"Invalid artifact path: {exc}", is_error=True)
         if not requested_paths:
             return ToolResult(output="No sandbox paths were provided.", is_error=True)
+
+        if uses_e2b_task_workspace(context):
+            try:
+                session = await get_e2b_task_session(context)
+            except Exception as exc:
+                return ToolResult(output=f"E2B sandbox session is not available: {exc}", is_error=True)
+        else:
+            session = _resolve_sandbox_session(context)
 
         if session is None or not getattr(session, "is_running", False):
             return await _deliver_host_paths(arguments, context, requested_paths)
@@ -122,7 +136,10 @@ class DeliverArtifactTool(BaseTool):
         lines.extend(f"- {path}" for path in delivered)
         return ToolResult(
             output="\n".join(lines),
-            metadata={"artifact_paths": [str(path) for path in delivered]},
+            metadata={
+                "artifact_paths": [str(path) for path in delivered],
+                **({"workspace": "e2b"} if uses_e2b_task_workspace(context) else {}),
+            },
         )
 
 

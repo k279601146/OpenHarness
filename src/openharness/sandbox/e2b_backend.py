@@ -30,6 +30,36 @@ def _normalize_e2b_cwd(cwd: str | Path | None) -> str:
     return f"/home/user/{value.strip('/')}"
 
 
+def _command_result_attr(result: Any, *names: str, default: Any = None) -> Any:
+    for name in names:
+        if hasattr(result, name):
+            return getattr(result, name)
+    return default
+
+
+def _coerce_command_output(value: Any) -> str | bytes:
+    if value is None:
+        return ""
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value)
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "\n".join(str(item) for item in value)
+    return str(value)
+
+
+def _extract_e2b_command_result(exc: Exception) -> Any | None:
+    candidates = [getattr(exc, "result", None), exc]
+    candidates.extend(arg for arg in getattr(exc, "args", ()) if arg is not None)
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        if any(hasattr(candidate, attr) for attr in ("exit_code", "returncode", "stdout", "stderr")):
+            return candidate
+    return None
+
+
 def get_e2b_availability(settings: Settings) -> SandboxAvailability:
     """Check whether E2B can be used as a sandbox backend."""
     # Temporarily we might just pretend we use E2B if backend is 'e2b' or if we force it.
@@ -194,13 +224,15 @@ class E2BSandboxSession:
 
         class MockProcess:
             def __init__(self, e2b_result):
-                self.returncode = e2b_result.exit_code
-                self._stdout_bytes = e2b_result.stdout.encode('utf-8') if isinstance(e2b_result.stdout, str) else e2b_result.stdout
-                self._stderr_bytes = e2b_result.stderr.encode('utf-8') if isinstance(e2b_result.stderr, str) else e2b_result.stderr
+                self.returncode = int(_command_result_attr(e2b_result, "exit_code", "returncode", default=0) or 0)
+                stdout_value = _coerce_command_output(_command_result_attr(e2b_result, "stdout", "output", default=""))
+                stderr_value = _coerce_command_output(_command_result_attr(e2b_result, "stderr", "error", default=""))
+                self._stdout_bytes = stdout_value.encode('utf-8') if isinstance(stdout_value, str) else stdout_value
+                self._stderr_bytes = stderr_value.encode('utf-8') if isinstance(stderr_value, str) else stderr_value
                 
                 # 为了兼容 legacy 逻辑 (communicate)
-                self.stdout_str = e2b_result.stdout if isinstance(e2b_result.stdout, str) else e2b_result.stdout.decode('utf-8', errors='ignore')
-                self.stderr_str = e2b_result.stderr if isinstance(e2b_result.stderr, str) else e2b_result.stderr.decode('utf-8', errors='ignore')
+                self.stdout_str = stdout_value if isinstance(stdout_value, str) else stdout_value.decode('utf-8', errors='ignore')
+                self.stderr_str = stderr_value if isinstance(stderr_value, str) else stderr_value.decode('utf-8', errors='ignore')
 
                 # Mock stdout.readline 用的流
                 self.stdout = asyncio.StreamReader()
@@ -253,9 +285,11 @@ class E2BSandboxSession:
         except Exception as e:
             # 检查是否是 E2B 的命令退出异常 (exit_code != 0)
             # 这种异常不应该抛给上层杀死进程，而应该作为 ToolResult 返回给 Agent 反思
-            if hasattr(e, "result"):
-                logger.warning(f"E2B command failed (exit code {e.result.exit_code}), letting agent self-heal")
-                return MockProcess(e.result)
+            command_result = _extract_e2b_command_result(e)
+            if command_result is not None:
+                returncode = _command_result_attr(command_result, "exit_code", "returncode", default="unknown")
+                logger.warning(f"E2B command failed (exit code {returncode}), returning process result")
+                return MockProcess(command_result)
             
             logger.error(f"E2B system level error: {e}")
             raise SandboxUnavailableError(f"E2B integration error: {e}")

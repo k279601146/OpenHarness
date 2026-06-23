@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from openharness.skills import load_skill_registry
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.tools.sandbox_workspace import ensure_skill_installed_in_sandbox, uses_e2b_task_workspace
 
 
 class SkillToolInput(BaseModel):
@@ -44,6 +45,20 @@ class SkillTool(BaseTool):
                 is_error=True,
             )
         if skill.base_dir:
+            if uses_e2b_task_workspace(context):
+                try:
+                    sandbox_skill_dir = await ensure_skill_installed_in_sandbox(context, skill)
+                except Exception as exc:
+                    return ToolResult(output=f"Failed to install skill in sandbox: {exc}", is_error=True)
+                return ToolResult(
+                    output=(
+                        f"Sandbox directory for this skill: {sandbox_skill_dir}\n"
+                        "Use files under this sandbox directory only. "
+                        "Do not use host-only bundled skill paths.\n\n"
+                        f"{skill.content}"
+                    ),
+                    metadata={"workspace": "e2b", "path": sandbox_skill_dir, "skill": skill.name},
+                )
             return ToolResult(
                 output=(
                     f"Base directory for this skill: {skill.base_dir}\n"

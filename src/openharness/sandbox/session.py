@@ -208,7 +208,6 @@ async def get_or_start_sandbox(
         if existing is not None and existing.is_running:
             logger.info("Sandbox reused from registry: %s", existing.sandbox_id)
             _touch_last_active(db_session, thread_id)
-            await _ensure_bundled_skills_in_sandbox(existing)
             return existing
 
         # ── 路径 2: DB 查找已有空间 ──
@@ -245,7 +244,6 @@ async def get_or_start_sandbox(
                     if db_session:
                         db_session.commit()
                     logger.info("Sandbox resumed: %s", space.container_name)
-                    await _ensure_bundled_skills_in_sandbox(session)
                     return session
                 except Exception as e:
                     logger.warning(
@@ -266,7 +264,6 @@ async def get_or_start_sandbox(
                     _sandbox_registry[key] = session
                     if db_session:
                         db_session.commit()
-                    await _ensure_bundled_skills_in_sandbox(session)
                     return session
 
             elif space.status == "running":
@@ -280,7 +277,6 @@ async def get_or_start_sandbox(
                     _sandbox_registry[key] = session
                     _touch_last_active(db_session, thread_id)
                     logger.info("Sandbox reconnected: %s", space.container_name)
-                    await _ensure_bundled_skills_in_sandbox(session)
                     return session
                 except Exception as e:
                     logger.warning(
@@ -301,7 +297,6 @@ async def get_or_start_sandbox(
                     _sandbox_registry[key] = session
                     if db_session:
                         db_session.commit()
-                    await _ensure_bundled_skills_in_sandbox(session)
                     return session
 
             space_id = space.id
@@ -373,7 +368,6 @@ async def get_or_start_sandbox(
                     
             _sandbox_registry[key] = session
             logger.info("Sandbox created: %s (space=%s)", session.sandbox_id, space_id)
-            await _ensure_bundled_skills_in_sandbox(session)
             return session
             
         return session
