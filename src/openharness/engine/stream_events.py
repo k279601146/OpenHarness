@@ -37,6 +37,7 @@ class ToolExecutionStarted:
 
     tool_name: str
     tool_input: dict[str, Any]
+    tool_use_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,24 @@ class ToolExecutionCompleted:
     tool_name: str
     output: str
     is_error: bool = False
+    metadata: dict[str, Any] | None = None
+    tool_use_id: str | None = None
+
+
+@dataclass(frozen=True)
+class AgentProgressEvent:
+    """Structured progress update for user-visible agent activity."""
+
+    phase: str
+    status: Literal["running", "success", "error", "info"] = "running"
+    message: str = ""
+    tool_name: str | None = None
+    tool_use_id: str | None = None
+    workspace: str | None = None
+    path: str | None = None
+    detail: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
     metadata: dict[str, Any] | None = None
 
 
@@ -90,6 +109,7 @@ StreamEvent = (
     AssistantTextDelta
     | AssistantReasoningDelta
     | AssistantTurnComplete
+    | AgentProgressEvent
     | ToolExecutionStarted
     | ToolExecutionCompleted
     | ErrorEvent

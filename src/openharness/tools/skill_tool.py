@@ -27,6 +27,15 @@ class SkillTool(BaseTool):
         return True
 
     async def execute(self, arguments: SkillToolInput, context: ToolExecutionContext) -> ToolResult:
+        if context.progress_callback is not None:
+            await context.progress_callback(
+                {
+                    "phase": "skill_resolve",
+                    "status": "running",
+                    "message": f"正在解析技能 {arguments.name}...",
+                    "metadata": {"skill": arguments.name},
+                }
+            )
         registry = load_skill_registry(
             context.cwd,
             extra_skill_dirs=context.metadata.get("extra_skill_dirs"),
@@ -37,6 +46,15 @@ class SkillTool(BaseTool):
         )
         skill = registry.get(arguments.name) or registry.get(arguments.name.lower()) or registry.get(arguments.name.title())
         if skill is None:
+            if context.progress_callback is not None:
+                await context.progress_callback(
+                    {
+                        "phase": "skill_resolve",
+                        "status": "error",
+                        "message": f"未找到技能 {arguments.name}。",
+                        "metadata": {"skill": arguments.name},
+                    }
+                )
             return ToolResult(output=f"Skill not found: {arguments.name}", is_error=True)
         if skill.disable_model_invocation:
             command_name = skill.command_name or skill.name
@@ -49,6 +67,16 @@ class SkillTool(BaseTool):
                 try:
                     sandbox_skill_dir = await ensure_skill_installed_in_sandbox(context, skill)
                 except Exception as exc:
+                    if context.progress_callback is not None:
+                        await context.progress_callback(
+                            {
+                                "phase": "skill_ready",
+                                "status": "error",
+                                "message": f"技能 {skill.name} 同步到沙箱失败。",
+                                "detail": str(exc),
+                                "metadata": {"skill": skill.name},
+                            }
+                        )
                     return ToolResult(output=f"Failed to install skill in sandbox: {exc}", is_error=True)
                 return ToolResult(
                     output=(

@@ -11,6 +11,31 @@ from openharness.tools.base import ToolExecutionContext
 from openharness.tools.videogen_cli_tool import VideogenCliInput, VideogenCliTool, _build_output_paths
 
 
+class FakeE2BProcess:
+    stdout_str = ""
+
+    async def communicate(self):
+        return b"", b""
+
+
+class FakeE2BSession:
+    is_running = True
+
+    def __init__(self) -> None:
+        self.files: dict[str, bytes] = {}
+        self.commands: list[str] = []
+
+    async def exec_command(self, command: str):
+        self.commands.append(command)
+        return FakeE2BProcess()
+
+    async def write_file_binary(self, path: str, content: bytes) -> None:
+        self.files[path] = bytes(content)
+
+    async def read_file_binary(self, path: str) -> bytes:
+        return self.files[path]
+
+
 @pytest.mark.asyncio
 async def test_videogen_cli_dry_run_routes_keling_alias(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KLING_VIDEO_API_KEY", "test-key")
@@ -143,3 +168,61 @@ def test_default_registry_exposes_only_unified_video_tool() -> None:
     assert "animate_first_frame" not in names
     assert "video_interpolation" not in names
     assert "video_with_reference" not in names
+
+
+@pytest.mark.asyncio
+async def test_videogen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sandbox = FakeE2BSession()
+
+    async def fake_get_session(context):
+        del context
+        return sandbox
+
+    def fake_run(argv, cwd, env, text, stdout, stderr, timeout, check):
+        del cwd, env, text, stdout, stderr, timeout, check
+        out_index = argv.index("--out") + 1
+        local_path = Path(argv[out_index])
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        local_path.write_bytes(b"mp4-bytes")
+        metadata = {
+            "artifact_paths": [str(local_path)],
+            "video_model_id": "seedance-1.5-pro",
+            "provider": "seedance",
+        }
+
+        class Completed:
+            returncode = 0
+            stdout = f"Wrote {local_path}\nVIDEOGEN_METADATA:{__import__('json').dumps(metadata)}"
+
+        return Completed()
+
+    monkeypatch.setattr("openharness.tools.videogen_cli_tool.get_e2b_task_session", fake_get_session)
+    monkeypatch.setattr("openharness.tools.videogen_cli_tool.subprocess.run", fake_run)
+
+    result = await VideogenCliTool().execute(
+        VideogenCliInput(
+            command="generate",
+            prompt="intro",
+            out="/home/user/projects/deck/videos/intro.mp4",
+            force=True,
+        ),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={
+                "workspace_backend": "e2b",
+                "primary_workspace": "/home/user",
+                "settings": object(),
+                "user_id": 1,
+                "thread_id": "thread-1",
+            },
+        ),
+    )
+
+    assert not result.is_error
+    assert result.metadata["artifact_paths"] == ["/home/user/projects/deck/videos/intro.mp4"]
+    assert sandbox.files["/home/user/projects/deck/videos/intro.mp4"] == b"mp4-bytes"
+    assert "D:\\home\\user" not in result.output
+    assert "/home/user/projects/deck/videos/intro.mp4" in result.output

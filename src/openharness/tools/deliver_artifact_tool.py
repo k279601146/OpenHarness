@@ -59,6 +59,7 @@ class DeliverArtifactTool(BaseTool):
         arguments: DeliverArtifactInput,
         context: ToolExecutionContext,
     ) -> ToolResult:
+        await _emit_progress(context, "artifact_scan", "正在检查需要交付的产物...")
         raw_paths = arguments.paths or ([arguments.sandbox_path] if arguments.sandbox_path else [])
         try:
             requested_paths = [
@@ -73,15 +74,25 @@ class DeliverArtifactTool(BaseTool):
 
         if uses_e2b_task_workspace(context):
             try:
+                await _emit_progress(context, "sandbox_start", "正在准备 E2B 沙箱以读取产物...", workspace="e2b")
                 session = await get_e2b_task_session(context)
             except Exception as exc:
+                await _emit_progress(context, "artifact_ready", "产物交付失败：E2B 沙箱不可用。", status="error", detail=str(exc), workspace="e2b")
                 return ToolResult(output=f"E2B sandbox session is not available: {exc}", is_error=True)
         else:
             session = _resolve_sandbox_session(context)
 
         if session is None or not getattr(session, "is_running", False):
+            await _emit_progress(context, "artifact_sync", "正在从宿主工作区交付产物...", workspace="host")
             return await _deliver_host_paths(arguments, context, requested_paths)
 
+        await _emit_progress(
+            context,
+            "artifact_scan",
+            "正在展开产物路径...",
+            workspace="e2b" if uses_e2b_task_workspace(context) else "host",
+            detail="\n".join(requested_paths[:20]),
+        )
         sandbox_paths = await _expand_requested_paths(session, requested_paths)
         if not sandbox_paths:
             return ToolResult(output="No sandbox paths were provided.", is_error=True)
@@ -100,6 +111,12 @@ class DeliverArtifactTool(BaseTool):
         delivered: list[Path] = []
         try:
             if arguments.package_as_zip or _contains_directory_request(requested_paths, sandbox_paths):
+                await _emit_progress(
+                    context,
+                    "artifact_read",
+                    f"正在读取 {len(sandbox_paths)} 个沙箱产物并打包...",
+                    workspace="e2b" if uses_e2b_task_workspace(context) else "host",
+                )
                 zip_name = _safe_filename(arguments.filename or "artifacts.zip")
                 if not zip_name.lower().endswith(".zip"):
                     zip_name += ".zip"
@@ -110,6 +127,12 @@ class DeliverArtifactTool(BaseTool):
                         bundle.writestr(_safe_archive_name(sandbox_path), _ensure_bytes(content))
                 delivered.append(local_zip)
             else:
+                await _emit_progress(
+                    context,
+                    "artifact_read",
+                    f"正在读取 {len(sandbox_paths)} 个沙箱产物...",
+                    workspace="e2b" if uses_e2b_task_workspace(context) else "host",
+                )
                 for index, sandbox_path in enumerate(sandbox_paths):
                     filename = (
                         _safe_filename(arguments.filename)
@@ -121,8 +144,16 @@ class DeliverArtifactTool(BaseTool):
                     local_path.write_bytes(_ensure_bytes(content))
                     delivered.append(local_path)
         except Exception as exc:
+            await _emit_progress(context, "artifact_ready", "产物交付失败。", status="error", detail=str(exc))
             return ToolResult(output=f"Failed to deliver artifact: {exc}", is_error=True)
 
+        await _emit_progress(
+            context,
+            "artifact_sync",
+            "正在同步产物到可下载目录...",
+            workspace="e2b" if uses_e2b_task_workspace(context) else "host",
+            detail="\n".join(str(path) for path in delivered),
+        )
         hook = context.metadata.get("hook")
         if hook is not None:
             for local_path in delivered:
@@ -134,6 +165,15 @@ class DeliverArtifactTool(BaseTool):
 
         lines = ["Delivered artifact(s):"]
         lines.extend(f"- {path}" for path in delivered)
+        await _emit_progress(
+            context,
+            "artifact_ready",
+            "产物已可下载。",
+            status="success",
+            workspace="e2b" if uses_e2b_task_workspace(context) else "host",
+            detail="\n".join(str(path) for path in delivered),
+            metadata={"artifact_paths": [str(path) for path in delivered]},
+        )
         return ToolResult(
             output="\n".join(lines),
             metadata={
@@ -219,6 +259,34 @@ async def _deliver_host_paths(
     lines = ["Delivered artifact(s):"]
     lines.extend(f"- {path}" for path in delivered)
     return ToolResult(output="\n".join(lines), metadata={"artifact_paths": [str(path) for path in delivered]})
+
+
+async def _emit_progress(
+    context: ToolExecutionContext,
+    phase: str,
+    message: str,
+    *,
+    status: str = "running",
+    workspace: str | None = None,
+    path: str | None = None,
+    detail: str | None = None,
+    metadata: dict | None = None,
+) -> None:
+    if context.progress_callback is None:
+        return
+    payload = {
+        "phase": phase,
+        "status": status,
+        "message": message,
+        "workspace": workspace or ("e2b" if uses_e2b_task_workspace(context) else "host"),
+    }
+    if path:
+        payload["path"] = path
+    if detail:
+        payload["detail"] = detail
+    if metadata:
+        payload["metadata"] = metadata
+    await context.progress_callback(payload)
 
 
 def _resolve_host_path(cwd: Path, path: str) -> Path:

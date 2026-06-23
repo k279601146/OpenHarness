@@ -5,15 +5,18 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from pathlib import Path
+import posixpath
+from pathlib import Path, PurePosixPath
 import subprocess
 import sys
+import tempfile
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.tools.bash_tool import _build_forwarded_sandbox_env
+from openharness.tools.sandbox_workspace import get_e2b_task_session, to_sandbox_path, uses_e2b_task_workspace
 
 
 class ImagegenCliInput(BaseModel):
@@ -91,6 +94,9 @@ class ImagegenCliTool(BaseTool):
         cwd = context.cwd.resolve()
         cwd.mkdir(parents=True, exist_ok=True)
         arguments = _apply_context_defaults(arguments, context)
+        if uses_e2b_task_workspace(context):
+            return await _execute_e2b_imagegen(script, arguments, context, cwd)
+
         argv = _build_argv(script, arguments, cwd)
         env = os.environ.copy()
         env.update(_build_forwarded_sandbox_env(context) or {})
@@ -151,6 +157,129 @@ class ImagegenCliTool(BaseTool):
         )
 
 
+async def _execute_e2b_imagegen(
+    script: Path,
+    arguments: ImagegenCliInput,
+    context: ToolExecutionContext,
+    host_cwd: Path,
+) -> ToolResult:
+    try:
+        session = await get_e2b_task_session(context)
+        sandbox_artifacts = _expected_sandbox_artifacts(arguments, context)
+    except Exception as exc:
+        return ToolResult(output=f"E2B imagegen workspace error: {exc}", is_error=True)
+
+    if context.progress_callback is not None:
+        await context.progress_callback(
+            {
+                "phase": "media_generate",
+                "status": "running",
+                "message": "正在生成图片...",
+                "workspace": "e2b",
+                "path": sandbox_artifacts[0] if sandbox_artifacts else None,
+            }
+        )
+
+    with tempfile.TemporaryDirectory(prefix="openharness-imagegen-") as tmpdir:
+        local_cwd = Path(tmpdir)
+        try:
+            local_arguments = await _prepare_e2b_arguments(arguments, context, session, local_cwd)
+        except Exception as exc:
+            return ToolResult(output=f"Failed to prepare E2B imagegen inputs: {exc}", is_error=True)
+
+        argv = _build_argv(script, local_arguments, local_cwd)
+        env = os.environ.copy()
+        env.update(_build_forwarded_sandbox_env(context) or {})
+
+        try:
+            completed = await asyncio.to_thread(
+                subprocess.run,
+                argv,
+                cwd=str(host_cwd),
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=arguments.timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            output = (exc.stdout or "").strip()
+            return ToolResult(
+                output=f"imagegen CLI timed out after {arguments.timeout_seconds}s.\n{output}".strip(),
+                is_error=True,
+            )
+
+        output = (completed.stdout or "").strip()
+        if completed.returncode != 0:
+            return ToolResult(output=output or f"imagegen CLI failed with code {completed.returncode}", is_error=True)
+
+        parsed_metadata = _parse_cli_metadata(output)
+        local_artifacts = [] if arguments.dry_run else _expected_artifacts(local_arguments, local_cwd, parsed_metadata)
+        delivered_sandbox_artifacts = sandbox_artifacts if local_artifacts else []
+        missing = [path for path in local_artifacts if not path.is_file()]
+        if missing:
+            missing_text = "\n".join(f"- {path}" for path in missing)
+            return ToolResult(
+                output=f"imagegen CLI completed, but expected local output file(s) were missing:\n{missing_text}",
+                is_error=True,
+            )
+        if len(sandbox_artifacts) != len(local_artifacts):
+            sandbox_artifacts = _align_sandbox_artifacts(sandbox_artifacts, local_artifacts, context)
+            delivered_sandbox_artifacts = sandbox_artifacts if local_artifacts else []
+
+        if context.progress_callback is not None and local_artifacts:
+            await context.progress_callback(
+                {
+                    "phase": "artifact_sync",
+                    "status": "running",
+                    "message": "正在同步图片到 E2B 沙箱...",
+                    "workspace": "e2b",
+                    "detail": "\n".join(sandbox_artifacts),
+                }
+            )
+
+        for local_path, sandbox_path in zip(local_artifacts, sandbox_artifacts):
+            await session.exec_command(f"mkdir -p {_shell_quote(posixpath.dirname(sandbox_path) or '/home/user')}")
+            await session.write_file_binary(sandbox_path, local_path.read_bytes())
+
+        hook = context.metadata.get("hook")
+        if hook is not None:
+            for local_path in local_artifacts:
+                await hook.on_artifact(
+                    str(local_path),
+                    reason=f"Generated image via imagegen CLI: {local_path.name}",
+                )
+
+        if context.progress_callback is not None and delivered_sandbox_artifacts:
+            await context.progress_callback(
+                {
+                    "phase": "artifact_ready",
+                    "status": "success",
+                    "message": "图片已生成并写入 E2B 沙箱。",
+                    "workspace": "e2b",
+                    "detail": "\n".join(delivered_sandbox_artifacts),
+                    "metadata": {"artifact_paths": delivered_sandbox_artifacts},
+                }
+            )
+
+        sanitized_output = _sanitize_cli_output(output, "IMAGEGEN_METADATA:", dict(zip(local_artifacts, sandbox_artifacts)))
+        lines = ["imagegen CLI completed successfully."]
+        if delivered_sandbox_artifacts:
+            lines.append("Artifacts:")
+            lines.extend(f"- {path}" for path in delivered_sandbox_artifacts)
+        if sanitized_output:
+            lines.extend(["", "CLI output:", sanitized_output])
+        return ToolResult(
+            output="\n".join(lines),
+            metadata={
+                **parsed_metadata,
+                "artifact_paths": delivered_sandbox_artifacts,
+                "workspace": "e2b",
+            },
+        )
+
+
 def _script_path() -> Path:
     return (
         Path(__file__).resolve().parents[1]
@@ -203,6 +332,48 @@ def _build_argv(script: Path, arguments: ImagegenCliInput, cwd: Path) -> list[st
         _add_value(argv, "--input", _as_cli_path(arguments.input_file, cwd) if arguments.input_file else None)
 
     return argv
+
+
+async def _prepare_e2b_arguments(
+    arguments: ImagegenCliInput,
+    context: ToolExecutionContext,
+    session,
+    local_cwd: Path,
+) -> ImagegenCliInput:
+    updates: dict[str, object] = {}
+    input_dir = local_cwd / "inputs"
+    output_dir = local_cwd / "outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if arguments.images:
+        updates["images"] = [
+            await _copy_sandbox_input(session, context, raw, input_dir, f"image_{index}")
+            for index, raw in enumerate(arguments.images, start=1)
+        ]
+    if arguments.mask:
+        updates["mask"] = await _copy_sandbox_input(session, context, arguments.mask, input_dir, "mask")
+    if arguments.input_file:
+        updates["input_file"] = await _copy_sandbox_input(session, context, arguments.input_file, input_dir, "batch_input")
+
+    if arguments.out_dir:
+        updates["out_dir"] = str(output_dir)
+        updates["out"] = "image.png"
+    else:
+        sandbox_paths = _expected_sandbox_artifacts(arguments, context)
+        suffix = Path(sandbox_paths[0]).suffix if sandbox_paths else ".png"
+        updates["out"] = str(output_dir / f"imagegen_output{suffix or '.png'}")
+
+    return arguments.model_copy(update=updates)
+
+
+async def _copy_sandbox_input(session, context: ToolExecutionContext, raw: str, input_dir: Path, stem: str) -> str:
+    sandbox_path = to_sandbox_path(context, raw)
+    suffix = PurePosixPath(sandbox_path).suffix or ".bin"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    local_path = input_dir / f"{stem}{suffix}"
+    content = await session.read_file_binary(sandbox_path)
+    local_path.write_bytes(_ensure_bytes(content))
+    return str(local_path)
 
 
 def _apply_context_defaults(arguments: ImagegenCliInput, context: ToolExecutionContext) -> ImagegenCliInput:
@@ -274,6 +445,102 @@ def _build_output_paths(out: str, output_format: str, count: int, out_dir: str |
     if count == 1:
         return [out_path]
     return [out_path.with_name(f"{out_path.stem}-{i}{out_path.suffix}") for i in range(1, count + 1)]
+
+
+def _expected_sandbox_artifacts(arguments: ImagegenCliInput, context: ToolExecutionContext) -> list[str]:
+    output_format = (arguments.output_format or "png").lower()
+    if output_format == "jpg":
+        output_format = "jpeg"
+    return _build_sandbox_output_paths(
+        arguments.out,
+        output_format,
+        arguments.num_images or arguments.n,
+        arguments.out_dir,
+        context,
+    )
+
+
+def _build_sandbox_output_paths(
+    out: str,
+    output_format: str,
+    count: int,
+    out_dir: str | None,
+    context: ToolExecutionContext,
+) -> list[str]:
+    ext = "." + output_format
+    if out_dir:
+        out_base = to_sandbox_path(context, out_dir, for_write=True)
+        return [posixpath.join(out_base, f"image_{i}{ext}") for i in range(1, count + 1)]
+
+    out_path = to_sandbox_path(context, out, for_write=True)
+    suffix = PurePosixPath(out_path).suffix
+    if not suffix:
+        out_path = f"{out_path}{ext}"
+    if count == 1:
+        return [out_path]
+    parsed = PurePosixPath(out_path)
+    return [
+        posixpath.join(str(parsed.parent), f"{parsed.stem}-{i}{parsed.suffix}")
+        for i in range(1, count + 1)
+    ]
+
+
+def _align_sandbox_artifacts(
+    sandbox_artifacts: list[str],
+    local_artifacts: list[Path],
+    context: ToolExecutionContext,
+) -> list[str]:
+    if len(sandbox_artifacts) == len(local_artifacts):
+        return sandbox_artifacts
+    if sandbox_artifacts:
+        base_dir = posixpath.dirname(sandbox_artifacts[0])
+    else:
+        base_dir = to_sandbox_path(context, "output/imagegen", for_write=True)
+    return [posixpath.join(base_dir, local_path.name) for local_path in local_artifacts]
+
+
+def _sanitize_cli_output(output: str, metadata_prefix: str, path_map: dict[Path, str]) -> str:
+    if not output:
+        return ""
+    replacements: dict[str, str] = {}
+    for local_path, sandbox_path in path_map.items():
+        replacements[str(local_path)] = sandbox_path
+        replacements[local_path.as_posix()] = sandbox_path
+
+    lines: list[str] = []
+    for line in output.splitlines():
+        if line.startswith(metadata_prefix):
+            try:
+                parsed = json.loads(line[len(metadata_prefix):])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                parsed["artifact_paths"] = list(path_map.values())
+                lines.append(f"{metadata_prefix}{json.dumps(parsed, ensure_ascii=False, sort_keys=True)}")
+            continue
+        sanitized = line
+        for host_path, sandbox_path in replacements.items():
+            sanitized = sanitized.replace(host_path, sandbox_path)
+        lines.append(sanitized)
+    return "\n".join(lines).strip()
+
+
+def _ensure_bytes(content) -> bytes:
+    if isinstance(content, bytes):
+        return content
+    if isinstance(content, bytearray):
+        return bytes(content)
+    if isinstance(content, memoryview):
+        return content.tobytes()
+    if isinstance(content, str):
+        return content.encode("utf-8")
+    return bytes(content)
+
+
+def _shell_quote(value: str) -> str:
+    import shlex
+
+    return shlex.quote(value)
 
 
 def _parse_cli_metadata(output: str) -> dict[str, object]:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from pathlib import Path
 from typing import Iterable
 
@@ -53,7 +54,19 @@ class BashTool(BaseTool):
                 is_error=True,
                 metadata={"interactive_required": True},
             )
+        if context.progress_callback is not None:
+            await context.progress_callback(
+                {
+                    "phase": "bash_start",
+                    "status": "running",
+                    "message": "正在执行命令...",
+                    "workspace": "e2b" if uses_e2b else "host",
+                    "path": str(cwd),
+                    "detail": _summarize_command(arguments.command),
+                }
+            )
         process: asyncio.subprocess.Process | None = None
+        started_at = time.monotonic()
         try:
             process = await create_shell_subprocess(
                 arguments.command,
@@ -82,6 +95,17 @@ class BashTool(BaseTool):
             output_buffer = await _drain_available_output(process.stdout)
             await _terminate_process(process, force=True)
             output_buffer.extend(await _read_remaining_output(process))
+            if context.progress_callback is not None:
+                await context.progress_callback(
+                    {
+                        "phase": "bash_complete",
+                        "status": "error",
+                        "message": f"命令超时，已停止。耗时 {time.monotonic() - started_at:.1f}s",
+                        "workspace": "e2b" if uses_e2b else "host",
+                        "path": str(cwd),
+                        "metadata": {"returncode": process.returncode, "timed_out": True},
+                    }
+                )
             return ToolResult(
                 output=_format_timeout_output(
                     output_buffer,
@@ -97,6 +121,17 @@ class BashTool(BaseTool):
 
         output_buffer = await _read_remaining_output(process)
         text = _format_output(output_buffer)
+        if context.progress_callback is not None:
+            await context.progress_callback(
+                {
+                    "phase": "bash_complete",
+                    "status": "error" if process.returncode != 0 else "success",
+                    "message": f"命令执行完成，退出码 {process.returncode}，耗时 {time.monotonic() - started_at:.1f}s",
+                    "workspace": "e2b" if uses_e2b else "host",
+                    "path": str(cwd),
+                    "metadata": {"returncode": process.returncode},
+                }
+            )
         return ToolResult(
             output=text,
             is_error=process.returncode != 0,
@@ -275,6 +310,13 @@ def _format_output(output_buffer: bytearray) -> str:
     if len(text) > 12000:
         return f"{text[:12000]}\n...[truncated]..."
     return text
+
+
+def _summarize_command(command: str, limit: int = 220) -> str:
+    normalized = " ".join(str(command or "").split())
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit]}..."
 
 
 def _format_timeout_output(output_buffer: bytearray, *, command: str, timeout_seconds: int) -> str:

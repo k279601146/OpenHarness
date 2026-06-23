@@ -28,6 +28,7 @@ from openharness.engine.messages import (
     ToolResultBlock,
 )
 from openharness.engine.stream_events import (
+    AgentProgressEvent,
     AssistantTextDelta,
     AssistantTurnComplete,
     CompactProgressEvent,
@@ -63,6 +64,32 @@ MAX_TRACKED_WORK_LOG = 10
 MAX_TRACKED_USER_GOALS = 5
 MAX_TRACKED_ACTIVE_ARTIFACTS = 8
 MAX_TRACKED_VERIFIED_WORK = 10
+AGENT_PROGRESS_HEARTBEAT_SECONDS = 8.0
+
+
+def _progress_event(
+    phase: str,
+    message: str,
+    *,
+    status: str = "running",
+    tool_name: str | None = None,
+    tool_use_id: str | None = None,
+    workspace: str | None = None,
+    path: str | None = None,
+    detail: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> AgentProgressEvent:
+    return AgentProgressEvent(
+        phase=phase,
+        status=status,  # type: ignore[arg-type]
+        message=message,
+        tool_name=tool_name,
+        tool_use_id=tool_use_id,
+        workspace=workspace,
+        path=path,
+        detail=detail,
+        metadata=metadata,
+    )
 
 
 def _concrete_path(path: Path) -> Path:
@@ -756,33 +783,75 @@ async def run_query(
 
         final_message: ConversationMessage | None = None
         usage = UsageSnapshot()
+        model_stream_reported = False
 
         try:
-            async for event in context.api_client.stream_message(
-                ApiMessageRequest(
-                    model=context.model,
-                    messages=messages,
-                    system_prompt=context.system_prompt,
-                    max_tokens=effective_max_tokens,
-                    tools=_tool_schemas_for_context(context),
-                    effort=context.effort,
-                )
-            ):
-                if isinstance(event, ApiTextDeltaEvent):
-                    yield AssistantTextDelta(text=event.text), None
-                    continue
-                if isinstance(event, ApiRetryEvent):
-                    yield StatusEvent(
-                        message=(
-                            f"Request failed; retrying in {event.delay_seconds:.1f}s "
-                            f"(attempt {event.attempt + 1} of {event.max_attempts}): {event.message}"
-                        )
-                    ), None
-                    continue
+            yield _progress_event(
+                "model_request",
+                "正在请求模型...",
+                workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+            ), None
+            model_queue: asyncio.Queue[Any] = asyncio.Queue()
 
-                if isinstance(event, ApiMessageCompleteEvent):
-                    final_message = event.message
-                    usage = event.usage
+            async def _produce_model_events() -> None:
+                try:
+                    async for stream_event in context.api_client.stream_message(
+                        ApiMessageRequest(
+                            model=context.model,
+                            messages=messages,
+                            system_prompt=context.system_prompt,
+                            max_tokens=effective_max_tokens,
+                            tools=_tool_schemas_for_context(context),
+                            effort=context.effort,
+                        )
+                    ):
+                        await model_queue.put(stream_event)
+                except BaseException as exc:
+                    await model_queue.put(exc)
+                finally:
+                    await model_queue.put(None)
+
+            model_task = asyncio.create_task(_produce_model_events())
+            try:
+                while True:
+                    try:
+                        event = await asyncio.wait_for(model_queue.get(), timeout=AGENT_PROGRESS_HEARTBEAT_SECONDS)
+                    except asyncio.TimeoutError:
+                        yield _progress_event(
+                            "heartbeat",
+                            "仍在等待模型响应...",
+                            status="info",
+                            workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                        ), None
+                        continue
+                    if event is None:
+                        break
+                    if isinstance(event, BaseException):
+                        raise event
+                    if isinstance(event, ApiTextDeltaEvent):
+                        if not model_stream_reported:
+                            model_stream_reported = True
+                            yield _progress_event("model_stream", "模型正在生成回复...", status="info"), None
+                        yield AssistantTextDelta(text=event.text), None
+                        continue
+                    if isinstance(event, ApiRetryEvent):
+                        yield StatusEvent(
+                            message=(
+                                f"Request failed; retrying in {event.delay_seconds:.1f}s "
+                                f"(attempt {event.attempt + 1} of {event.max_attempts}): {event.message}"
+                            )
+                        ), None
+                        continue
+
+                    if isinstance(event, ApiMessageCompleteEvent):
+                        yield _progress_event("model_response", "模型已规划下一步...", status="success"), None
+                        final_message = event.message
+                        usage = event.usage
+                        continue
+            finally:
+                if not model_task.done():
+                    model_task.cancel()
+                    await asyncio.gather(model_task, return_exceptions=True)
         except Exception as exc:
             error_msg = str(exc)
             if _is_completion_token_limit_error(exc):
@@ -873,9 +942,19 @@ async def run_query(
         if len(tool_calls) == 1:
             # Single tool: sequential (stream events immediately)
             tc = tool_calls[0]
-            yield ToolExecutionStarted(tool_name=tc.name, tool_input=tc.input), None
+            result: ToolResultBlock | None = None
+            yield ToolExecutionStarted(tool_name=tc.name, tool_input=tc.input, tool_use_id=tc.id), None
+            yield _progress_event(
+                "tool_start",
+                f"正在执行工具 {tc.name}...",
+                tool_name=tc.name,
+                tool_use_id=tc.id,
+                workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+            ), None
             try:
-                result = await _execute_tool_call(context, tc.name, tc.id, tc.input)
+                async for progress_event, result in _run_tool_with_progress(context, tc.name, tc.id, tc.input):
+                    if progress_event is not None:
+                        yield progress_event, None
             except AskUserQuestionPaused:
                 raise
             except Exception as exc:
@@ -885,30 +964,63 @@ async def run_query(
                     content=f"Tool {tc.name} failed: {type(exc).__name__}: {exc}",
                     is_error=True,
                 )
+            if result is None:
+                result = ToolResultBlock(
+                    tool_use_id=tc.id,
+                    content=f"Tool {tc.name} failed: missing execution result",
+                    is_error=True,
+                )
             yield ToolExecutionCompleted(
                 tool_name=tc.name,
                 output=result.content,
                 is_error=result.is_error,
+                metadata=result.result_metadata,
+                tool_use_id=tc.id,
+            ), None
+            yield _progress_event(
+                "tool_complete",
+                f"工具 {tc.name} 执行{'失败' if result.is_error else '完成'}",
+                status="error" if result.is_error else "success",
+                tool_name=tc.name,
+                tool_use_id=tc.id,
+                workspace=str((result.result_metadata or {}).get("workspace") or (context.tool_metadata or {}).get("workspace_backend") or ""),
                 metadata=result.result_metadata,
             ), None
             tool_results = [result]
         else:
             # Multiple tools: execute concurrently, emit events after
             for tc in tool_calls:
-                yield ToolExecutionStarted(tool_name=tc.name, tool_input=tc.input), None
+                yield ToolExecutionStarted(tool_name=tc.name, tool_input=tc.input, tool_use_id=tc.id), None
+                yield _progress_event(
+                    "tool_start",
+                    f"正在执行工具 {tc.name}...",
+                    tool_name=tc.name,
+                    tool_use_id=tc.id,
+                    workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                ), None
+
+            result_queue: asyncio.Queue[tuple[Any, AgentProgressEvent | None, ToolResultBlock | BaseException | None]] = asyncio.Queue()
 
             async def _run(tc):
-                return await _execute_tool_call(context, tc.name, tc.id, tc.input)
+                try:
+                    async for progress_event, result in _run_tool_with_progress(context, tc.name, tc.id, tc.input):
+                        await result_queue.put((tc, progress_event, result))
+                except BaseException as exc:
+                    await result_queue.put((tc, None, exc))
 
-            # Use return_exceptions=True so a single failing tool does not abandon
-            # its siblings as cancelled coroutines and leave the conversation with
-            # un-replied tool_use blocks (Anthropic's API rejects the next request
-            # on the session if any tool_use is missing a matching tool_result).
-            raw_results = await asyncio.gather(
-                *[_run(tc) for tc in tool_calls], return_exceptions=True
-            )
+            tasks = [asyncio.create_task(_run(tc)) for tc in tool_calls]
+            raw_results_by_id: dict[str, ToolResultBlock | BaseException] = {}
+            while len(raw_results_by_id) < len(tool_calls):
+                tc, progress_event, result = await result_queue.get()
+                if progress_event is not None:
+                    yield progress_event, None
+                if result is not None:
+                    raw_results_by_id[tc.id] = result
+
+            await asyncio.gather(*tasks, return_exceptions=True)
             tool_results = []
-            for tc, result in zip(tool_calls, raw_results):
+            for tc in tool_calls:
+                result = raw_results_by_id.get(tc.id)
                 if isinstance(result, AskUserQuestionPaused):
                     raise result
                 if isinstance(result, BaseException):
@@ -923,6 +1035,12 @@ async def run_query(
                         content=f"Tool {tc.name} failed: {type(result).__name__}: {result}",
                         is_error=True,
                     )
+                if result is None:
+                    result = ToolResultBlock(
+                        tool_use_id=tc.id,
+                        content=f"Tool {tc.name} failed: missing execution result",
+                        is_error=True,
+                    )
                 tool_results.append(result)
 
             for tc, result in zip(tool_calls, tool_results):
@@ -930,6 +1048,16 @@ async def run_query(
                     tool_name=tc.name,
                     output=result.content,
                     is_error=result.is_error,
+                    metadata=result.result_metadata,
+                    tool_use_id=tc.id,
+                ), None
+                yield _progress_event(
+                    "tool_complete",
+                    f"工具 {tc.name} 执行{'失败' if result.is_error else '完成'}",
+                    status="error" if result.is_error else "success",
+                    tool_name=tc.name,
+                    tool_use_id=tc.id,
+                    workspace=str((result.result_metadata or {}).get("workspace") or (context.tool_metadata or {}).get("workspace_backend") or ""),
                     metadata=result.result_metadata,
                 ), None
 
@@ -945,6 +1073,7 @@ async def _execute_tool_call(
     tool_name: str,
     tool_use_id: str,
     tool_input: dict[str, object],
+    progress_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> ToolResultBlock:
     if context.hook_executor is not None:
         pre_hooks = await context.hook_executor.execute(
@@ -1043,6 +1172,7 @@ async def _execute_tool_call(
                 **(context.tool_metadata or {}),
             },
             hook_executor=context.hook_executor,
+            progress_callback=progress_callback,
         ),
     )
     elapsed = time.monotonic() - t0
@@ -1084,6 +1214,69 @@ async def _execute_tool_call(
             },
         )
     return tool_result
+
+
+async def _run_tool_with_progress(
+    context: QueryContext,
+    tool_name: str,
+    tool_use_id: str,
+    tool_input: dict[str, object],
+):
+    progress_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+    async def _progress(payload: dict[str, Any]) -> None:
+        await progress_queue.put(payload)
+
+    task = asyncio.create_task(
+        _execute_tool_call(
+            context,
+            tool_name,
+            tool_use_id,
+            tool_input,
+            progress_callback=_progress,
+        )
+    )
+    while True:
+        try:
+            payload = await asyncio.wait_for(progress_queue.get(), timeout=AGENT_PROGRESS_HEARTBEAT_SECONDS)
+            yield _progress_event(
+                str(payload.get("phase") or "tool_progress"),
+                str(payload.get("message") or f"{tool_name} 正在运行..."),
+                status=str(payload.get("status") or "running"),
+                tool_name=str(payload.get("tool_name") or tool_name),
+                tool_use_id=str(payload.get("tool_use_id") or tool_use_id),
+                workspace=str(payload.get("workspace") or (context.tool_metadata or {}).get("workspace_backend") or ""),
+                path=str(payload.get("path") or "") or None,
+                detail=str(payload.get("detail") or "") or None,
+                metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
+            ), None
+            continue
+        except asyncio.TimeoutError:
+            if task.done():
+                break
+            yield _progress_event(
+                "heartbeat",
+                f"工具 {tool_name} 仍在运行...",
+                status="info",
+                tool_name=tool_name,
+                tool_use_id=tool_use_id,
+                workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+            ), None
+
+    while not progress_queue.empty():
+        payload = progress_queue.get_nowait()
+        yield _progress_event(
+            str(payload.get("phase") or "tool_progress"),
+            str(payload.get("message") or f"{tool_name} 正在运行..."),
+            status=str(payload.get("status") or "running"),
+            tool_name=str(payload.get("tool_name") or tool_name),
+            tool_use_id=str(payload.get("tool_use_id") or tool_use_id),
+            workspace=str(payload.get("workspace") or (context.tool_metadata or {}).get("workspace_backend") or ""),
+            path=str(payload.get("path") or "") or None,
+            detail=str(payload.get("detail") or "") or None,
+            metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
+        ), None
+    yield None, await task
 
 
 def _resolve_permission_file_path(

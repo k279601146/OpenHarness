@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
@@ -21,6 +21,7 @@ class ToolExecutionContext:
     cwd: Path
     metadata: dict[str, Any] = field(default_factory=dict)
     hook_executor: HookExecutor | None = None
+    progress_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None
 
 
 @dataclass(frozen=True)
