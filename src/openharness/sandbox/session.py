@@ -1,10 +1,4 @@
-"""沙箱会话管理器 — 进程级注册表 + DB 持久化。
-
-重构后不再使用 ContextVar 单例，改为 dict 注册表，支持：
-- 同用户同会话容器复用
-- 闲置挂起 → 超时自动销毁
-- 跨 Worker 重启后从 DB 恢复状态
-"""
+"""Process-local E2B sandbox registry plus DB-backed lifecycle state."""
 
 from __future__ import annotations
 
@@ -15,161 +9,120 @@ import os
 import shlex
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from openharness.config import Settings
     from openharness.sandbox.e2b_backend import E2BSandboxSession
 
 logger = logging.getLogger(__name__)
+try:
+    from sqlalchemy.exc import IntegrityError
+except Exception:  # pragma: no cover - OpenHarness can run without SQLAlchemy.
+    class IntegrityError(Exception):
+        pass
 
-# ═══ 进程级沙箱注册表 ═══
-# key = "user_id:thread_id", value = E2BSandboxSession
+USER_SCOPE = "user"
+THREAD_SCOPE = "thread"
+OVERFLOW_SCOPE = "overflow"
+
+LEASE_GRACE_SECONDS = 60
+
 _sandbox_registry: dict[str, E2BSandboxSession] = {}
+_thread_scope_registry: dict[str, str] = {}
 _registry_lock = asyncio.Lock()
 
 
-def _registry_key(user_id: int, thread_id: str) -> str:
+def _registry_key(user_id: int, scope_type: str, scope_key: str) -> str:
+    return f"{user_id}:{scope_type}:{scope_key}"
+
+
+def _locked_space_query(db_session, model):
+    """Build a row-lock query that does not eager-load nullable relationships."""
+    return db_session.query(model).enable_eagerloads(False).with_for_update(of=model)
+
+
+def _thread_key(user_id: int, thread_id: str) -> str:
     return f"{user_id}:{thread_id}"
 
 
+def _task_workspace(thread_id: str) -> str:
+    return f"/home/user/tasks/{thread_id}"
+
+
 def get_active_sandbox(user_id: int, thread_id: str) -> E2BSandboxSession | None:
-    """从进程内存注册表获取活跃的沙箱会话。"""
-    key = _registry_key(user_id, thread_id)
-    session = _sandbox_registry.get(key)
-    if session is not None and session.is_running:
-        return session
+    """Return the active sandbox currently leased by a thread."""
+    thread_key = _thread_key(user_id, thread_id)
+    scope_registry_key = _thread_scope_registry.get(thread_key)
+    if scope_registry_key:
+        session = _sandbox_registry.get(scope_registry_key)
+        if session is not None and session.is_running:
+            return session
+
+    for registry_key, session in _sandbox_registry.items():
+        if not registry_key.startswith(f"{user_id}:") or not session.is_running:
+            continue
+        if registry_key.endswith(f":{thread_id}"):
+            _thread_scope_registry[thread_key] = registry_key
+            return session
     return None
 
 
 def is_docker_sandbox_active_for(user_id: int, thread_id: str) -> bool:
-    """检查指定用户+会话的沙箱是否正在运行。"""
+    """Compatibility helper for callers that still use the Docker-era name."""
     return get_active_sandbox(user_id, thread_id) is not None
 
 
 def is_docker_sandbox_active() -> bool:
-    """兼容旧接口：检查当前进程中是否有任何活跃的沙箱。"""
-    return any(s.is_running for s in _sandbox_registry.values())
+    """Return whether any process-local sandbox is currently running."""
+    return any(session.is_running for session in _sandbox_registry.values())
 
 
 def get_sandbox_session() -> E2BSandboxSession | None:
-    """自动获取当前上下文的活跃沙箱(兼任原有的 get_docker_sandbox)。"""
+    """Return the active sandbox for the current engine context when available."""
     try:
-        # 尝试从 Engine 上下文中自动获取 UID/TID
-        # 这种设计允许工具层无需显式传递上下文也能透明路由到沙箱
-        from openharness.contextvars import active_user_id, active_thread_id
+        from openharness.contextvars import active_thread_id, active_user_id
+
         uid = active_user_id.get()
         tid = active_thread_id.get()
         if uid and tid:
             return get_active_sandbox(uid, tid)
-    except (ImportError, Exception):
+    except Exception:
         pass
     return None
 
 
-# Alias for backward compatibility during refactoring
 get_docker_sandbox = get_sandbox_session
 
 
 def _resolve_sandbox_data_root(settings: Settings) -> Path:
-    """确定沙箱持久化数据根目录。
-
-    优先级：
-    1. settings.sandbox.sandbox_data_root (显式配置)
-    2. /opt/manus/sandbox-data (Linux 生产环境)
-    3. 项目根/sandbox-data (Windows 开发环境)
-    """
+    """Resolve the local root used for sandbox mirror data."""
     if settings.sandbox.sandbox_data_root:
         return Path(settings.sandbox.sandbox_data_root)
 
     if os.name == "nt":
-        # Windows 开发环境：定位到项目根
-        # settings 模块通常在 OpenHarness/src/openharness/config/ 下
-        # 我们需要找到外层项目根
         current = Path(__file__).resolve()
-        # 向上查找包含 apps/ 的目录作为项目根
         for parent in current.parents:
             if (parent / "apps").is_dir():
                 return parent / "sandbox-data"
-        # Fallback
         return Path.cwd() / "sandbox-data"
-    else:
-        return Path("/opt/manus/sandbox-data")
+
+    return Path("/opt/manus/sandbox-data")
 
 
 def _ensure_persistent_dirs(data_root: Path, user_id: int, space_id: str) -> tuple[str, str, str]:
-    """创建三层持久化目录，返回 (workspace_path, home_path, bin_path)。
-    
-    重构：workspace 与 thread 绑定，home 与 bin 与 user 绑定以实现跨任务持久性。
-    """
+    """Create local mirror directories and return workspace, home, and bin paths."""
     user_base = data_root / str(user_id)
-    thread_base = user_base / space_id
-    
-    workspace = thread_base / "workspace"
-    # 变更为用户全局共享资源区，实现跨 thread 可用
+    space_base = user_base / "spaces" / space_id
+
+    workspace = space_base / "workspace"
     home = user_base / "shared_assets" / "user-home"
     local_bin = user_base / "shared_assets" / "local-bin"
 
-    for d in (workspace, home, local_bin):
-        d.mkdir(parents=True, exist_ok=True)
+    for directory in (workspace, home, local_bin):
+        directory.mkdir(parents=True, exist_ok=True)
 
     return str(workspace), str(home), str(local_bin)
-
-
-async def _ensure_bundled_skills_in_sandbox(
-    session: E2BSandboxSession,
-    skill_names: tuple[str, ...] = ("imagegen", "ppt-master"),
-) -> None:
-    """Sync required bundled skill packages into the sandbox user skills dir."""
-    bundled_root = Path(__file__).resolve().parents[1] / "skills" / "bundled" / "content"
-    for skill_name in skill_names:
-        await _ensure_bundled_skill_in_sandbox(session, bundled_root, skill_name)
-
-
-async def _ensure_bundled_skill_in_sandbox(
-    session: E2BSandboxSession,
-    bundled_root: Path,
-    skill_name: str,
-) -> None:
-    source_dir = bundled_root / skill_name
-    if not source_dir.is_dir():
-        logger.warning("Bundled skill package not found: %s", source_dir)
-        return
-
-    target_root = f"/home/user/.agents/skills/{skill_name}"
-    skill_manifest = f"{target_root}/SKILL.md"
-    try:
-        exists = await session.exec_command(f"test -f {shlex.quote(skill_manifest)}")
-        if getattr(exists, "returncode", 1) == 0:
-            logger.debug("Bundled skill already present in sandbox: %s", target_root)
-            return
-
-        await session.exec_command(f"mkdir -p {shlex.quote(target_root)}")
-        for root, dirs, files in os.walk(source_dir):
-            root_path = Path(root)
-            rel_dir = root_path.relative_to(source_dir).as_posix()
-            sandbox_dir = target_root if rel_dir == "." else f"{target_root}/{rel_dir}"
-            await session.exec_command(f"mkdir -p {shlex.quote(sandbox_dir)}")
-
-            for dirname in dirs:
-                await session.exec_command(f"mkdir -p {shlex.quote(f'{sandbox_dir}/{dirname}')}")
-
-            for filename in files:
-                local_path = root_path / filename
-                sandbox_path = f"{sandbox_dir}/{filename}"
-                content = local_path.read_bytes()
-                if hasattr(session, "write_file_binary"):
-                    await session.write_file_binary(sandbox_path, content)
-                else:
-                    await session.write_file(sandbox_path, content.decode("utf-8", errors="replace"))
-        await session.exec_command(
-            f"find {shlex.quote(target_root + '/scripts')} -type f -name '*.py' "
-            "-exec chmod +x {} \\; 2>/dev/null || true"
-        )
-        logger.info("Synced bundled skill to sandbox: %s", target_root)
-    except Exception as exc:
-        logger.warning("Failed to sync bundled skill %s to sandbox: %s", skill_name, exc)
-
 
 
 async def get_or_start_sandbox(
@@ -178,263 +131,385 @@ async def get_or_start_sandbox(
     thread_id: str,
     db_session=None,
 ) -> E2BSandboxSession | None:
-    """获取或启动沙箱。核心复用逻辑：
+    """Acquire a sandbox for a task, preferring the user's reusable main sandbox."""
+    from openharness.sandbox.adapter import SandboxUnavailableError
+    from openharness.sandbox.e2b_backend import E2BSandboxSession, get_e2b_availability
 
-    1. 内存注册表命中 → 直接复用
-    2. DB 中有 suspended 记录 → 尝试重连会话
-    3. 无记录 → 新建沙箱空间 + 启动 E2B 实例
-    """
-    from openharness.sandbox.e2b_backend import (
-        E2BSandboxSession,
-        get_e2b_availability,
-    )
-
-    # 前置检查：E2B 是否可用
     availability = get_e2b_availability(settings)
     if not availability.available:
         if settings.sandbox.fail_if_unavailable:
-            from openharness.sandbox.adapter import SandboxUnavailableError
-            raise SandboxUnavailableError(
-                availability.reason or "E2B sandbox is unavailable"
-            )
+            raise SandboxUnavailableError(availability.reason or "E2B sandbox is unavailable")
         logger.warning("E2B sandbox unavailable: %s", availability.reason)
         return None
 
-    key = _registry_key(user_id, thread_id)
-
     async with _registry_lock:
-        # ── 路径 1: 内存命中 ──
-        existing = _sandbox_registry.get(key)
-        if existing is not None and existing.is_running:
-            logger.info("Sandbox reused from registry: %s", existing.sandbox_id)
+        active = get_active_sandbox(user_id, thread_id)
+        if active is not None:
             _touch_last_active(db_session, thread_id)
-            return existing
+            return active
 
-        # ── 路径 2: DB 查找已有空间 ──
-        space = None
-        if db_session is not None:
-            try:
-                from models import SandboxSpace
-                space = db_session.query(SandboxSpace).filter_by(
-                    thread_id=thread_id, user_id=user_id
-                ).first()
-            except Exception as e:
-                logger.warning("Failed to query SandboxSpace: %s", e)
+        space = _acquire_space_record(settings, user_id, thread_id, db_session)
+        session = await _connect_or_create_session(settings, space, E2BSandboxSession)
 
-        data_root = _resolve_sandbox_data_root(settings)
-        from openharness.skills.loader import get_community_skills_dir
-        community_skills = str(get_community_skills_dir())
+        registry_key = _registry_key(user_id, space.scope_type, space.scope_key)
+        _sandbox_registry[registry_key] = session
+        _thread_scope_registry[_thread_key(user_id, thread_id)] = registry_key
 
-        if space is not None:
-            # 有历史记录
-            # 将 container_name 重构为考虑复用 e2b session 逻辑
-            
-            if space.status == "suspended":
-                # 尝试恢复挂起的容器
-                session = E2BSandboxSession(
-                    settings=settings,
-                    template_id=settings.sandbox.template_id,
-                    sandbox_id=space.container_name, # E2B 把 container_name 用作 sandbox_id 存储
-                )
-                try:
-                    await session.resume()
-                    _sandbox_registry[key] = session
-                    space.status = "running"
-                    space.last_active_at = datetime.datetime.utcnow()
-                    if db_session:
-                        db_session.commit()
-                    logger.info("Sandbox resumed: %s", space.container_name)
-                    return session
-                except Exception as e:
-                    logger.warning(
-                        "sandbox_resume_failed_recreated: thread=%s sandbox=%s error=%s",
-                        thread_id,
-                        space.container_name,
-                        e,
-                    )
-                    # 恢复失败，新建
-                    session = E2BSandboxSession(
-                        settings=settings,
-                        template_id=settings.sandbox.template_id
-                    )
-                    await session.start()
-                    space.container_name = session.sandbox_id
-                    space.status = "running"
-                    space.last_active_at = datetime.datetime.utcnow()
-                    _sandbox_registry[key] = session
-                    if db_session:
-                        db_session.commit()
-                    return session
+        await _ensure_remote_task_dirs(session, thread_id)
+        await _sync_local_workspace_to_task_dir(session, thread_id)
 
-            elif space.status == "running":
-                session = E2BSandboxSession(
-                    settings=settings,
-                    template_id=settings.sandbox.template_id,
-                    sandbox_id=space.container_name,
-                )
-                try:
-                    await session.resume() # E2B 支持用 reconnect
-                    _sandbox_registry[key] = session
-                    _touch_last_active(db_session, thread_id)
-                    logger.info("Sandbox reconnected: %s", space.container_name)
-                    return session
-                except Exception as e:
-                    logger.warning(
-                        "sandbox_resume_failed_recreated: thread=%s sandbox=%s error=%s",
-                        thread_id,
-                        space.container_name,
-                        e,
-                    )
-                    # 重建
-                    session = E2BSandboxSession(
-                        settings=settings,
-                        template_id=settings.sandbox.template_id
-                    )
-                    await session.start()
-                    space.container_name = session.sandbox_id
-                    space.status = "running"
-                    space.last_active_at = datetime.datetime.utcnow()
-                    _sandbox_registry[key] = session
-                    if db_session:
-                        db_session.commit()
-                    return session
+        space.container_name = session.sandbox_id
+        space.status = "running"
+        space.active_thread_id = thread_id
+        space.last_active_at = datetime.datetime.utcnow()
+        space.lease_expires_at = _lease_expires_at(settings)
+        space.template_id = settings.sandbox.template_id
+        _commit(db_session)
 
-            space_id = space.id
-        else:
-            # 全新空间
-            space_id = uuid.uuid4().hex[:16]
-            session = E2BSandboxSession(
-                settings=settings,
-                template_id=settings.sandbox.template_id
-            )
-            await session.start()
-            
-            # [Optimization] Late Startup Sync: 将本地工作区的文件同步到新启动的沙箱中
-            try:
-                # 尝试定位本地工作区
-                current = Path(__file__).resolve()
-                project_root = None
-                for parent in current.parents:
-                    if (parent / "apps").is_dir():
-                        project_root = parent
-                        break
-                
-                if project_root:
-                    local_ws = project_root / "temp_workspaces" / thread_id
-                    if local_ws.exists() and local_ws.is_dir():
-                        logger.info("Syncing local workspace %s to new sandbox...", local_ws)
-                        # 遍历本地工作区并上传文件
-                        for root, _, files in os.walk(local_ws):
-                            for file in files:
-                                local_file_path = Path(root) / file
-                                # 计算相对于本地工作区的相对路径
-                                rel_path = local_file_path.relative_to(local_ws)
-                                sandbox_path = f"/home/user/{rel_path.as_posix()}"
-                                
-                                try:
-                                    content = local_file_path.read_bytes()
-                                    if hasattr(session, "write_file_binary"):
-                                        await session.write_file_binary(sandbox_path, content)
-                                    elif hasattr(session, "upload"):
-                                        await session.upload(sandbox_path, content)
-                                except Exception as fe:
-                                    logger.warning("Failed to sync file %s: %s", file, fe)
-            except Exception as se:
-                logger.warning("Late Startup Sync failed: %s", se)
-
-            # 解析持久化映射路径 (即使是 E2B 也维持本地镜像目录，用于加速读取和 API 导出)
-            data_root = _resolve_sandbox_data_root(settings)
-            ws_path, hm_path, bin_path = _ensure_persistent_dirs(data_root, user_id, space_id)
-
-            # 创建或更新 DB 记录
-            if db_session is not None:
-                try:
-                    from models import SandboxSpace
-                    space = SandboxSpace(
-                        id=space_id,
-                        user_id=user_id,
-                        thread_id=thread_id,
-                        container_name=session.sandbox_id,
-                        status="running",
-                        host_workspace_path=ws_path,
-                        host_home_path=hm_path,
-                        host_bin_path=bin_path,
-                    )
-                    db_session.add(space)
-                    db_session.commit()
-                except Exception as e:
-                    logger.warning("Failed to persist SandboxSpace: %s", e)
-                    db_session.rollback()
-                    
-            _sandbox_registry[key] = session
-            logger.info("Sandbox created: %s (space=%s)", session.sandbox_id, space_id)
-            return session
-            
+        logger.info(
+            "Sandbox acquired: sandbox=%s scope=%s key=%s thread=%s",
+            session.sandbox_id,
+            space.scope_type,
+            space.scope_key,
+            thread_id,
+        )
         return session
 
 
-async def suspend_sandbox(user_id: int, thread_id: str, db_session=None) -> None:
-    """挂起沙箱容器（不销毁），更新 DB 状态为 suspended。"""
-    key = _registry_key(user_id, thread_id)
+def _acquire_space_record(settings: Settings, user_id: int, thread_id: str, db_session):
+    """Find or create the DB row representing the sandbox lease target."""
+    if db_session is None:
+        return _ephemeral_space(user_id, thread_id, settings.sandbox.template_id)
 
-    session = _sandbox_registry.pop(key, None)
-    if session is None:
+    from models import SandboxSpace
+
+    now = datetime.datetime.utcnow()
+    main_scope_key = str(user_id)
+    main = (
+        _locked_space_query(db_session, SandboxSpace)
+        .filter_by(user_id=user_id, scope_type=USER_SCOPE, scope_key=main_scope_key)
+        .first()
+    )
+
+    if main is None:
+        space_id = uuid.uuid4().hex[:16]
+        ws_path, hm_path, bin_path = _ensure_persistent_dirs(
+            _resolve_sandbox_data_root(settings),
+            user_id,
+            space_id,
+        )
+        main = SandboxSpace(
+            id=space_id,
+            user_id=user_id,
+            thread_id=None,
+            scope_type=USER_SCOPE,
+            scope_key=main_scope_key,
+            status="created",
+            template_id=settings.sandbox.template_id,
+            host_workspace_path=ws_path,
+            host_home_path=hm_path,
+            host_bin_path=bin_path,
+        )
+        db_session.add(main)
+        try:
+            _commit(db_session)
+        except IntegrityError:
+            db_session.rollback()
+            main = (
+                _locked_space_query(db_session, SandboxSpace)
+                .filter_by(user_id=user_id, scope_type=USER_SCOPE, scope_key=main_scope_key)
+                .first()
+            )
+            if main is None:
+                raise
+
+    if _space_can_be_leased(main, thread_id, now):
+        main.active_thread_id = thread_id
+        main.lease_expires_at = _lease_expires_at(settings)
+        main.last_active_at = now
+        main.template_id = settings.sandbox.template_id
+        _commit(db_session)
+        return main
+
+    return _create_overflow_space(settings, user_id, thread_id, db_session)
+
+
+def _space_can_be_leased(space: Any, thread_id: str, now: datetime.datetime) -> bool:
+    if space.status == "destroyed":
+        return False
+    if space.active_thread_id in (None, "", thread_id):
+        return True
+    if space.lease_expires_at and space.lease_expires_at < now:
+        logger.warning(
+            "sandbox_lease_expired_reclaimed: scope=%s key=%s active_thread=%s",
+            space.scope_type,
+            space.scope_key,
+            space.active_thread_id,
+        )
+        return True
+    return False
+
+
+def _create_overflow_space(settings: Settings, user_id: int, thread_id: str, db_session):
+    from models import SandboxSpace
+
+    existing = (
+        _locked_space_query(db_session, SandboxSpace)
+        .filter_by(user_id=user_id, scope_type=OVERFLOW_SCOPE, scope_key=thread_id)
+        .first()
+    )
+    if existing is not None and existing.status != "destroyed":
+        existing.active_thread_id = thread_id
+        existing.lease_expires_at = _lease_expires_at(settings)
+        existing.last_active_at = datetime.datetime.utcnow()
+        existing.template_id = settings.sandbox.template_id
+        _commit(db_session)
+        return existing
+
+    space_id = uuid.uuid4().hex[:16]
+    ws_path, hm_path, bin_path = _ensure_persistent_dirs(
+        _resolve_sandbox_data_root(settings),
+        user_id,
+        space_id,
+    )
+    space = SandboxSpace(
+        id=space_id,
+        user_id=user_id,
+        thread_id=thread_id,
+        scope_type=OVERFLOW_SCOPE,
+        scope_key=thread_id,
+        status="created",
+        active_thread_id=thread_id,
+        lease_expires_at=_lease_expires_at(settings),
+        template_id=settings.sandbox.template_id,
+        host_workspace_path=ws_path,
+        host_home_path=hm_path,
+        host_bin_path=bin_path,
+    )
+    db_session.add(space)
+    try:
+        _commit(db_session)
+    except IntegrityError:
+        db_session.rollback()
+        existing = (
+            _locked_space_query(db_session, SandboxSpace)
+            .filter_by(user_id=user_id, scope_type=OVERFLOW_SCOPE, scope_key=thread_id)
+            .first()
+        )
+        if existing is None:
+            raise
+        existing.active_thread_id = thread_id
+        existing.lease_expires_at = _lease_expires_at(settings)
+        existing.last_active_at = datetime.datetime.utcnow()
+        existing.template_id = settings.sandbox.template_id
+        _commit(db_session)
+        return existing
+    return space
+
+
+def _ephemeral_space(user_id: int, thread_id: str, template_id: str):
+    return type(
+        "EphemeralSandboxSpace",
+        (),
+        {
+            "id": uuid.uuid4().hex[:16],
+            "user_id": user_id,
+            "thread_id": thread_id,
+            "scope_type": OVERFLOW_SCOPE,
+            "scope_key": thread_id,
+            "container_name": None,
+            "status": "created",
+            "active_thread_id": thread_id,
+            "lease_expires_at": None,
+            "template_id": template_id,
+            "last_active_at": datetime.datetime.utcnow(),
+        },
+    )()
+
+
+async def _connect_or_create_session(settings: Settings, space: Any, session_cls):
+    """Resume an existing E2B sandbox, or create a replacement when resume fails."""
+    if space.container_name and space.status in ("running", "suspended"):
+        session = session_cls(
+            settings=settings,
+            template_id=settings.sandbox.template_id,
+            sandbox_id=space.container_name,
+        )
+        try:
+            await session.resume()
+            return session
+        except Exception as exc:
+            logger.warning(
+                "sandbox_resume_failed_recreated: scope=%s key=%s sandbox=%s error=%s",
+                space.scope_type,
+                space.scope_key,
+                space.container_name,
+                exc,
+            )
+
+    session = session_cls(settings=settings, template_id=settings.sandbox.template_id)
+    await session.start()
+    return session
+
+
+async def _ensure_remote_task_dirs(session: E2BSandboxSession, thread_id: str) -> None:
+    workspace = _task_workspace(thread_id)
+    await session.exec_command(
+        "mkdir -p "
+        f"{shlex.quote(workspace)} "
+        f"{shlex.quote('/home/user/artifacts')} "
+        f"{shlex.quote('/home/user/.agents/skills')}"
+    )
+
+
+async def _sync_local_workspace_to_task_dir(session: E2BSandboxSession, thread_id: str) -> None:
+    """Upload any existing local task mirror into the sandbox task directory."""
+    try:
+        project_root = _project_root()
+        if project_root is None:
+            return
+        local_ws = project_root / "temp_workspaces" / thread_id
+        if not local_ws.is_dir():
+            return
+
+        target_root = _task_workspace(thread_id)
+        logger.info("Syncing local workspace %s to sandbox task dir %s", local_ws, target_root)
+        for root, _dirs, files in os.walk(local_ws):
+            root_path = Path(root)
+            rel_dir = root_path.relative_to(local_ws).as_posix()
+            sandbox_dir = target_root if rel_dir == "." else f"{target_root}/{rel_dir}"
+            await session.exec_command(f"mkdir -p {shlex.quote(sandbox_dir)}")
+            for filename in files:
+                local_file_path = root_path / filename
+                rel_path = local_file_path.relative_to(local_ws).as_posix()
+                sandbox_path = f"{target_root}/{rel_path}"
+                try:
+                    await session.write_file_binary(sandbox_path, local_file_path.read_bytes())
+                except Exception as exc:
+                    logger.warning("Failed to sync file %s: %s", local_file_path, exc)
+    except Exception as exc:
+        logger.warning("Late startup sync failed: %s", exc)
+
+
+def _project_root() -> Path | None:
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / "apps").is_dir():
+            return parent
+    return None
+
+
+def _lease_expires_at(settings: Settings) -> datetime.datetime:
+    ttl = int(getattr(settings.sandbox, "idle_timeout_seconds", 300) or 300)
+    return datetime.datetime.utcnow() + datetime.timedelta(seconds=ttl + LEASE_GRACE_SECONDS)
+
+
+async def suspend_sandbox(user_id: int, thread_id: str, db_session=None) -> None:
+    """Release the sandbox lease held by a task."""
+    thread_key = _thread_key(user_id, thread_id)
+    registry_key = _thread_scope_registry.pop(thread_key, None)
+    session = _sandbox_registry.pop(registry_key, None) if registry_key else None
+    space = _find_space_for_thread(db_session, user_id, thread_id)
+
+    if space is not None and space.scope_type == OVERFLOW_SCOPE:
+        if session is not None:
+            await session.destroy()
+        elif space.container_name:
+            from openharness.config import Settings
+            from openharness.sandbox.e2b_backend import E2BSandboxSession
+
+            overflow_session = E2BSandboxSession(
+                settings=Settings(),
+                template_id=space.template_id or "",
+                sandbox_id=space.container_name,
+            )
+            await overflow_session.destroy()
+        space.status = "destroyed"
+        space.destroyed_at = datetime.datetime.utcnow()
+        space.active_thread_id = None
+        space.lease_expires_at = None
+        _commit(db_session)
         return
 
-    await session.suspend()
+    if session is not None:
+        await session.suspend()
 
-    if db_session is not None:
-        try:
-            from models import SandboxSpace
-            space = db_session.query(SandboxSpace).filter_by(
-                thread_id=thread_id, user_id=user_id
-            ).first()
-            if space:
-                space.status = "suspended"
-                space.last_active_at = datetime.datetime.utcnow()
-                db_session.commit()
-        except Exception as e:
-            logger.warning("Failed to update SandboxSpace status: %s", e)
-            db_session.rollback()
+    if space is not None:
+        space.status = "suspended"
+        space.active_thread_id = None
+        space.lease_expires_at = None
+        space.last_active_at = datetime.datetime.utcnow()
+        _commit(db_session)
 
 
 async def destroy_sandbox(user_id: int, thread_id: str, db_session=None) -> None:
-    """彻底销毁沙箱容器，更新 DB 状态为 destroyed。持久化目录保留。"""
-    key = _registry_key(user_id, thread_id)
-
-    session = _sandbox_registry.pop(key, None)
+    """Destroy the sandbox currently associated with a task."""
+    thread_key = _thread_key(user_id, thread_id)
+    registry_key = _thread_scope_registry.pop(thread_key, None)
+    session = _sandbox_registry.pop(registry_key, None) if registry_key else None
     if session is not None:
         await session.destroy()
 
-    if db_session is not None:
-        try:
-            from models import SandboxSpace
-            space = db_session.query(SandboxSpace).filter_by(
-                thread_id=thread_id, user_id=user_id
-            ).first()
-            if space:
-                space.status = "destroyed"
-                space.destroyed_at = datetime.datetime.utcnow()
-                db_session.commit()
-        except Exception as e:
-            logger.warning("Failed to update SandboxSpace status: %s", e)
-            db_session.rollback()
+    space = _find_space_for_thread(db_session, user_id, thread_id)
+    if space is not None:
+        space.status = "destroyed"
+        space.active_thread_id = None
+        space.lease_expires_at = None
+        space.destroyed_at = datetime.datetime.utcnow()
+        _commit(db_session)
 
 
 async def stop_docker_sandbox() -> None:
-    """Legacy no-op function."""
+    """Legacy no-op retained for UI shutdown compatibility."""
     pass
 
 
+def _find_space_for_thread(db_session, user_id: int, thread_id: str):
+    if db_session is None:
+        return None
+    try:
+        from models import SandboxSpace
+
+        return (
+            db_session.query(SandboxSpace)
+            .filter(
+                SandboxSpace.user_id == user_id,
+                SandboxSpace.active_thread_id == thread_id,
+                SandboxSpace.status.in_(["running", "suspended", "created"]),
+            )
+            .order_by(SandboxSpace.scope_type.desc())
+            .first()
+        )
+    except Exception as exc:
+        logger.warning("Failed to find SandboxSpace for thread release: %s", exc)
+        return None
+
+
 def _touch_last_active(db_session, thread_id: str) -> None:
-    """Update last_active_at timestamp for the sandbox space."""
+    """Update last_active_at for the sandbox associated with a thread."""
     if db_session is None:
         return
     try:
-        from models import SandboxSpace
-        space = db_session.query(SandboxSpace).filter_by(thread_id=thread_id).first()
+        space = _find_space_for_thread(db_session, 0, thread_id)
+        if space is None:
+            from models import SandboxSpace
+
+            space = (
+                db_session.query(SandboxSpace)
+                .filter(
+                    (SandboxSpace.active_thread_id == thread_id)
+                    | (SandboxSpace.thread_id == thread_id)
+                    | ((SandboxSpace.scope_type == OVERFLOW_SCOPE) & (SandboxSpace.scope_key == thread_id))
+                )
+                .first()
+            )
         if space:
             space.last_active_at = datetime.datetime.utcnow()
-            db_session.commit()
+            _commit(db_session)
     except Exception:
         pass
+
+
+def _commit(db_session) -> None:
+    if db_session is not None:
+        db_session.commit()

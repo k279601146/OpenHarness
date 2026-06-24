@@ -143,11 +143,7 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _credential(name: str) -> str:
-    primary = os.getenv(name, "").strip()
-    if primary:
-        return primary
-    fallback_name = "VIDEO_GEN_API_KEY" if name.endswith("_API_KEY") else "VIDEO_GEN_BASE_URL"
-    return os.getenv(fallback_name, "").strip()
+    return os.getenv(name, "").strip()
 
 
 def _build_payload(spec: VideoModelSpec, args: Any, prompt: str) -> dict[str, Any]:

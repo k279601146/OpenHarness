@@ -83,13 +83,7 @@ def run_non_gpt_image(args: Any, outputs: list[Path], prompt: str) -> dict[str, 
 
 
 def _credential(name: str) -> str:
-    primary = os.getenv(name, "").strip()
-    if primary:
-        return primary
-    if name not in {"GPT_IMAGEGEN_API_KEY", "GPT_IMAGEGEN_BASE_URL"}:
-        fallback_name = "IMAGE_GEN_API_KEY" if name.endswith("_API_KEY") else "IMAGE_GEN_BASE_URL"
-        return os.getenv(fallback_name, "").strip()
-    return ""
+    return os.getenv(name, "").strip()
 
 
 def _build_payload(spec: ImageModelSpec, args: Any, prompt: str) -> dict[str, Any]:

@@ -59,7 +59,7 @@ class BashTool(BaseTool):
                 {
                     "phase": "bash_start",
                     "status": "running",
-                    "message": "正在执行命令...",
+                    "message": "Running command...",
                     "workspace": "e2b" if uses_e2b else "host",
                     "path": str(cwd),
                     "detail": _summarize_command(arguments.command),
@@ -100,7 +100,7 @@ class BashTool(BaseTool):
                     {
                         "phase": "bash_complete",
                         "status": "error",
-                        "message": f"命令超时，已停止。耗时 {time.monotonic() - started_at:.1f}s",
+                        "message": f"Command timed out and was stopped after {time.monotonic() - started_at:.1f}s",
                         "workspace": "e2b" if uses_e2b else "host",
                         "path": str(cwd),
                         "metadata": {"returncode": process.returncode, "timed_out": True},
@@ -126,7 +126,7 @@ class BashTool(BaseTool):
                 {
                     "phase": "bash_complete",
                     "status": "error" if process.returncode != 0 else "success",
-                    "message": f"命令执行完成，退出码 {process.returncode}，耗时 {time.monotonic() - started_at:.1f}s",
+                    "message": f"Command completed with exit code {process.returncode} in {time.monotonic() - started_at:.1f}s",
                     "workspace": "e2b" if uses_e2b else "host",
                     "path": str(cwd),
                     "metadata": {"returncode": process.returncode},
@@ -153,16 +153,12 @@ def _build_forwarded_sandbox_env(context: ToolExecutionContext) -> dict[str, str
         "DOUBAO_IMAGE_BASE_URL",
         "KOLORS_IMAGE_API_KEY",
         "KOLORS_IMAGE_BASE_URL",
-        "IMAGE_GEN_API_KEY",
-        "IMAGE_GEN_BASE_URL",
         "SEEDANCE_VIDEO_API_KEY",
         "SEEDANCE_VIDEO_BASE_URL",
         "VEO_VIDEO_API_KEY",
         "VEO_VIDEO_BASE_URL",
         "KLING_VIDEO_API_KEY",
         "KLING_VIDEO_BASE_URL",
-        "VIDEO_GEN_API_KEY",
-        "VIDEO_GEN_BASE_URL",
         "BILLING_CREDITS_PER_USD",
         "HTTPS_PROXY",
         "HTTP_PROXY",
@@ -174,15 +170,6 @@ def _build_forwarded_sandbox_env(context: ToolExecutionContext) -> dict[str, str
         value = os.getenv(key) or project_env.get(key)
         if value:
             forwarded[key] = value
-
-    if "GPT_IMAGEGEN_API_KEY" not in forwarded:
-        value = os.getenv("IMAGE_GEN_API_KEY") or project_env.get("IMAGE_GEN_API_KEY")
-        if value:
-            forwarded["GPT_IMAGEGEN_API_KEY"] = value
-    if "GPT_IMAGEGEN_BASE_URL" not in forwarded:
-        value = os.getenv("IMAGE_GEN_BASE_URL") or project_env.get("IMAGE_GEN_BASE_URL")
-        if value:
-            forwarded["GPT_IMAGEGEN_BASE_URL"] = value
 
     return forwarded or None
 

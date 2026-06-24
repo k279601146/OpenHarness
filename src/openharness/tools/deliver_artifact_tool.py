@@ -11,7 +11,12 @@ from pydantic import BaseModel, Field, model_validator
 
 from openharness.sandbox.session import get_active_sandbox, get_sandbox_session
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
-from openharness.tools.sandbox_workspace import get_e2b_task_session, to_sandbox_path, uses_e2b_task_workspace
+from openharness.tools.sandbox_workspace import (
+    get_e2b_task_session,
+    sandbox_read_roots,
+    to_sandbox_path,
+    uses_e2b_task_workspace,
+)
 
 
 class DeliverArtifactInput(BaseModel):
@@ -98,9 +103,9 @@ class DeliverArtifactTool(BaseTool):
             return ToolResult(output="No sandbox paths were provided.", is_error=True)
 
         for path in sandbox_paths:
-            if not _is_allowed_sandbox_path(path):
+            if not _is_allowed_sandbox_path(context, path):
                 return ToolResult(
-                    output=f"Refusing to deliver path outside the sandbox user area: {path}",
+                    output=f"Refusing to deliver path outside the current task sandbox area: {path}",
                     is_error=True,
                 )
 
@@ -368,8 +373,10 @@ def _normalize_sandbox_path(path: str) -> str:
     return path.strip().replace("\\", "/")
 
 
-def _is_allowed_sandbox_path(path: str) -> bool:
-    return path == "/home/user" or path.startswith("/home/user/")
+def _is_allowed_sandbox_path(context: ToolExecutionContext, path: str) -> bool:
+    normalized = path.rstrip("/")
+    roots = sandbox_read_roots(context) if uses_e2b_task_workspace(context) else ("/home/user",)
+    return any(normalized == root or normalized.startswith(root.rstrip("/") + "/") for root in roots)
 
 
 async def _expand_requested_paths(session, requested_paths: list[str]) -> list[str]:

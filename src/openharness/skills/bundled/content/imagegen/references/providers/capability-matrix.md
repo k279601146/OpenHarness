@@ -15,5 +15,3 @@ Credentials are provider-specific environment variables:
 - Nano Banana / Gemini: `NANO_BANANA_API_KEY`, optional `NANO_BANANA_BASE_URL`
 - Doubao Seedream: `DOUBAO_IMAGE_API_KEY`, optional `DOUBAO_IMAGE_BASE_URL`
 - Kolors: `KOLORS_IMAGE_API_KEY`, optional `KOLORS_IMAGE_BASE_URL`
-
-`IMAGE_GEN_API_KEY` and `IMAGE_GEN_BASE_URL` are accepted as compatibility fallbacks for non-GPT providers.

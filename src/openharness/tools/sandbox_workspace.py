@@ -22,6 +22,7 @@ from openharness.tools.base import ToolExecutionContext
 from openharness.utils.paths import normalize_host_path
 
 SANDBOX_WORKSPACE = "/home/user"
+SANDBOX_TASKS_ROOT = "/home/user/tasks"
 SANDBOX_SKILLS_ROOT = "/home/user/.agents/skills"
 SANDBOX_ARTIFACTS_ROOT = "/home/user/artifacts"
 SANDBOX_READ_ROOTS = (SANDBOX_WORKSPACE, "/code", "/tmp")
@@ -167,6 +168,10 @@ def sandbox_primary_workspace(context: ToolExecutionContext) -> str:
     return posixpath.normpath(value) or SANDBOX_WORKSPACE
 
 
+def sandbox_task_workspace(thread_id: str) -> str:
+    return posixpath.join(SANDBOX_TASKS_ROOT, str(thread_id).strip("/"))
+
+
 def sandbox_skills_root(context: ToolExecutionContext) -> str:
     value = str((context.metadata or {}).get("sandbox_skills_root") or SANDBOX_SKILLS_ROOT).strip()
     if not value.startswith("/"):
@@ -183,7 +188,8 @@ def sandbox_artifacts_root(context: ToolExecutionContext) -> str:
 
 def sandbox_read_roots(context: ToolExecutionContext) -> tuple[str, ...]:
     workspace = sandbox_primary_workspace(context)
-    return (workspace, "/code", "/tmp")
+    artifacts = sandbox_artifacts_root(context)
+    return (workspace, artifacts, "/code", "/tmp")
 
 
 def sandbox_write_roots(context: ToolExecutionContext) -> tuple[str, ...]:

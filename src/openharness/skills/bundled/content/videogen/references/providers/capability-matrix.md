@@ -15,6 +15,3 @@ Credentials are provider-specific environment variables:
 - Seedance: `SEEDANCE_VIDEO_API_KEY`, optional `SEEDANCE_VIDEO_BASE_URL`
 - Veo/video3: `VEO_VIDEO_API_KEY`, optional `VEO_VIDEO_BASE_URL`
 - Kling/keling: `KLING_VIDEO_API_KEY`, optional `KLING_VIDEO_BASE_URL`
-
-`VIDEO_GEN_API_KEY` and `VIDEO_GEN_BASE_URL` are accepted as compatibility fallbacks.
-
