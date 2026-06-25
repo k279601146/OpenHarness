@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, model_validator
 
-from openharness.sandbox.session import get_active_sandbox, get_sandbox_session
+from openharness.sandbox.session import get_active_sandbox, get_sandbox_session, touch_task_manifest
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.tools.sandbox_workspace import (
     get_e2b_task_session,
@@ -184,6 +184,15 @@ class DeliverArtifactTool(BaseTool):
         if reused:
             lines.append("Reused existing artifact(s):")
             lines.extend(f"- {path}" for path in (_artifact_display_path(artifact) for artifact in reused) if path)
+        if uses_e2b_task_workspace(context):
+            try:
+                await touch_task_manifest(
+                    session,
+                    thread_id,
+                    delivered_artifact_paths=sandbox_paths,
+                )
+            except Exception:
+                pass
         await _emit_progress(
             context,
             "artifact_ready",
