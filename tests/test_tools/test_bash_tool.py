@@ -5,7 +5,7 @@ import pytest
 
 from openharness.config.settings import SandboxSettings, Settings
 from openharness.tools.base import ToolExecutionContext
-from openharness.tools.bash_tool import BashTool, BashToolInput
+from openharness.tools.bash_tool import BashTool, BashToolInput, _build_forwarded_sandbox_env
 import openharness.tools.bash_tool as bash_tool_module
 
 
@@ -254,6 +254,22 @@ async def test_bash_tool_maps_host_subdir_to_e2b_home(monkeypatch, tmp_path: Pat
 
     assert result.is_error is False
     assert seen_kwargs["cwd"] == "/home/user/slides"
+
+
+def test_forwarded_sandbox_env_excludes_provider_config(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("GPT_IMAGEGEN_API_KEY", "secret-image-key")
+    monkeypatch.setenv("SEEDANCE_VIDEO_API_KEY", "secret-video-key")
+    monkeypatch.setenv("GPT_IMAGEGEN_BASE_URL", "https://images.example.test/v1")
+    monkeypatch.setenv("SEEDANCE_VIDEO_BASE_URL", "https://videos.example.test/v1")
+    monkeypatch.setenv("BILLING_CREDITS_PER_USD", "25")
+
+    env = _build_forwarded_sandbox_env(ToolExecutionContext(cwd=tmp_path)) or {}
+
+    assert "GPT_IMAGEGEN_API_KEY" not in env
+    assert "SEEDANCE_VIDEO_API_KEY" not in env
+    assert "GPT_IMAGEGEN_BASE_URL" not in env
+    assert "SEEDANCE_VIDEO_BASE_URL" not in env
+    assert env["BILLING_CREDITS_PER_USD"] == "25"
 
 
 @pytest.mark.asyncio

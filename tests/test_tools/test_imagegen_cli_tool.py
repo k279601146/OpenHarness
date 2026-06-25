@@ -117,13 +117,15 @@ async def test_imagegen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sandbox = FakeE2BSession()
+    seen_env: dict[str, str] = {}
 
     async def fake_get_session(context):
         del context
         return sandbox
 
     def fake_run(argv, cwd, env, text, stdout, stderr, timeout, check):
-        del cwd, env, text, stdout, stderr, timeout, check
+        del cwd, text, stdout, stderr, timeout, check
+        seen_env.update(env)
         out_index = argv.index("--out") + 1
         local_path = Path(argv[out_index])
         local_path.parent.mkdir(parents=True, exist_ok=True)
@@ -142,6 +144,7 @@ async def test_imagegen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
 
     monkeypatch.setattr("openharness.tools.imagegen_cli_tool.get_e2b_task_session", fake_get_session)
     monkeypatch.setattr("openharness.tools.imagegen_cli_tool.subprocess.run", fake_run)
+    monkeypatch.setenv("GPT_IMAGEGEN_API_KEY", "test-image-key")
 
     result = await ImagegenCliTool().execute(
         ImagegenCliInput(
@@ -167,3 +170,4 @@ async def test_imagegen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
     assert sandbox.files["/home/user/projects/deck/images/cover_bg.png"] == b"png-bytes"
     assert "D:\\home\\user" not in result.output
     assert "/home/user/projects/deck/images/cover_bg.png" in result.output
+    assert seen_env["GPT_IMAGEGEN_API_KEY"] == "test-image-key"

@@ -15,7 +15,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
-from openharness.tools.bash_tool import _build_forwarded_sandbox_env
+from openharness.tools.bash_tool import _build_provider_tool_env
 from openharness.tools.sandbox_workspace import get_e2b_task_session, to_sandbox_path, uses_e2b_task_workspace
 
 
@@ -74,7 +74,7 @@ class VideogenCliTool(BaseTool):
 
         argv = _build_argv(script, arguments, cwd)
         env = os.environ.copy()
-        env.update(_build_forwarded_sandbox_env(context) or {})
+        env.update(_build_provider_tool_env(context) or {})
 
         try:
             completed = await asyncio.to_thread(
@@ -164,7 +164,7 @@ async def _execute_e2b_videogen(
 
         argv = _build_argv(script, local_arguments, local_cwd)
         env = os.environ.copy()
-        env.update(_build_forwarded_sandbox_env(context) or {})
+        env.update(_build_provider_tool_env(context) or {})
 
         try:
             completed = await asyncio.to_thread(

@@ -176,13 +176,15 @@ async def test_videogen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sandbox = FakeE2BSession()
+    seen_env: dict[str, str] = {}
 
     async def fake_get_session(context):
         del context
         return sandbox
 
     def fake_run(argv, cwd, env, text, stdout, stderr, timeout, check):
-        del cwd, env, text, stdout, stderr, timeout, check
+        del cwd, text, stdout, stderr, timeout, check
+        seen_env.update(env)
         out_index = argv.index("--out") + 1
         local_path = Path(argv[out_index])
         local_path.parent.mkdir(parents=True, exist_ok=True)
@@ -201,6 +203,7 @@ async def test_videogen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
 
     monkeypatch.setattr("openharness.tools.videogen_cli_tool.get_e2b_task_session", fake_get_session)
     monkeypatch.setattr("openharness.tools.videogen_cli_tool.subprocess.run", fake_run)
+    monkeypatch.setenv("SEEDANCE_VIDEO_API_KEY", "test-video-key")
 
     result = await VideogenCliTool().execute(
         VideogenCliInput(
@@ -226,3 +229,4 @@ async def test_videogen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
     assert sandbox.files["/home/user/projects/deck/videos/intro.mp4"] == b"mp4-bytes"
     assert "D:\\home\\user" not in result.output
     assert "/home/user/projects/deck/videos/intro.mp4" in result.output
+    assert seen_env["SEEDANCE_VIDEO_API_KEY"] == "test-video-key"

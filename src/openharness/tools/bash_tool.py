@@ -7,6 +7,7 @@ import os
 import time
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 
@@ -139,39 +140,92 @@ class BashTool(BaseTool):
         )
 
 
+SANDBOX_ENV_KEYS = (
+    "BILLING_CREDITS_PER_USD",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "NO_PROXY",
+    "https_proxy",
+    "http_proxy",
+    "no_proxy",
+)
+
+PROVIDER_TOOL_ENV_KEYS = (
+    "GPT_IMAGEGEN_API_KEY",
+    "GPT_IMAGEGEN_BASE_URL",
+    "NANO_BANANA_API_KEY",
+    "NANO_BANANA_BASE_URL",
+    "DOUBAO_IMAGE_API_KEY",
+    "DOUBAO_IMAGE_BASE_URL",
+    "KOLORS_IMAGE_API_KEY",
+    "KOLORS_IMAGE_BASE_URL",
+    "SEEDANCE_VIDEO_API_KEY",
+    "SEEDANCE_VIDEO_BASE_URL",
+    "VEO_VIDEO_API_KEY",
+    "VEO_VIDEO_BASE_URL",
+    "KLING_VIDEO_API_KEY",
+    "KLING_VIDEO_BASE_URL",
+    "BILLING_CREDITS_PER_USD",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "NO_PROXY",
+    "https_proxy",
+    "http_proxy",
+    "no_proxy",
+)
+
+SENSITIVE_ENV_NAME_PARTS = ("API_KEY", "TOKEN", "SECRET", "PASSWORD", "PRIVATE_KEY")
+PROXY_ENV_KEYS = {"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"}
+
+
 def _build_forwarded_sandbox_env(context: ToolExecutionContext) -> dict[str, str] | None:
-    """Forward only approved host/project env vars needed by sandbox commands."""
+    """Forward non-secret host/project env vars needed by sandbox commands."""
+    return _collect_forwarded_env(
+        context,
+        SANDBOX_ENV_KEYS,
+        include_sensitive=False,
+    )
+
+
+def _build_provider_tool_env(context: ToolExecutionContext) -> dict[str, str] | None:
+    """Forward provider credentials only to trusted host-side media tools."""
+    return _collect_forwarded_env(
+        context,
+        PROVIDER_TOOL_ENV_KEYS,
+        include_sensitive=True,
+    )
+
+
+def _collect_forwarded_env(
+    context: ToolExecutionContext,
+    keys: tuple[str, ...],
+    *,
+    include_sensitive: bool,
+) -> dict[str, str] | None:
     project_env = _load_nearest_dotenv(context.cwd)
     forwarded: dict[str, str] = {}
 
-    for key in (
-        "GPT_IMAGEGEN_API_KEY",
-        "GPT_IMAGEGEN_BASE_URL",
-        "NANO_BANANA_API_KEY",
-        "NANO_BANANA_BASE_URL",
-        "DOUBAO_IMAGE_API_KEY",
-        "DOUBAO_IMAGE_BASE_URL",
-        "KOLORS_IMAGE_API_KEY",
-        "KOLORS_IMAGE_BASE_URL",
-        "SEEDANCE_VIDEO_API_KEY",
-        "SEEDANCE_VIDEO_BASE_URL",
-        "VEO_VIDEO_API_KEY",
-        "VEO_VIDEO_BASE_URL",
-        "KLING_VIDEO_API_KEY",
-        "KLING_VIDEO_BASE_URL",
-        "BILLING_CREDITS_PER_USD",
-        "HTTPS_PROXY",
-        "HTTP_PROXY",
-        "NO_PROXY",
-        "https_proxy",
-        "http_proxy",
-        "no_proxy",
-    ):
+    for key in keys:
+        if not include_sensitive and _is_sensitive_env_name(key):
+            continue
         value = os.getenv(key) or project_env.get(key)
-        if value:
-            forwarded[key] = value
+        if not value:
+            continue
+        if not include_sensitive and key in PROXY_ENV_KEYS and _proxy_value_has_credentials(value):
+            continue
+        forwarded[key] = value
 
     return forwarded or None
+
+
+def _is_sensitive_env_name(key: str) -> bool:
+    normalized = key.upper()
+    return any(part in normalized for part in SENSITIVE_ENV_NAME_PARTS)
+
+
+def _proxy_value_has_credentials(value: str) -> bool:
+    parsed = urlparse(value)
+    return bool(parsed.username or parsed.password)
 
 
 def _load_nearest_dotenv(cwd: Path) -> dict[str, str]:
