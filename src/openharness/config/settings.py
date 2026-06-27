@@ -943,6 +943,7 @@ def _apply_env_overrides(settings: Settings) -> Settings:
     sandbox_enabled = os.environ.get("OPENHARNESS_SANDBOX_ENABLED")
     sandbox_fail = os.environ.get("OPENHARNESS_SANDBOX_FAIL_IF_UNAVAILABLE")
     sandbox_backend = os.environ.get("OPENHARNESS_SANDBOX_BACKEND")
+    sandbox_data_root = os.environ.get("OPENHARNESS_SANDBOX_DATA_ROOT")
     sandbox_template = os.environ.get("E2B_TEMPLATE_ID")
     
     sandbox_updates: dict[str, Any] = {}
@@ -952,6 +953,8 @@ def _apply_env_overrides(settings: Settings) -> Settings:
         sandbox_updates["fail_if_unavailable"] = _parse_bool_env(sandbox_fail)
     if sandbox_backend is not None:
         sandbox_updates["backend"] = sandbox_backend
+    if sandbox_data_root is not None:
+        sandbox_updates["sandbox_data_root"] = sandbox_data_root
     if sandbox_template is not None:
         sandbox_updates["template_id"] = sandbox_template
         

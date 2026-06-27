@@ -455,6 +455,7 @@ def test_normalize_anthropic_model_name_matches_hermes_behavior():
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env-override")
         monkeypatch.setenv("OPENHARNESS_SANDBOX_ENABLED", "true")
         monkeypatch.setenv("OPENHARNESS_SANDBOX_FAIL_IF_UNAVAILABLE", "1")
+        monkeypatch.setenv("OPENHARNESS_SANDBOX_DATA_ROOT", "/app/sandbox-data")
 
         s = load_settings(path)
 
@@ -465,6 +466,7 @@ def test_normalize_anthropic_model_name_matches_hermes_behavior():
         assert s.api_key == "sk-env-override"
         assert s.sandbox.enabled is True
         assert s.sandbox.fail_if_unavailable is True
+        assert s.sandbox.sandbox_data_root == "/app/sandbox-data"
 
     def test_load_with_sandbox_settings(self, tmp_path: Path):
         path = tmp_path / "settings.json"
