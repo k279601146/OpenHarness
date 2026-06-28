@@ -48,13 +48,13 @@ class DeliverArtifactInput(BaseModel):
 
 
 class DeliverArtifactTool(BaseTool):
-    """Copy sandbox-generated files to the host workspace and notify the UI."""
+    """Copy sandbox-generated files to the host workspace for download/persistence."""
 
     name = "deliver_artifact"
     description = (
-        "Deliver files generated inside the sandbox to the user. Use this immediately after "
-        "a sandbox command creates a needed file under /home/user. Supports one file, multiple "
-        "files, or a zip bundle."
+        "Publish files generated inside the sandbox when they are not already available as "
+        "agent_artifact outputs. Use this for files created by shell/code steps that still need "
+        "a downloadable, persistent artifact. Supports one file, multiple files, or a zip bundle."
     )
     input_model = DeliverArtifactInput
     requires_sandbox = False
@@ -174,10 +174,6 @@ class DeliverArtifactTool(BaseTool):
                     reason=f"Delivered sandbox artifact: {local_path.name}",
                     sandbox_session=session,
                 )
-            reemit = getattr(hook, "reemit_artifact", None)
-            if reemit is not None:
-                for artifact in reused:
-                    await reemit(artifact, reason="Delivered existing sandbox artifact")
 
         lines = ["Delivered artifact(s):"]
         lines.extend(f"- {path}" for path in delivered)

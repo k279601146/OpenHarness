@@ -47,6 +47,9 @@ class FakeHook:
             return self.existing_artifact
         return None
 
+    async def reemit_artifact(self, artifact: dict[str, str], reason: str | None = None) -> None:
+        self.artifacts.append((artifact.get("url") or artifact.get("file_path") or artifact.get("path") or "", reason or ""))
+
 
 @pytest.mark.asyncio
 async def test_deliver_single_artifact_to_workspace(tmp_path: Path, monkeypatch):
