@@ -1,7 +1,7 @@
 param(
     [string]$SaasPath = $env:DEV2_SAAS_SRC_DIR,
-    [string]$Registry = $env:TCR_REGISTRY,
-    [string]$Namespace = $env:TCR_NAMESPACE,
+    [string]$ApiImage = "ccr.ccs.tencentyun.com/openharness/openharness",
+    [string]$WebImage = "ccr.ccs.tencentyun.com/dev2saas_harness/dev2saas",
     [string]$Tag = "",
     [switch]$NoLatest,
     [switch]$SkipLogin
@@ -39,12 +39,8 @@ $ArgsList = @(
     "-OpenHarnessPath", (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 )
 
-if (-not [string]::IsNullOrWhiteSpace($Registry)) {
-    $ArgsList += @("-Registry", $Registry)
-}
-if (-not [string]::IsNullOrWhiteSpace($Namespace)) {
-    $ArgsList += @("-Namespace", $Namespace)
-}
+$ArgsList += @("-ApiImage", $ApiImage)
+$ArgsList += @("-WebImage", $WebImage)
 if (-not [string]::IsNullOrWhiteSpace($Tag)) {
     $ArgsList += @("-Tag", $Tag)
 }
