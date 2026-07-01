@@ -18,7 +18,7 @@ Unified OpenHarness video generation skill.
 - If the user names a model, pass that exact model id to `videogen_cli.model`. If the UI selected a video model and the user did not override it, omit `model` and let the runtime use the selected preference.
 - Do not claim success unless `videogen_cli` reports success and returns artifact path(s). If the script, credentials, API, or output file is missing, report the exact failure.
 - After `videogen_cli` succeeds, do not add sandbox links or a separate download section. The OpenHarness UI already receives and renders the video through the artifact event.
-- If `videogen_cli` returns `delivery_required=false`, `do_not_deliver_artifact=true`, or `sandbox_path_role=workspace_mirror`, do not call `deliver_artifact` for that output path. The E2B path is only a workspace mirror. Continue with other tools only when the user request requires additional editing, transformation, packaging, analysis, or project/code changes.
+- If `videogen_cli` returns `delivery_required=false`, `do_not_deliver_artifact=true`, or `sandbox_path_role=workspace_mirror`, do not call `deliver_artifact` for that output path as a standalone file. The E2B path is a workspace mirror for editing and may be included as a member when the user requested a zip/bundled final package. Continue with other tools only when the user request requires additional editing, transformation, packaging, analysis, or project/code changes.
 
 ## Command Selection
 

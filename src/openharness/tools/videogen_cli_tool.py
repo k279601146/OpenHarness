@@ -129,7 +129,7 @@ class VideogenCliTool(BaseTool):
 
         lines = [
             "videogen CLI completed successfully and published artifact(s) to the UI.",
-            "Delivery status: published; delivery_required=false. Do not call deliver_artifact for these video artifact(s).",
+            "Delivery status: published; delivery_required=false. Do not call deliver_artifact for these video artifact(s) as standalone files; include them as members when the user requested a zip bundle.",
         ]
         if artifacts:
             lines.append("Published artifact paths:")
@@ -278,7 +278,7 @@ async def _execute_e2b_videogen(
         lines = [
             "videogen CLI completed successfully and published artifact(s) to the UI.",
             "Delivery status: published; delivery_required=false.",
-            "The E2B paths below are workspace mirrors for later editing only. Do not call deliver_artifact for them.",
+            "The E2B paths below are workspace mirrors for later editing. Do not call deliver_artifact for them as standalone files; include them as members when the user requested a zip bundle.",
         ]
         if delivered_sandbox_artifacts:
             lines.append("E2B workspace mirror paths:")

@@ -54,8 +54,9 @@ class DeliverArtifactTool(BaseTool):
     description = (
         "Publish files generated inside the sandbox when they are not already available as "
         "agent_artifact outputs. Use this for files created by shell/code steps that still need "
-        "a downloadable, persistent artifact. Do not use it for media generation tool outputs; "
-        "their E2B paths are workspace mirrors. Supports one file, multiple files, or a zip bundle."
+        "a downloadable, persistent artifact. Media generation outputs are already published "
+        "individually, but their E2B mirror paths may be included as members when the user asks "
+        "for a zip bundle. Supports one file, multiple files, or a zip bundle."
     )
     input_model = DeliverArtifactInput
     requires_sandbox = False
@@ -105,7 +106,8 @@ class DeliverArtifactTool(BaseTool):
                 return ToolResult(
                     output=(
                         "Artifact delivery skipped because the requested sandbox path is already "
-                        "published. Do not call deliver_artifact again for this file.\n"
+                        "published. Do not call deliver_artifact again for this single file; "
+                        "include it only as a member when creating a requested zip bundle.\n"
                         + "\n".join(f"- {path}" for path in reused_paths)
                     ).strip(),
                     metadata={
