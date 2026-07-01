@@ -97,6 +97,9 @@ class DeliverArtifactTool(BaseTool):
                         "artifact_paths": [],
                         "reused_artifact_paths": reused_paths,
                         "delivery_skipped": True,
+                        "delivery_required": False,
+                        "terminal_noop": True,
+                        "skip_reason": "already_published_or_mirror",
                     },
                 )
                 return ToolResult(
@@ -109,6 +112,9 @@ class DeliverArtifactTool(BaseTool):
                         "artifact_paths": [],
                         "reused_artifact_paths": reused_paths,
                         "delivery_skipped": True,
+                        "delivery_required": False,
+                        "terminal_noop": True,
+                        "skip_reason": "already_published_or_mirror",
                         **({"workspace": "e2b"} if uses_e2b_task_workspace(context) else {}),
                     },
                 )

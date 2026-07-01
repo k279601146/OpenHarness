@@ -117,6 +117,9 @@ async def test_deliver_skips_already_published_workspace_mirror(tmp_path: Path, 
 
     assert result.is_error is False
     assert result.metadata["delivery_skipped"] is True
+    assert result.metadata["delivery_required"] is False
+    assert result.metadata["terminal_noop"] is True
+    assert result.metadata["skip_reason"] == "already_published_or_mirror"
     assert result.metadata["artifact_paths"] == []
     assert result.metadata["reused_artifact_paths"] == ["/artifacts/imagegen/20990101/t1/result.png"]
     assert not (tmp_path / "result.png").exists()

@@ -144,11 +144,20 @@ class ImagegenCliTool(BaseTool):
                     source_tool="imagegen_cli",
                     tool_use_id=_context_tool_use_id(context),
                     origin="host_generated",
+                    metadata={
+                        "publish_state": "published",
+                        "published_artifact": True,
+                        "delivery_required": False,
+                        "do_not_deliver_artifact": True,
+                    },
                 )
 
-        lines = ["imagegen CLI completed successfully and published artifact(s)."]
+        lines = [
+            "imagegen CLI completed successfully and published artifact(s) to the UI.",
+            "Delivery status: published; delivery_required=false. Do not call deliver_artifact for these image artifact(s).",
+        ]
         if artifacts:
-            lines.append("Artifacts:")
+            lines.append("Published artifact paths:")
             lines.extend(f"- {path}" for path in artifacts)
         if output:
             lines.extend(["", "CLI output:", output])
@@ -157,6 +166,10 @@ class ImagegenCliTool(BaseTool):
             metadata={
                 **parsed_metadata,
                 "artifact_paths": [str(path) for path in artifacts],
+                "publish_state": "published",
+                "published_artifact": True,
+                "delivery_required": False,
+                "do_not_deliver_artifact": True,
             },
         )
 
@@ -259,6 +272,12 @@ async def _execute_e2b_imagegen(
                     origin="host_generated",
                     sandbox_path=sandbox_path,
                     sandbox_path_role="workspace_mirror",
+                    metadata={
+                        "publish_state": "published",
+                        "published_artifact": True,
+                        "delivery_required": False,
+                        "do_not_deliver_artifact": True,
+                    },
                 )
 
         if context.progress_callback is not None and delivered_sandbox_artifacts:
@@ -272,12 +291,20 @@ async def _execute_e2b_imagegen(
                     "metadata": {
                         "artifact_paths": delivered_sandbox_artifacts,
                         "sandbox_path_role": "workspace_mirror",
+                        "publish_state": "published",
+                        "published_artifact": True,
+                        "delivery_required": False,
+                        "do_not_deliver_artifact": True,
                     },
                 }
             )
 
         sanitized_output = _sanitize_cli_output(output, "IMAGEGEN_METADATA:", dict(zip(local_artifacts, sandbox_artifacts)))
-        lines = ["imagegen CLI completed successfully and published artifact(s)."]
+        lines = [
+            "imagegen CLI completed successfully and published artifact(s) to the UI.",
+            "Delivery status: published; delivery_required=false.",
+            "The E2B paths below are workspace mirrors for later editing only. Do not call deliver_artifact for them.",
+        ]
         if delivered_sandbox_artifacts:
             lines.append("E2B workspace mirror paths:")
             lines.extend(f"- {path}" for path in delivered_sandbox_artifacts)
@@ -289,6 +316,11 @@ async def _execute_e2b_imagegen(
                 **parsed_metadata,
                 "artifact_paths": delivered_sandbox_artifacts,
                 "workspace": "e2b",
+                "sandbox_path_role": "workspace_mirror",
+                "publish_state": "published",
+                "published_artifact": True,
+                "delivery_required": False,
+                "do_not_deliver_artifact": True,
             },
         )
 

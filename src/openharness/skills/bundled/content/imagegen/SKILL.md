@@ -22,6 +22,7 @@ These rules are authoritative in the OpenHarness SaaS agent runtime.
 - Do not use `bash` to run `scripts/image_gen.py` in OpenHarness SaaS; `bash` runs in E2B and may not have the host Python dependencies.
 - Do not claim success unless `imagegen_cli` reports success and returns artifact path(s). If the script, dependencies, API key, or output file is missing, tell the user the exact failure instead.
 - After `imagegen_cli` succeeds, do not add sandbox links, download links, or a separate "generated files" delivery section in the final response. The OpenHarness UI already receives and renders the image through the artifact event.
+- If `imagegen_cli` returns `delivery_required=false`, `do_not_deliver_artifact=true`, or `sandbox_path_role=workspace_mirror`, do not call `deliver_artifact` for that output path. The E2B path is only a workspace mirror. Continue with other tools only when the user request requires additional editing, transformation, packaging, analysis, or project/code changes.
 
 ## Top-level modes and rules
 

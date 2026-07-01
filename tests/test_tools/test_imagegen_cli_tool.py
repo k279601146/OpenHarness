@@ -178,9 +178,14 @@ async def test_imagegen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
 
     assert not result.is_error
     assert result.metadata["artifact_paths"] == ["/home/user/projects/deck/images/cover_bg.png"]
+    assert result.metadata["sandbox_path_role"] == "workspace_mirror"
+    assert result.metadata["publish_state"] == "published"
+    assert result.metadata["delivery_required"] is False
+    assert result.metadata["do_not_deliver_artifact"] is True
     assert sandbox.files["/home/user/projects/deck/images/cover_bg.png"] == b"png-bytes"
     assert "D:\\home\\user" not in result.output
     assert "/home/user/projects/deck/images/cover_bg.png" in result.output
+    assert "Do not call deliver_artifact" in result.output
     assert seen_env["GPT_IMAGEGEN_API_KEY"] == "test-image-key"
     assert hook.calls == [
         {
@@ -191,5 +196,11 @@ async def test_imagegen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
             "origin": "host_generated",
             "sandbox_path": "/home/user/projects/deck/images/cover_bg.png",
             "sandbox_path_role": "workspace_mirror",
+            "metadata": {
+                "publish_state": "published",
+                "published_artifact": True,
+                "delivery_required": False,
+                "do_not_deliver_artifact": True,
+            },
         }
     ]
