@@ -54,7 +54,8 @@ class DeliverArtifactTool(BaseTool):
     description = (
         "Publish files generated inside the sandbox when they are not already available as "
         "agent_artifact outputs. Use this for files created by shell/code steps that still need "
-        "a downloadable, persistent artifact. Supports one file, multiple files, or a zip bundle."
+        "a downloadable, persistent artifact. Do not use it for media generation tool outputs; "
+        "their E2B paths are workspace mirrors. Supports one file, multiple files, or a zip bundle."
     )
     input_model = DeliverArtifactInput
     requires_sandbox = False
@@ -76,6 +77,41 @@ class DeliverArtifactTool(BaseTool):
             return ToolResult(output=f"Invalid artifact path: {exc}", is_error=True)
         if not requested_paths:
             return ToolResult(output="No sandbox paths were provided.", is_error=True)
+
+        reused: list[dict] = []
+        if not arguments.package_as_zip:
+            requested_paths = _filter_already_published_paths(context, requested_paths, reused)
+            if not requested_paths:
+                reused_paths = [
+                    _artifact_display_path(artifact)
+                    for artifact in reused
+                    if _artifact_display_path(artifact)
+                ]
+                await _emit_progress(
+                    context,
+                    "artifact_ready",
+                    "产物已交付过，已复用现有下载链接。",
+                    status="success",
+                    detail="\n".join(reused_paths),
+                    metadata={
+                        "artifact_paths": [],
+                        "reused_artifact_paths": reused_paths,
+                        "delivery_skipped": True,
+                    },
+                )
+                return ToolResult(
+                    output=(
+                        "Artifact delivery skipped because the requested sandbox path is already "
+                        "published. Do not call deliver_artifact again for this file.\n"
+                        + "\n".join(f"- {path}" for path in reused_paths)
+                    ).strip(),
+                    metadata={
+                        "artifact_paths": [],
+                        "reused_artifact_paths": reused_paths,
+                        "delivery_skipped": True,
+                        **({"workspace": "e2b"} if uses_e2b_task_workspace(context) else {}),
+                    },
+                )
 
         if uses_e2b_task_workspace(context):
             try:
@@ -105,7 +141,7 @@ class DeliverArtifactTool(BaseTool):
         for path in sandbox_paths:
             if not _is_allowed_sandbox_path(context, path):
                 return ToolResult(
-                    output=f"Refusing to deliver path outside the current task sandbox area: {path}",
+                    output=f"Refusing to deliver path outside the sandbox user area/current task sandbox area: {path}",
                     is_error=True,
                 )
 
@@ -114,7 +150,7 @@ class DeliverArtifactTool(BaseTool):
         output_dir.mkdir(parents=True, exist_ok=True)
 
         delivered: list[Path] = []
-        reused: list[dict] = []
+        delivered_sources: list[str | None] = []
         try:
             if arguments.package_as_zip or _contains_directory_request(requested_paths, sandbox_paths):
                 await _emit_progress(
@@ -132,6 +168,7 @@ class DeliverArtifactTool(BaseTool):
                         content = await session.read_file_binary(sandbox_path)
                         bundle.writestr(_safe_archive_name(sandbox_path), _ensure_bytes(content))
                 delivered.append(local_zip)
+                delivered_sources.append(None)
             else:
                 await _emit_progress(
                     context,
@@ -155,6 +192,7 @@ class DeliverArtifactTool(BaseTool):
                     local_path = _unique_path(output_dir / filename)
                     local_path.write_bytes(content_bytes)
                     delivered.append(local_path)
+                    delivered_sources.append(sandbox_path)
         except Exception as exc:
             await _emit_progress(context, "artifact_ready", "产物交付失败。", status="error", detail=str(exc))
             return ToolResult(output=f"Failed to deliver artifact: {exc}", is_error=True)
@@ -168,11 +206,18 @@ class DeliverArtifactTool(BaseTool):
         )
         hook = context.metadata.get("hook")
         if hook is not None:
-            for local_path in delivered:
-                await hook.on_artifact(
+            for local_path, source_sandbox_path in zip(delivered, delivered_sources):
+                await _call_hook_on_artifact(
+                    hook,
                     str(local_path),
                     reason=f"Delivered sandbox artifact: {local_path.name}",
                     sandbox_session=session,
+                    source_tool="deliver_artifact",
+                    tool_use_id=_context_tool_use_id(context),
+                    origin="sandbox_generated",
+                    sandbox_path=source_sandbox_path,
+                    sandbox_path_role="canonical" if source_sandbox_path else None,
+                    metadata={"source_sandbox_paths": sandbox_paths} if source_sandbox_path is None else None,
                 )
 
         lines = ["Delivered artifact(s):"]
@@ -240,6 +285,34 @@ def _artifact_display_path(artifact: dict) -> str | None:
     return str(value) if value else None
 
 
+def _filter_already_published_paths(
+    context: ToolExecutionContext,
+    requested_paths: list[str],
+    reused: list[dict],
+) -> list[str]:
+    hook = context.metadata.get("hook")
+    finder = getattr(hook, "find_artifact_by_sandbox_path", None)
+    if finder is None:
+        return requested_paths
+
+    remaining: list[str] = []
+    for path in requested_paths:
+        try:
+            existing = finder(path)
+        except Exception:
+            existing = None
+        if not isinstance(existing, dict):
+            remaining.append(path)
+            continue
+        role = str(existing.get("sandbox_path_role") or "")
+        state = str(existing.get("publish_state") or "")
+        if state == "published" or role in {"workspace_mirror", "input_mirror"}:
+            reused.append(existing)
+        else:
+            remaining.append(path)
+    return remaining
+
+
 async def _deliver_host_paths(
     arguments: DeliverArtifactInput,
     context: ToolExecutionContext,
@@ -298,7 +371,14 @@ async def _deliver_host_paths(
     hook = context.metadata.get("hook")
     if hook is not None:
         for local_path in delivered:
-            await hook.on_artifact(str(local_path), reason=f"Delivered host artifact: {local_path.name}")
+            await _call_hook_on_artifact(
+                hook,
+                str(local_path),
+                reason=f"Delivered host artifact: {local_path.name}",
+                source_tool="deliver_artifact",
+                tool_use_id=_context_tool_use_id(context),
+                origin="host_generated",
+            )
 
     lines = ["Delivered artifact(s):"]
     lines.extend(f"- {path}" for path in delivered)
@@ -451,3 +531,20 @@ def _unique_path(path: Path) -> Path:
         if not candidate.exists():
             return candidate
     raise RuntimeError(f"Could not allocate unique path for {path}")
+
+
+def _context_tool_use_id(context: ToolExecutionContext) -> str | None:
+    value = context.metadata.get("tool_use_id")
+    return str(value) if value else None
+
+
+async def _call_hook_on_artifact(hook, file_path: str, **kwargs) -> None:
+    try:
+        await hook.on_artifact(file_path, **kwargs)
+    except TypeError:
+        legacy_kwargs = {
+            key: value
+            for key, value in kwargs.items()
+            if key in {"reason", "sandbox_session", "url"}
+        }
+        await hook.on_artifact(file_path, **legacy_kwargs)

@@ -1169,6 +1169,8 @@ async def _execute_tool_call(
             metadata={
                 "tool_registry": context.tool_registry,
                 "ask_user_prompt": context.ask_user_prompt,
+                "tool_name": tool_name,
+                "tool_use_id": tool_use_id,
                 **(context.tool_metadata or {}),
             },
             hook_executor=context.hook_executor,

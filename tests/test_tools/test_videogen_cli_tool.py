@@ -36,6 +36,14 @@ class FakeE2BSession:
         return self.files[path]
 
 
+class FakeArtifactHook:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def on_artifact(self, file_path: str, **kwargs) -> None:
+        self.calls.append({"file_path": file_path, **kwargs})
+
+
 @pytest.mark.asyncio
 async def test_videogen_cli_dry_run_routes_keling_alias(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KLING_VIDEO_API_KEY", "test-key")
@@ -176,6 +184,7 @@ async def test_videogen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sandbox = FakeE2BSession()
+    hook = FakeArtifactHook()
     seen_env: dict[str, str] = {}
 
     async def fake_get_session(context):
@@ -220,6 +229,8 @@ async def test_videogen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
                 "settings": object(),
                 "user_id": 1,
                 "thread_id": "thread-1",
+                "tool_use_id": "call-video",
+                "hook": hook,
             },
         ),
     )
@@ -230,3 +241,14 @@ async def test_videogen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
     assert "D:\\home\\user" not in result.output
     assert "/home/user/projects/deck/videos/intro.mp4" in result.output
     assert seen_env["SEEDANCE_VIDEO_API_KEY"] == "test-video-key"
+    assert hook.calls == [
+        {
+            "file_path": hook.calls[0]["file_path"],
+            "reason": "Generated video via videogen CLI: videogen_output.mp4",
+            "source_tool": "videogen_cli",
+            "tool_use_id": "call-video",
+            "origin": "host_generated",
+            "sandbox_path": "/home/user/projects/deck/videos/intro.mp4",
+            "sandbox_path_role": "workspace_mirror",
+        }
+    ]

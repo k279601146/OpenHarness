@@ -35,6 +35,14 @@ class FakeE2BSession:
         return self.files[path]
 
 
+class FakeArtifactHook:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def on_artifact(self, file_path: str, **kwargs) -> None:
+        self.calls.append({"file_path": file_path, **kwargs})
+
+
 @pytest.mark.asyncio
 async def test_imagegen_cli_dry_run_routes_nano_banana(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NANO_BANANA_API_KEY", "test-key")
@@ -117,6 +125,7 @@ async def test_imagegen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sandbox = FakeE2BSession()
+    hook = FakeArtifactHook()
     seen_env: dict[str, str] = {}
 
     async def fake_get_session(context):
@@ -161,6 +170,8 @@ async def test_imagegen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
                 "settings": object(),
                 "user_id": 1,
                 "thread_id": "thread-1",
+                "tool_use_id": "call-image",
+                "hook": hook,
             },
         ),
     )
@@ -171,3 +182,14 @@ async def test_imagegen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
     assert "D:\\home\\user" not in result.output
     assert "/home/user/projects/deck/images/cover_bg.png" in result.output
     assert seen_env["GPT_IMAGEGEN_API_KEY"] == "test-image-key"
+    assert hook.calls == [
+        {
+            "file_path": hook.calls[0]["file_path"],
+            "reason": "Generated image via imagegen CLI: imagegen_output.png",
+            "source_tool": "imagegen_cli",
+            "tool_use_id": "call-image",
+            "origin": "host_generated",
+            "sandbox_path": "/home/user/projects/deck/images/cover_bg.png",
+            "sandbox_path_role": "workspace_mirror",
+        }
+    ]

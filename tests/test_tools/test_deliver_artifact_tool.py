@@ -37,6 +37,7 @@ class FakeHook:
     def __init__(self) -> None:
         self.artifacts: list[tuple[str, str]] = []
         self.existing_artifact: dict[str, str] | None = None
+        self.existing_by_sandbox_path: dict[str, dict[str, str]] = {}
 
     async def on_artifact(self, file_path: str, reason: str, sandbox_session=None, url=None) -> None:
         del sandbox_session, url
@@ -46,6 +47,9 @@ class FakeHook:
         if content == b"# done\n":
             return self.existing_artifact
         return None
+
+    def find_artifact_by_sandbox_path(self, sandbox_path: str) -> dict[str, str] | None:
+        return self.existing_by_sandbox_path.get(sandbox_path)
 
     async def reemit_artifact(self, artifact: dict[str, str], reason: str | None = None) -> None:
         self.artifacts.append((artifact.get("url") or artifact.get("file_path") or artifact.get("path") or "", reason or ""))
@@ -89,6 +93,33 @@ async def test_deliver_reuses_existing_artifact_content(tmp_path: Path, monkeypa
     assert result.metadata["artifact_paths"] == []
     assert result.metadata["reused_artifact_paths"] == ["/artifacts/files/20990101/t1/result.md"]
     assert not (tmp_path / "result.md").exists()
+    assert hook.artifacts == []
+
+
+@pytest.mark.asyncio
+async def test_deliver_skips_already_published_workspace_mirror(tmp_path: Path, monkeypatch):
+    sandbox = FakeSandbox({"/home/user/result.png": b"png"})
+    hook = FakeHook()
+    hook.existing_by_sandbox_path["/home/user/result.png"] = {
+        "url": "/artifacts/imagegen/20990101/t1/result.png",
+        "sandbox_path_role": "workspace_mirror",
+        "publish_state": "published",
+    }
+    monkeypatch.setattr(
+        "openharness.tools.deliver_artifact_tool.get_sandbox_session",
+        lambda: sandbox,
+    )
+
+    result = await DeliverArtifactTool().execute(
+        DeliverArtifactInput(sandbox_path="/home/user/result.png"),
+        ToolExecutionContext(cwd=tmp_path, metadata={"hook": hook, "thread_id": "t1"}),
+    )
+
+    assert result.is_error is False
+    assert result.metadata["delivery_skipped"] is True
+    assert result.metadata["artifact_paths"] == []
+    assert result.metadata["reused_artifact_paths"] == ["/artifacts/imagegen/20990101/t1/result.png"]
+    assert not (tmp_path / "result.png").exists()
     assert hook.artifacts == []
 
 

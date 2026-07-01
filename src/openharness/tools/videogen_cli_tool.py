@@ -112,12 +112,16 @@ class VideogenCliTool(BaseTool):
         hook = context.metadata.get("hook")
         if hook is not None:
             for artifact in artifacts:
-                await hook.on_artifact(
+                await _call_hook_on_artifact(
+                    hook,
                     str(artifact),
                     reason=f"Generated video via videogen CLI: {artifact.name}",
+                    source_tool="videogen_cli",
+                    tool_use_id=_context_tool_use_id(context),
+                    origin="host_generated",
                 )
 
-        lines = ["videogen CLI completed successfully."]
+        lines = ["videogen CLI completed successfully and published artifact(s)."]
         if artifacts:
             lines.append("Artifacts:")
             lines.extend(f"- {path}" for path in artifacts)
@@ -220,10 +224,16 @@ async def _execute_e2b_videogen(
 
         hook = context.metadata.get("hook")
         if hook is not None:
-            for local_path in local_artifacts:
-                await hook.on_artifact(
+            for local_path, sandbox_path in zip(local_artifacts, sandbox_artifacts):
+                await _call_hook_on_artifact(
+                    hook,
                     str(local_path),
                     reason=f"Generated video via videogen CLI: {local_path.name}",
+                    source_tool="videogen_cli",
+                    tool_use_id=_context_tool_use_id(context),
+                    origin="host_generated",
+                    sandbox_path=sandbox_path,
+                    sandbox_path_role="workspace_mirror",
                 )
 
         if context.progress_callback is not None and delivered_sandbox_artifacts:
@@ -231,17 +241,20 @@ async def _execute_e2b_videogen(
                 {
                     "phase": "artifact_ready",
                     "status": "success",
-                    "message": "视频已生成并写入 E2B 沙箱。",
+                    "message": "视频已生成并交付，副本已同步到 E2B 工作区。",
                     "workspace": "e2b",
                     "detail": "\n".join(delivered_sandbox_artifacts),
-                    "metadata": {"artifact_paths": delivered_sandbox_artifacts},
+                    "metadata": {
+                        "artifact_paths": delivered_sandbox_artifacts,
+                        "sandbox_path_role": "workspace_mirror",
+                    },
                 }
             )
 
         sanitized_output = _sanitize_cli_output(output, "VIDEOGEN_METADATA:", dict(zip(local_artifacts, sandbox_artifacts)))
-        lines = ["videogen CLI completed successfully."]
+        lines = ["videogen CLI completed successfully and published artifact(s)."]
         if delivered_sandbox_artifacts:
-            lines.append("Artifacts:")
+            lines.append("E2B workspace mirror paths:")
             lines.extend(f"- {path}" for path in delivered_sandbox_artifacts)
         if sanitized_output:
             lines.extend(["", "CLI output:", sanitized_output])
@@ -499,3 +512,20 @@ def _parse_cli_metadata(output: str) -> dict[str, object]:
             return {}
         return parsed if isinstance(parsed, dict) else {}
     return {}
+
+
+def _context_tool_use_id(context: ToolExecutionContext) -> str | None:
+    value = context.metadata.get("tool_use_id")
+    return str(value) if value else None
+
+
+async def _call_hook_on_artifact(hook, file_path: str, **kwargs) -> None:
+    try:
+        await hook.on_artifact(file_path, **kwargs)
+    except TypeError:
+        legacy_kwargs = {
+            key: value
+            for key, value in kwargs.items()
+            if key in {"reason", "sandbox_session", "url"}
+        }
+        await hook.on_artifact(file_path, **legacy_kwargs)
