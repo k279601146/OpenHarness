@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import io
 import json
 import os
@@ -18,6 +17,7 @@ from typing import Any, Awaitable, TypeVar
 
 from openharness.config.paths import get_data_dir
 from openharness.sandbox import SandboxUnavailableError
+from openharness.skills.fingerprint import skill_source_fingerprint
 from openharness.tools.base import ToolExecutionContext
 from openharness.utils.paths import normalize_host_path
 
@@ -439,13 +439,7 @@ def _safe_sandbox_name(value: str) -> str:
 
 
 def _skill_source_fingerprint(source_dir: Path) -> str:
-    hasher = hashlib.sha256()
-    for path, rel, stat in _iter_skill_files(source_dir):
-        del path
-        hasher.update(rel.encode("utf-8"))
-        hasher.update(str(stat.st_size).encode("ascii"))
-        hasher.update(str(int(stat.st_mtime_ns)).encode("ascii"))
-    return hasher.hexdigest()
+    return skill_source_fingerprint(source_dir)
 
 
 async def _read_optional_sandbox_text(session: Any, path: str) -> str | None:
