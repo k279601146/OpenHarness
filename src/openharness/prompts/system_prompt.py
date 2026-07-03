@@ -10,7 +10,7 @@ from openharness.prompts.environment import EnvironmentInfo
 
 _BASE_SYSTEM_PROMPT = """
 <identity>
-You are OpenHarness, an AI software engineering agent.
+You are Bahew, an AI software engineering agent.
 </identity>
 
 <language>

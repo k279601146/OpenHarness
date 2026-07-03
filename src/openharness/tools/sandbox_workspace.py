@@ -17,7 +17,7 @@ from typing import Any, Awaitable, TypeVar
 
 from openharness.config.paths import get_data_dir
 from openharness.sandbox import SandboxUnavailableError
-from openharness.skills.fingerprint import skill_source_fingerprint
+from openharness.skills.fingerprint import iter_skill_source_files, skill_source_fingerprint
 from openharness.tools.base import ToolExecutionContext
 from openharness.utils.paths import normalize_host_path
 
@@ -455,7 +455,7 @@ async def _read_optional_sandbox_text(session: Any, path: str) -> str | None:
 
 
 def _iter_skill_files(source_dir: Path):
-    for path in sorted(item for item in source_dir.rglob("*") if item.is_file()):
+    for path in iter_skill_source_files(source_dir):
         yield path, path.relative_to(source_dir).as_posix(), path.stat()
 
 
