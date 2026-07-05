@@ -6,14 +6,11 @@ per-image billing units. Keep user-facing docs in sync with these entries.
 
 from __future__ import annotations
 
-import json
-import os
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Literal
 
 
 Provider = Literal["gpt_image", "openai_compatible", "gemini", "doubao"]
-PRICING_OVERRIDE_ENV = "OPENHARNESS_IMAGE_MODEL_PRICING_UNITS"
 
 
 @dataclass(frozen=True)
@@ -21,7 +18,6 @@ class ImageModelSpec:
     model_id: str
     provider: Provider
     api_model: str
-    pricing_unit: float
     api_key_env: str
     base_url_env: str
     default_base_url: str
@@ -37,7 +33,6 @@ IMAGE_MODEL_REGISTRY: dict[str, ImageModelSpec] = {
         model_id="kolors",
         provider="openai_compatible",
         api_model="Kwai-Kolors/Kolors",
-        pricing_unit=1.0,
         api_key_env="KOLORS_IMAGE_API_KEY",
         base_url_env="KOLORS_IMAGE_BASE_URL",
         default_base_url="https://api.packyapi.com/v1",
@@ -47,7 +42,6 @@ IMAGE_MODEL_REGISTRY: dict[str, ImageModelSpec] = {
         model_id="gpt-image-2",
         provider="gpt_image",
         api_model="gpt-image-2",
-        pricing_unit=4.0,
         api_key_env="GPT_IMAGEGEN_API_KEY",
         base_url_env="GPT_IMAGEGEN_BASE_URL",
         default_base_url="https://api.packyapi.com",
@@ -59,7 +53,6 @@ IMAGE_MODEL_REGISTRY: dict[str, ImageModelSpec] = {
         model_id="nano-banana",
         provider="gemini",
         api_model="gpt-5.4-image",
-        pricing_unit=3.0,
         api_key_env="NANO_BANANA_API_KEY",
         base_url_env="NANO_BANANA_BASE_URL",
         default_base_url="https://generativelanguage.googleapis.com",
@@ -70,7 +63,6 @@ IMAGE_MODEL_REGISTRY: dict[str, ImageModelSpec] = {
         model_id="nano-banana-2",
         provider="gemini",
         api_model="gemini-3.1-flash-image-preview",
-        pricing_unit=3.0,
         api_key_env="NANO_BANANA_API_KEY",
         base_url_env="NANO_BANANA_BASE_URL",
         default_base_url="https://generativelanguage.googleapis.com",
@@ -81,7 +73,6 @@ IMAGE_MODEL_REGISTRY: dict[str, ImageModelSpec] = {
         model_id="nano-banana-pro",
         provider="gemini",
         api_model="gemini-3.0-pro-image-preview",
-        pricing_unit=3.0,
         api_key_env="NANO_BANANA_API_KEY",
         base_url_env="NANO_BANANA_BASE_URL",
         default_base_url="https://generativelanguage.googleapis.com",
@@ -92,7 +83,6 @@ IMAGE_MODEL_REGISTRY: dict[str, ImageModelSpec] = {
         model_id="doubao-seedream-5-0-260128",
         provider="doubao",
         api_model="doubao-seedream-5-0-260128",
-        pricing_unit=2.0,
         api_key_env="DOUBAO_IMAGE_API_KEY",
         base_url_env="DOUBAO_IMAGE_BASE_URL",
         default_base_url="https://api.packyapi.com",
@@ -104,7 +94,6 @@ IMAGE_MODEL_REGISTRY: dict[str, ImageModelSpec] = {
         model_id="doubao-seedream-5-0-lite-260128",
         provider="doubao",
         api_model="doubao-seedream-5-0-lite-260128",
-        pricing_unit=2.0,
         api_key_env="DOUBAO_IMAGE_API_KEY",
         base_url_env="DOUBAO_IMAGE_BASE_URL",
         default_base_url="https://api.packyapi.com",
@@ -116,7 +105,6 @@ IMAGE_MODEL_REGISTRY: dict[str, ImageModelSpec] = {
         model_id="doubao-seedream-4-5-251128",
         provider="doubao",
         api_model="doubao-seedream-4-5-251128",
-        pricing_unit=2.0,
         api_key_env="DOUBAO_IMAGE_API_KEY",
         base_url_env="DOUBAO_IMAGE_BASE_URL",
         default_base_url="https://api.packyapi.com",
@@ -128,7 +116,6 @@ IMAGE_MODEL_REGISTRY: dict[str, ImageModelSpec] = {
         model_id="doubao-seedream-4-0-250828",
         provider="doubao",
         api_model="doubao-seedream-4-0-250828",
-        pricing_unit=2.0,
         api_key_env="DOUBAO_IMAGE_API_KEY",
         base_url_env="DOUBAO_IMAGE_BASE_URL",
         default_base_url="https://api.packyapi.com",
@@ -144,55 +131,22 @@ def get_model_spec(model_id: str | None) -> ImageModelSpec:
     if key in {"", "auto", "default"}:
         key = "gpt-image-2"
     if key in IMAGE_MODEL_REGISTRY:
-        return _apply_pricing_override(IMAGE_MODEL_REGISTRY[key])
+        return IMAGE_MODEL_REGISTRY[key]
     if key.startswith("gpt-image-"):
-        base = _apply_pricing_override(IMAGE_MODEL_REGISTRY["gpt-image-2"])
-        return _apply_pricing_override(ImageModelSpec(
+        base = IMAGE_MODEL_REGISTRY["gpt-image-2"]
+        return ImageModelSpec(
             model_id=key,
             provider="gpt_image",
             api_model=key,
-            pricing_unit=base.pricing_unit,
             api_key_env=base.api_key_env,
             base_url_env=base.base_url_env,
             default_base_url=base.default_base_url,
             supports_edit=True,
             supports_reference=True,
             supports_batch=True,
-        ))
+        )
     if "banana" in key or "gemini" in key:
-        return _apply_pricing_override(IMAGE_MODEL_REGISTRY["nano-banana"])
+        return IMAGE_MODEL_REGISTRY["nano-banana"]
     if "doubao" in key or "seedream" in key:
-        return _apply_pricing_override(IMAGE_MODEL_REGISTRY["doubao-seedream-5-0-260128"])
-    return _apply_pricing_override(IMAGE_MODEL_REGISTRY["kolors"])
-
-
-def image_model_pricing_units(model_id: str | None) -> float:
-    return get_model_spec(model_id).pricing_unit
-
-
-def _apply_pricing_override(spec: ImageModelSpec) -> ImageModelSpec:
-    value = _pricing_overrides().get(spec.model_id.lower())
-    if value is None:
-        return spec
-    return replace(spec, pricing_unit=value)
-
-
-def _pricing_overrides() -> dict[str, float]:
-    raw = os.getenv(PRICING_OVERRIDE_ENV, "").strip()
-    if not raw:
-        return {}
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    result: dict[str, float] = {}
-    for model_id, value in data.items():
-        try:
-            numeric = float(value)
-        except (TypeError, ValueError):
-            continue
-        if numeric >= 0:
-            result[str(model_id).strip().lower()] = numeric
-    return result
+        return IMAGE_MODEL_REGISTRY["doubao-seedream-5-0-260128"]
+    return IMAGE_MODEL_REGISTRY["kolors"]

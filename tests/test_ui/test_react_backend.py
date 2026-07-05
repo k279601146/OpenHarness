@@ -14,6 +14,7 @@ from openharness.api.usage import UsageSnapshot
 from openharness.engine.stream_events import CompactProgressEvent
 from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock
 from openharness.config.settings import Settings, save_settings
+from openharness.state import AppState
 from openharness.ui.backend_host import (
     BackendHostConfig,
     ReactBackendHost,
@@ -127,6 +128,32 @@ def test_build_user_message_with_images():
     assert isinstance(message.content[1], ImageBlock)
     assert message.content[1].media_type == "image/png"
     assert message.content[1].source_path == "clipboard:clipboard.png"
+
+
+def test_backend_state_payload_includes_commercial_readiness_fields():
+    event = BackendEvent.state_snapshot(
+        AppState(
+            model="gpt-5.4",
+            permission_mode="default",
+            theme="default",
+            active_profile="codex",
+            profile_label="Codex Subscription",
+            provider="codex",
+            auth_status="configured",
+            allowed_models=["gpt-5.4", "gpt-5"],
+            input_tokens=1200,
+            output_tokens=345,
+            estimated_tokens=2048,
+        )
+    )
+
+    assert event.state is not None
+    assert event.state["active_profile"] == "codex"
+    assert event.state["profile_label"] == "Codex Subscription"
+    assert event.state["allowed_models"] == ["gpt-5.4", "gpt-5"]
+    assert event.state["input_tokens"] == 1200
+    assert event.state["output_tokens"] == 345
+    assert event.state["estimated_tokens"] == 2048
 
 
 def test_format_transcript_line_mentions_attached_images():
@@ -360,6 +387,9 @@ async def test_backend_host_processes_model_turn(tmp_path, monkeypatch):
         and "hello from react backend" in event.item.text
         for event in events
     )
+    status_events = [event for event in events if event.type == "state_snapshot" and event.state]
+    assert status_events[-1].state["input_tokens"] == 2
+    assert status_events[-1].state["output_tokens"] == 3
 
 
 @pytest.mark.asyncio
@@ -607,6 +637,11 @@ async def test_backend_host_emits_model_select_request(tmp_path, monkeypatch):
     host._emit = _emit  # type: ignore[method-assign]
     await start_runtime(host._bundle)
     try:
+        state = host._bundle.app_state.get()
+        assert state.active_profile == "local-llm"
+        assert state.profile_label == "Local LLM"
+        assert state.allowed_models == ["deepseek-chat", "qwen-vl"]
+
         await host._handle_select_command("model")
     finally:
         await close_runtime(host._bundle)

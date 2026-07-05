@@ -63,8 +63,9 @@ async def test_imagegen_cli_dry_run_routes_nano_banana(tmp_path: Path, monkeypat
     assert not result.is_error
     assert result.metadata["model_id"] == "nano-banana-pro"
     assert result.metadata["provider"] == "gemini"
-    assert result.metadata["pricing_unit"] == 3.0
-    assert result.metadata["billing_units"] == 3.0
+    assert result.metadata["official_cost"] == 0.134
+    assert result.metadata["pricing_multiplier"] == 1.0
+    assert result.metadata["billing_units"] == 3.35
 
 
 @pytest.mark.asyncio
@@ -91,7 +92,8 @@ async def test_imagegen_cli_dry_run_routes_doubao_and_multiple_outputs(
     assert result.metadata["model_id"] == "doubao-seedream-5-0-260128"
     assert result.metadata["provider"] == "doubao"
     assert result.metadata["output_count"] == 2
-    assert result.metadata["billing_units"] == 4.0
+    assert result.metadata["official_currency"] == "CNY"
+    assert result.metadata["billing_units"] == 1.4
 
 
 @pytest.mark.asyncio

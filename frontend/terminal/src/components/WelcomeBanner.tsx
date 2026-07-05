@@ -1,6 +1,7 @@
 import React from 'react';
 import {Box, Text} from 'ink';
 
+import {CommercialReadinessPanel} from './CommercialReadinessPanel.js';
 import {useTheme} from '../theme/ThemeContext.js';
 
 const VERSION = '0.1.0';
@@ -126,6 +127,7 @@ export function WelcomeBanner({
 					</Box>
 				))}
 			</Box>
+			<CommercialReadinessPanel status={status} commands={commands} />
 			<Text dimColor>Type / to browse commands, or start with a goal in plain language.</Text>
 		</Box>
 	);

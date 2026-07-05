@@ -6,12 +6,17 @@ import base64
 import json
 import os
 from pathlib import Path
+import sys
 from typing import Any
 
 from .registry import VideoModelSpec, get_model_spec
 
 
 VIDEOGEN_METADATA_PREFIX = "VIDEOGEN_METADATA:"
+CONTENT_DIR = Path(__file__).resolve().parents[3]
+if str(CONTENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CONTENT_DIR))
+from media_pricing_runtime import estimate_video_pricing
 
 
 class VideogenProviderError(RuntimeError):
@@ -72,7 +77,19 @@ def provider_metadata(
     duration = _duration(args, spec)
     resolution = _resolution(args, spec)
     mode = _mode(args, spec)
-    billing_units = _billing_units(spec, args, output_count, provider_usage)
+    try:
+        pricing = estimate_video_pricing(
+            model_id=spec.model_id,
+            duration_seconds=duration,
+            resolution=resolution,
+            mode=mode,
+            generate_audio=bool(getattr(args, "generate_audio", False)),
+            command=getattr(args, "command", None),
+            output_count=output_count,
+            provider_usage=provider_usage,
+        )
+    except ValueError as exc:
+        raise VideogenProviderError(str(exc)) from exc
     return {
         "video_model_id": spec.model_id,
         "model_id": spec.model_id,
@@ -84,62 +101,9 @@ def provider_metadata(
         "mode": mode,
         "output_count": output_count,
         "provider_usage": provider_usage or {},
-        "billing_units": billing_units,
+        **pricing.to_metadata(),
         "artifact_paths": [str(path) for path in outputs],
     }
-
-
-def _billing_units(
-    spec: VideoModelSpec,
-    args: Any,
-    output_count: int,
-    provider_usage: dict[str, Any] | None,
-) -> float:
-    if provider_usage:
-        for key in ("billing_units", "credits", "points", "resource_units", "usage_units"):
-            value = provider_usage.get(key)
-            if value is not None:
-                try:
-                    return round(max(float(value), 0.0), 2)
-                except (TypeError, ValueError):
-                    pass
-
-    duration = _duration(args, spec)
-    resolution = _resolution(args, spec).lower()
-    mode = _mode(args, spec).lower()
-    usd_pricing = (
-        spec.usd_per_second_with_audio_by_resolution
-        if bool(getattr(args, "generate_audio", False)) and spec.usd_per_second_with_audio_by_resolution
-        else spec.usd_per_second_by_resolution
-    )
-    if usd_pricing:
-        usd_per_second = usd_pricing.get(resolution)
-        if usd_per_second is None and resolution == "1080":
-            usd_per_second = usd_pricing.get("1080p")
-        if usd_per_second is None and resolution == "720":
-            usd_per_second = usd_pricing.get("720p")
-        if usd_per_second is not None:
-            credits_per_usd = _env_float("BILLING_CREDITS_PER_USD", 25.0)
-            return round(usd_per_second * duration * max(output_count, 1) * credits_per_usd, 2)
-    multiplier = 1.0
-    multiplier *= spec.billing_multipliers.get(resolution, 1.0)
-    multiplier *= spec.billing_multipliers.get(mode, 1.0)
-    command = str(getattr(args, "command", "") or "")
-    if command in {"image-to-video", "first-last-frame", "reference-to-video"}:
-        multiplier *= 1.15
-    if bool(getattr(args, "generate_audio", False)) and spec.supports_audio:
-        multiplier *= 1.1
-    # Official schemes differ by provider; this fallback keeps the same dimensions
-    # (model, duration, resolution, mode, references) for predictable estimates.
-    duration_factor = max(duration, 1) / max(spec.default_duration_seconds, 1)
-    return round(spec.base_billing_units * duration_factor * multiplier * max(output_count, 1), 2)
-
-
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float(os.getenv(name, str(default)))
-    except ValueError:
-        return default
 
 
 def _credential(name: str) -> str:

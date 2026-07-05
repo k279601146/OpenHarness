@@ -40,6 +40,7 @@ from openharness.plugins import load_plugins
 from openharness.prompts import build_runtime_system_prompt
 from openharness.state import AppState, AppStateStore
 from openharness.services.session_backend import DEFAULT_SESSION_BACKEND, SessionBackend
+from openharness.services.compact import estimate_conversation_tokens
 from openharness.tools import ToolRegistry, create_default_tool_registry
 from openharness.keybindings import load_keybindings
 
@@ -300,6 +301,7 @@ async def build_runtime(
             for tool in plugin.tools:
                 tool_registry.register(tool)
     provider = detect_provider(settings)
+    active_profile_name, active_profile = settings.resolve_profile()
     bridge_manager = get_bridge_manager()
     app_state = AppStateStore(
         AppState(
@@ -309,9 +311,12 @@ async def build_runtime(
             permission_mode=settings.permission.mode.value,
             theme=settings.theme,
             cwd=cwd,
+            active_profile=active_profile_name,
+            profile_label=active_profile.label,
             provider=provider.name,
             auth_status=auth_status(settings),
             base_url=settings.base_url or "",
+            allowed_models=list(active_profile.allowed_models),
             vim_enabled=settings.vim_mode,
             voice_enabled=settings.voice_mode,
             voice_available=provider.voice_supported,
@@ -407,6 +412,11 @@ async def build_runtime(
             [ConversationMessage.model_validate(m) for m in restore_messages]
         )
         engine.load_messages(restored)
+    app_state.set(
+        input_tokens=engine.total_usage.input_tokens,
+        output_tokens=engine.total_usage.output_tokens,
+        estimated_tokens=estimate_conversation_tokens(engine.messages),
+    )
 
     # Start Cloud sandbox if configured
     if settings.sandbox.enabled:
@@ -535,17 +545,25 @@ def _format_pending_tool_results(messages: list[ConversationMessage]) -> str | N
 def sync_app_state(bundle: RuntimeBundle) -> None:
     """Refresh UI state from current settings and dynamic keybindings."""
     settings = bundle.current_settings()
+    active_profile_name, active_profile = settings.resolve_profile()
     if bundle.enforce_max_turns:
         bundle.engine.set_max_turns(settings.max_turns)
     provider = detect_provider(settings)
+    usage = bundle.engine.total_usage
     bundle.app_state.set(
         model=settings.model,
         permission_mode=settings.permission.mode.value,
         theme=settings.theme,
         cwd=bundle.cwd,
+        active_profile=active_profile_name,
+        profile_label=active_profile.label,
         provider=provider.name,
         auth_status=auth_status(settings),
         base_url=settings.base_url or "",
+        allowed_models=list(active_profile.allowed_models),
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        estimated_tokens=estimate_conversation_tokens(bundle.engine.messages),
         vim_enabled=settings.vim_mode,
         voice_enabled=settings.voice_mode,
         voice_available=provider.voice_supported,

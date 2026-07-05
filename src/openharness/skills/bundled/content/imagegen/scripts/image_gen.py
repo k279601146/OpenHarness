@@ -771,7 +771,7 @@ def _generate(args: argparse.Namespace) -> None:
                 **payload,
             }
         )
-        metadata = provider_metadata(spec, output_paths)
+        metadata = provider_metadata(spec, output_paths, args, prompt)
         metadata["dry_run"] = True
         emit_metadata(metadata)
         return
@@ -795,7 +795,7 @@ def _generate(args: argparse.Namespace) -> None:
         downscale_suffix=args.downscale_suffix,
         output_format=output_format,
     )
-    emit_metadata(provider_metadata(spec, output_paths))
+    emit_metadata(provider_metadata(spec, output_paths, args, prompt))
 
 
 def _edit(args: argparse.Namespace) -> None:
@@ -858,7 +858,7 @@ def _edit(args: argparse.Namespace) -> None:
                 **payload_preview,
             }
         )
-        metadata = provider_metadata(spec, output_paths)
+        metadata = provider_metadata(spec, output_paths, args, prompt)
         metadata["dry_run"] = True
         emit_metadata(metadata)
         return
@@ -888,7 +888,7 @@ def _edit(args: argparse.Namespace) -> None:
         downscale_suffix=args.downscale_suffix,
         output_format=output_format,
     )
-    emit_metadata(provider_metadata(spec, output_paths))
+    emit_metadata(provider_metadata(spec, output_paths, args, prompt))
 
 
 def _open_files(paths: List[Path]):

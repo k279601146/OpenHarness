@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import {buildCommercialReadiness} from './CommercialReadinessPanel.js';
 import {buildWelcomeSections, formatWelcomeStatus} from './WelcomeBanner.js';
 
 function commandsFromSections(commands: string[]): string[] {
@@ -31,5 +32,47 @@ test('formats the runtime status summary for the welcome cockpit', () => {
 			permission_mode: 'plan',
 		}),
 		'codex | gpt-5.4 | auth=configured | plan',
+	);
+});
+
+test('commercial readiness prioritizes account setup when auth is missing', () => {
+	const readiness = buildCommercialReadiness(
+		{
+			provider: 'anthropic',
+			auth_status: 'missing',
+			active_profile: 'claude-api',
+			profile_label: 'Claude API',
+			model: 'claude-sonnet-4-5',
+		},
+		['/provider', '/login', '/usage'],
+	);
+
+	assert.equal(readiness.rows[0]?.value, 'missing');
+	assert.deepEqual(readiness.actions.map((action) => action.command), ['/provider', '/login']);
+});
+
+test('commercial readiness summarizes usage and pinned models for configured accounts', () => {
+	const readiness = buildCommercialReadiness(
+		{
+			provider: 'codex',
+			auth_status: 'configured',
+			active_profile: 'codex',
+			profile_label: 'Codex Subscription',
+			model: 'gpt-5.4',
+			allowed_models: ['gpt-5.4', 'gpt-5', 'o4-mini', 'gpt-4.1'],
+			input_tokens: 2100,
+			output_tokens: 450,
+			estimated_tokens: 3000,
+			permission_mode: 'Default',
+		},
+		['/usage', '/rate-limit-options', '/model', '/privacy-settings'],
+	);
+
+	assert.equal(readiness.statusLine, 'codex account ready for commercial workflows');
+	assert.equal(readiness.rows.find((row) => row.label === 'Model')?.value, 'gpt-5.4 (gpt-5.4, gpt-5, o4-mini +1)');
+	assert.equal(readiness.rows.find((row) => row.label === 'Usage')?.value, '2.1k in / 450 out');
+	assert.deepEqual(
+		readiness.actions.map((action) => action.command),
+		['/usage', '/rate-limit-options', '/model', '/privacy-settings'],
 	);
 });

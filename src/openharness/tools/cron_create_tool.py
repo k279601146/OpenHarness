@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import base64
+import datetime
 import json
 import os
 import shlex
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +29,126 @@ def _build_saas_task_command(api_dir: str, payload: dict[str, Any]) -> str:
         ]
     )
     return f"& {command}" if os.name == "nt" else command
+
+
+def _frequency_from_schedule(schedule: str) -> str:
+    fields = schedule.split()
+    if len(fields) != 5:
+        return "custom"
+    _minute, _hour, day_of_month, month, weekday = fields
+    if month != "*":
+        return "custom"
+    if day_of_month != "*":
+        return "monthly"
+    if weekday in {"1-5", "MON-FRI", "mon-fri"}:
+        return "workdays"
+    if weekday != "*":
+        return "weekly"
+    return "daily"
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+def _create_saas_scheduled_task(arguments: "CronCreateToolInput", payload: dict[str, Any], context: ToolExecutionContext) -> ToolResult | None:
+    metadata = context.metadata or {}
+    db = metadata.get("db_session")
+    user_id = metadata.get("user_id")
+    thread_id = metadata.get("thread_id")
+    if db is None or not user_id or not thread_id:
+        return None
+    if arguments.command:
+        return None
+
+    try:
+        from models import AgentEvent, AgentThread, ScheduledTask
+        from scheduled_task_service import apply_context_defaults, next_run_time, normalize_list, serialize_task
+        from scheduled_tasks import scheduled_task_card_payload
+    except Exception as exc:
+        return ToolResult(
+            output=f"Cannot create SaaS scheduled task: scheduled task service is unavailable ({exc}).",
+            is_error=True,
+        )
+
+    thread = db.query(AgentThread).filter(AgentThread.id == str(thread_id), AgentThread.owner_id == int(user_id)).first()
+    if not thread:
+        return ToolResult(output="Cannot create scheduled task: context thread not found.", is_error=True)
+
+    title = str(payload.get("title") or arguments.name or "定时任务").strip()[:120] or "定时任务"
+    prompt = str(payload.get("message") or arguments.message or "").strip()
+    if not prompt:
+        return ToolResult(output="Scheduled task requires message.", is_error=True)
+
+    task = ScheduledTask(
+        id=str(uuid.uuid4()),
+        owner_id=int(user_id),
+        title=title,
+        prompt=prompt,
+        schedule=arguments.schedule.strip(),
+        frequency=str(payload.get("frequency") or _frequency_from_schedule(arguments.schedule)).strip() or "custom",
+        timezone=arguments.timezone or "Asia/Shanghai",
+        enabled=arguments.enabled,
+        skip_confirmation=bool(payload.get("skip_confirmation") or payload.get("skipConfirmation") or False),
+        run_mode=str(payload.get("run_mode") or "continue_thread"),
+        model_id=thread.model_id,
+        enabled_skills=normalize_list(thread.enabled_skills),
+        selected_connectors=normalize_list(thread.selected_connectors, limit=8),
+        preferred_image_model=thread.preferred_image_model,
+        preferred_video_model=thread.preferred_video_model,
+        is_model_auto_mode=bool(thread.is_model_auto_mode),
+        context_type="thread",
+        context_thread_id=thread.id,
+        cloud_computer=False,
+    )
+    apply_context_defaults(db, task)
+    task.next_run_at = next_run_time(task.schedule, timezone=task.timezone) if task.enabled else None
+    db.add(task)
+    db.flush()
+
+    turn_id = str(metadata.get("turn_id") or "")
+    card_payload = {**scheduled_task_card_payload(task), "turn_id": turn_id or None}
+    event = AgentEvent(thread_id=thread.id, type="scheduled_task_card", payload=card_payload)
+    db.add(event)
+    db.commit()
+    db.refresh(task)
+    db.refresh(event)
+
+    try:
+        import asyncio
+        from ws_agent import manager
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(manager.send_event(thread.id, "scheduled_task_card", card_payload))
+        except RuntimeError:
+            asyncio.run(manager.send_event(thread.id, "scheduled_task_card", card_payload))
+    except Exception:
+        pass
+
+    try:
+        from tasks import _invalidate_task_cache
+
+        _invalidate_task_cache(int(user_id), thread.id)
+    except Exception:
+        pass
+
+    serialized = _json_safe(serialize_task(task, runs=[]))
+    return ToolResult(
+        output=(
+            f"Created SaaS scheduled task '{task.title}' [{task.schedule}] "
+            f"({'enabled' if task.enabled else 'disabled'}). It is visible in Scheduled Tasks."
+        ),
+        metadata={"scheduled_task": serialized, "scheduled_task_card": _json_safe(card_payload)},
+    )
 
 
 class CronCreateToolInput(BaseModel):
@@ -101,6 +223,10 @@ class CronCreateTool(BaseTool):
             return ToolResult(output="Cron job requires payload.message, message, or command.", is_error=True)
         if not payload and not arguments.command:
             return ToolResult(output="Cron job requires command or message.", is_error=True)
+
+        saas_result = _create_saas_scheduled_task(arguments, payload, context)
+        if saas_result is not None:
+            return saas_result
 
         saas_user_id = context.metadata.get("user_id")
         saas_api_dir = context.metadata.get("saas_api_dir")

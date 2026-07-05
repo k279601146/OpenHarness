@@ -6,12 +6,18 @@ import base64
 import json
 import os
 from pathlib import Path
+import sys
 from typing import Any
 
 from .registry import ImageModelSpec, get_model_spec
 
 
 IMAGEGEN_METADATA_PREFIX = "IMAGEGEN_METADATA:"
+CONTENT_DIR = Path(__file__).resolve().parents[3]
+if str(CONTENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CONTENT_DIR))
+from media_pricing_runtime import estimate_image_pricing
+
 ASPECT_TO_OPENAI_SIZE = {"1:1": "1024x1024", "16:9": "1792x1024", "9:16": "1024x1792"}
 ASPECT_TO_DOUBAO_SIZE = {
     "1:1": "2048x2048",
@@ -31,15 +37,27 @@ def emit_metadata(metadata: dict[str, Any]) -> None:
     print(f"{IMAGEGEN_METADATA_PREFIX}{json.dumps(metadata, ensure_ascii=False, sort_keys=True)}")
 
 
-def provider_metadata(spec: ImageModelSpec, outputs: list[Path]) -> dict[str, Any]:
+def provider_metadata(spec: ImageModelSpec, outputs: list[Path], args: Any | None = None, prompt: str = "") -> dict[str, Any]:
     count = len(outputs)
+    reference_count = len(list(getattr(args, "image", []) or [])) if args is not None else 0
+    try:
+        pricing = estimate_image_pricing(
+            model_id=spec.model_id,
+            prompt=prompt,
+            size=getattr(args, "size", None) if args is not None else spec.default_size,
+            quality=getattr(args, "quality", None) if args is not None else spec.default_quality,
+            aspect_ratio=getattr(args, "aspect_ratio", None) if args is not None else None,
+            output_count=count,
+            reference_count=reference_count,
+        )
+    except ValueError as exc:
+        raise ImagegenProviderError(str(exc)) from exc
     return {
         "model_id": spec.model_id,
         "provider": spec.provider,
         "api_model": spec.api_model,
         "output_count": count,
-        "pricing_unit": spec.pricing_unit,
-        "billing_units": round(spec.pricing_unit * count, 2),
+        **pricing.to_metadata(),
         "artifact_paths": [str(path) for path in outputs],
     }
 
@@ -62,7 +80,7 @@ def run_non_gpt_image(args: Any, outputs: list[Path], prompt: str) -> dict[str, 
         preview = _build_payload(spec, args, prompt)
         preview["outputs"] = [str(path) for path in outputs]
         print(json.dumps(preview, indent=2, ensure_ascii=False, sort_keys=True))
-        metadata = provider_metadata(spec, outputs)
+        metadata = provider_metadata(spec, outputs, args, prompt)
         metadata["dry_run"] = True
         return metadata
 
@@ -79,7 +97,7 @@ def run_non_gpt_image(args: Any, outputs: list[Path], prompt: str) -> dict[str, 
         saved = _run_openai_compatible(spec, args, prompt, outputs, api_key, base_url)
     else:
         raise ImagegenProviderError(f"Unsupported image provider: {spec.provider}")
-    return provider_metadata(spec, saved)
+    return provider_metadata(spec, saved, args, prompt)
 
 
 def _credential(name: str) -> str:
