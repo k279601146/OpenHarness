@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 from types import SimpleNamespace
 
 from openharness.ui.app import run_print_mode, run_repl, run_task_worker
 from openharness.engine.stream_events import AssistantTurnComplete
 from openharness.engine.messages import ConversationMessage, TextBlock
-from openharness.ui.react_launcher import build_backend_command
+from openharness.ui.react_launcher import build_backend_command, launch_react_tui
 
 
 class _AsyncIterator:
@@ -26,6 +29,7 @@ def test_build_backend_command_includes_flags():
         base_url="https://api.moonshot.cn/anthropic",
         system_prompt="system",
         api_key="secret",
+        restore_session_file="/tmp/restore.json",
     )
     assert command[:3] == [command[0], "-m", "openharness"]
     assert "--backend-only" in command
@@ -34,6 +38,7 @@ def test_build_backend_command_includes_flags():
     assert "--base-url" in command
     assert "--system-prompt" in command
     assert "--api-key" in command
+    assert command[command.index("--restore-session-file") + 1] == "/tmp/restore.json"
 
 
 @pytest.mark.asyncio
@@ -50,6 +55,66 @@ async def test_run_repl_uses_react_launcher_by_default(monkeypatch):
     assert seen["prompt"] == "hi"
     assert seen["cwd"] == "/tmp/demo"
     assert seen["model"] == "kimi-k2.5"
+
+
+@pytest.mark.asyncio
+async def test_run_repl_forwards_restore_payload_to_react_launcher(monkeypatch):
+    seen = {}
+    messages = [ConversationMessage.from_user_text("resume me").model_dump(mode="json")]
+    metadata = {"task_focus_state": {"goal": "resume frontend"}}
+
+    async def _launch(**kwargs):
+        seen.update(kwargs)
+        return 0
+
+    monkeypatch.setattr("openharness.ui.app.launch_react_tui", _launch)
+    await run_repl(
+        cwd="/tmp/demo",
+        restore_messages=messages,
+        restore_tool_metadata=metadata,
+    )
+
+    assert seen["restore_messages"] == messages
+    assert seen["restore_tool_metadata"] == metadata
+
+
+@pytest.mark.asyncio
+async def test_launch_react_tui_passes_restore_file_to_backend_command(tmp_path, monkeypatch):
+    frontend = tmp_path / "frontend"
+    (frontend / "node_modules").mkdir(parents=True)
+    (frontend / "package.json").write_text("{}", encoding="utf-8")
+    messages = [ConversationMessage.from_user_text("saved prompt").model_dump(mode="json")]
+    metadata = {"recent_verified_work": ["saved tool state"]}
+    captured = {}
+
+    class _Process:
+        async def wait(self):
+            return 0
+
+    async def _create_subprocess_exec(*args, cwd, env, stdin, stdout, stderr):
+        del args, cwd, stdin, stdout, stderr
+        config = json.loads(env["OPENHARNESS_FRONTEND_CONFIG"])
+        command = config["backend_command"]
+        restore_file = command[command.index("--restore-session-file") + 1]
+        captured["payload"] = json.loads(Path(restore_file).read_text(encoding="utf-8"))
+        return _Process()
+
+    monkeypatch.setattr("openharness.ui.react_launcher.get_frontend_dir", lambda: frontend)
+    monkeypatch.setattr("openharness.ui.react_launcher._resolve_tsx", lambda _frontend: ("tsx",))
+    monkeypatch.setattr(
+        "openharness.ui.react_launcher.asyncio.create_subprocess_exec",
+        _create_subprocess_exec,
+    )
+
+    result = await launch_react_tui(
+        cwd="/tmp/demo",
+        restore_messages=messages,
+        restore_tool_metadata=metadata,
+    )
+
+    assert result == 0
+    assert captured["payload"]["messages"] == messages
+    assert captured["payload"]["tool_metadata"] == metadata
 
 
 @pytest.mark.asyncio

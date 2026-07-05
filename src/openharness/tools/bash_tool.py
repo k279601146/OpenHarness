@@ -166,6 +166,8 @@ PROVIDER_TOOL_ENV_KEYS = (
     "KLING_VIDEO_API_KEY",
     "KLING_VIDEO_BASE_URL",
     "BILLING_CREDITS_PER_USD",
+    "OPENHARNESS_IMAGE_MODEL_PRICING_UNITS",
+    "OPENHARNESS_VIDEO_MODEL_BASE_BILLING_UNITS",
     "HTTPS_PROXY",
     "HTTP_PROXY",
     "NO_PROXY",
@@ -189,11 +191,19 @@ def _build_forwarded_sandbox_env(context: ToolExecutionContext) -> dict[str, str
 
 def _build_provider_tool_env(context: ToolExecutionContext) -> dict[str, str] | None:
     """Forward provider credentials only to trusted host-side media tools."""
-    return _collect_forwarded_env(
+    forwarded = _collect_forwarded_env(
         context,
         PROVIDER_TOOL_ENV_KEYS,
         include_sensitive=True,
     )
+    runtime_env = context.metadata.get("provider_tool_env")
+    if isinstance(runtime_env, dict):
+        forwarded = dict(forwarded or {})
+        for key in PROVIDER_TOOL_ENV_KEYS:
+            value = runtime_env.get(key)
+            if value:
+                forwarded[key] = str(value)
+    return forwarded or None
 
 
 def _collect_forwarded_env(

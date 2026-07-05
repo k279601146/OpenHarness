@@ -15,7 +15,7 @@ from openharness.engine.messages import ConversationMessage, sanitize_conversati
 from openharness.utils.fs import atomic_write_text
 
 
-_PERSISTED_TOOL_METADATA_KEYS = (
+PERSISTED_TOOL_METADATA_KEYS = (
     "permission_mode",
     "read_file_state",
     "invoked_skills",
@@ -45,7 +45,7 @@ def _persistable_tool_metadata(tool_metadata: dict[str, object] | None) -> dict[
     if not isinstance(tool_metadata, dict):
         return {}
     payload: dict[str, Any] = {}
-    for key in _PERSISTED_TOOL_METADATA_KEYS:
+    for key in PERSISTED_TOOL_METADATA_KEYS:
         if key in tool_metadata:
             payload[key] = _sanitize_metadata(tool_metadata[key])
     return payload

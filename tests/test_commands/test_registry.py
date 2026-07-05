@@ -1000,6 +1000,72 @@ async def test_compact_summary_and_usage_commands(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_resume_restores_persisted_tool_metadata(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry()
+    context = _make_context(tmp_path)
+    runtime_marker = object()
+    context.engine.tool_metadata.update(
+        {
+            "mcp_manager": runtime_marker,
+            "session_id": "current-session",
+            "read_file_state": [{"path": "old.py"}],
+        }
+    )
+    snapshot = {
+        "session_id": "saved123",
+        "summary": "resume metadata",
+        "messages": [ConversationMessage.from_user_text("saved prompt").model_dump(mode="json")],
+        "tool_metadata": {
+            "read_file_state": [{"path": "src/app.py", "span": "lines 1-40"}],
+            "recent_verified_work": ["Ran tests before restart"],
+            "task_focus_state": {
+                "goal": "continue frontend restore",
+                "recent_goals": ["continue frontend restore"],
+                "active_artifacts": ["src/app.py"],
+                "verified_state": ["Ran tests before restart"],
+                "next_step": "finish regression",
+            },
+            "mcp_manager": "must-not-replace-runtime-object",
+        },
+    }
+
+    class _SessionBackend:
+        def get_session_dir(self, cwd):
+            return Path(cwd)
+
+        def save_snapshot(self, **kwargs):
+            return Path(kwargs["cwd"]) / "latest.json"
+
+        def load_latest(self, cwd):
+            return None
+
+        def list_snapshots(self, cwd, limit=20):
+            return []
+
+        def load_by_id(self, cwd, session_id):
+            return snapshot if session_id == "saved123" else None
+
+        def export_markdown(self, **kwargs):
+            return Path(kwargs["cwd"]) / "transcript.md"
+
+    context.session_backend = _SessionBackend()
+
+    command, args = registry.lookup("/resume saved123")
+    result = await command.handler(args, context)
+
+    assert "Restored 1 messages" in result.message
+    assert context.engine.messages[0].text == "saved prompt"
+    assert context.engine.tool_metadata["read_file_state"] == [
+        {"path": "src/app.py", "span": "lines 1-40"}
+    ]
+    assert context.engine.tool_metadata["recent_verified_work"] == ["Ran tests before restart"]
+    assert context.engine.tool_metadata["task_focus_state"]["goal"] == "continue frontend restore"
+    assert context.engine.tool_metadata["mcp_manager"] is runtime_marker
+    assert context.engine.tool_metadata["session_id"] == "current-session"
+
+
+@pytest.mark.asyncio
 async def test_ui_mode_commands_persist_and_update_state(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()

@@ -88,6 +88,7 @@ from openharness.services.session_memory import (
     update_session_memory_file,
 )
 from openharness.services.session_backend import DEFAULT_SESSION_BACKEND, SessionBackend
+from openharness.services.session_storage import PERSISTED_TOOL_METADATA_KEYS
 from openharness.skills import load_skill_registry
 from openharness.skills.types import SkillDefinition
 from openharness.tasks import get_task_manager
@@ -148,6 +149,20 @@ class CommandContext:
 
 
 CommandHandler = Callable[[str, CommandContext], Awaitable[CommandResult]]
+
+
+def _restore_session_snapshot(context: CommandContext, snapshot: dict) -> list[ConversationMessage]:
+    """Restore messages and persisted tool carry-over state into the live engine."""
+    messages = sanitize_conversation_messages(
+        [ConversationMessage.model_validate(item) for item in snapshot.get("messages", [])]
+    )
+    context.engine.load_messages(messages)
+    metadata = snapshot.get("tool_metadata")
+    if isinstance(metadata, dict):
+        for key in PERSISTED_TOOL_METADATA_KEYS:
+            if key in metadata:
+                context.engine.tool_metadata[key] = metadata[key]
+    return messages
 
 
 @dataclass
@@ -805,10 +820,7 @@ def create_default_command_registry(
             snapshot = context.session_backend.load_by_id(context.cwd, sid)
             if snapshot is None:
                 return CommandResult(message=f"Session not found: {sid}")
-            messages = sanitize_conversation_messages(
-                [ConversationMessage.model_validate(item) for item in snapshot.get("messages", [])]
-            )
-            context.engine.load_messages(messages)
+            messages = _restore_session_snapshot(context, snapshot)
             summary = snapshot.get("summary", "")[:60]
             return CommandResult(
                 message=f"Restored {len(messages)} messages from session {sid}"
@@ -823,10 +835,7 @@ def create_default_command_registry(
             snapshot = context.session_backend.load_latest(context.cwd)
             if snapshot is None:
                 return CommandResult(message="No saved sessions found for this project.")
-            messages = sanitize_conversation_messages(
-                [ConversationMessage.model_validate(item) for item in snapshot.get("messages", [])]
-            )
-            context.engine.load_messages(messages)
+            messages = _restore_session_snapshot(context, snapshot)
             return CommandResult(
                 message=f"Restored {len(messages)} messages from the latest session.",
                 replay_messages=messages,

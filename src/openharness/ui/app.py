@@ -84,6 +84,8 @@ async def run_repl(
         api_key=api_key,
         api_format=api_format,
         permission_mode=permission_mode,
+        restore_messages=restore_messages,
+        restore_tool_metadata=restore_tool_metadata,
     )
     if exit_code != 0:
         raise SystemExit(exit_code)

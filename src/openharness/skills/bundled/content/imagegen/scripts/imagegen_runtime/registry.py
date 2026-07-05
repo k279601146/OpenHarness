@@ -6,11 +6,14 @@ per-image billing units. Keep user-facing docs in sync with these entries.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+import os
+from dataclasses import dataclass, replace
 from typing import Literal
 
 
 Provider = Literal["gpt_image", "openai_compatible", "gemini", "doubao"]
+PRICING_OVERRIDE_ENV = "OPENHARNESS_IMAGE_MODEL_PRICING_UNITS"
 
 
 @dataclass(frozen=True)
@@ -141,10 +144,10 @@ def get_model_spec(model_id: str | None) -> ImageModelSpec:
     if key in {"", "auto", "default"}:
         key = "gpt-image-2"
     if key in IMAGE_MODEL_REGISTRY:
-        return IMAGE_MODEL_REGISTRY[key]
+        return _apply_pricing_override(IMAGE_MODEL_REGISTRY[key])
     if key.startswith("gpt-image-"):
-        base = IMAGE_MODEL_REGISTRY["gpt-image-2"]
-        return ImageModelSpec(
+        base = _apply_pricing_override(IMAGE_MODEL_REGISTRY["gpt-image-2"])
+        return _apply_pricing_override(ImageModelSpec(
             model_id=key,
             provider="gpt_image",
             api_model=key,
@@ -155,13 +158,41 @@ def get_model_spec(model_id: str | None) -> ImageModelSpec:
             supports_edit=True,
             supports_reference=True,
             supports_batch=True,
-        )
+        ))
     if "banana" in key or "gemini" in key:
-        return IMAGE_MODEL_REGISTRY["nano-banana"]
+        return _apply_pricing_override(IMAGE_MODEL_REGISTRY["nano-banana"])
     if "doubao" in key or "seedream" in key:
-        return IMAGE_MODEL_REGISTRY["doubao-seedream-5-0-260128"]
-    return IMAGE_MODEL_REGISTRY["kolors"]
+        return _apply_pricing_override(IMAGE_MODEL_REGISTRY["doubao-seedream-5-0-260128"])
+    return _apply_pricing_override(IMAGE_MODEL_REGISTRY["kolors"])
 
 
 def image_model_pricing_units(model_id: str | None) -> float:
     return get_model_spec(model_id).pricing_unit
+
+
+def _apply_pricing_override(spec: ImageModelSpec) -> ImageModelSpec:
+    value = _pricing_overrides().get(spec.model_id.lower())
+    if value is None:
+        return spec
+    return replace(spec, pricing_unit=value)
+
+
+def _pricing_overrides() -> dict[str, float]:
+    raw = os.getenv(PRICING_OVERRIDE_ENV, "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    result: dict[str, float] = {}
+    for model_id, value in data.items():
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            continue
+        if numeric >= 0:
+            result[str(model_id).strip().lower()] = numeric
+    return result

@@ -236,6 +236,29 @@ def test_task_worker_flag_routes_to_run_task_worker(monkeypatch):
     assert captured["model"] == "kimi-k2.5"
 
 
+def test_backend_restore_session_file_passes_payload_to_run_repl(tmp_path: Path, monkeypatch):
+    runner = CliRunner()
+    captured = {}
+    payload = {
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "saved prompt"}]}],
+        "tool_metadata": {"recent_verified_work": ["saved tool state"]},
+    }
+    restore_file = tmp_path / "restore.json"
+    restore_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    async def fake_run_repl(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("openharness.ui.app.run_repl", fake_run_repl)
+
+    result = runner.invoke(app, ["--backend-only", "--restore-session-file", str(restore_file)])
+
+    assert result.exit_code == 0
+    assert captured["backend_only"] is True
+    assert captured["restore_messages"] == payload["messages"]
+    assert captured["restore_tool_metadata"] == payload["tool_metadata"]
+
+
 def test_dry_run_uses_preview_builder_and_skips_repl(monkeypatch):
     runner = CliRunner()
     captured = {}

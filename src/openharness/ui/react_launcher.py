@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -89,6 +90,7 @@ def build_backend_command(
     api_key: str | None = None,
     api_format: str | None = None,
     permission_mode: str | None = None,
+    restore_session_file: str | None = None,
 ) -> list[str]:
     """Return the command used by the React frontend to spawn the backend host."""
     command = [sys.executable, "-m", "openharness", "--backend-only"]
@@ -110,6 +112,8 @@ def build_backend_command(
         command.extend(["--api-format", api_format])
     if permission_mode:
         command.extend(["--permission-mode", permission_mode])
+    if restore_session_file:
+        command.extend(["--restore-session-file", restore_session_file])
     return command
 
 
@@ -125,6 +129,8 @@ async def launch_react_tui(
     api_key: str | None = None,
     api_format: str | None = None,
     permission_mode: str | None = None,
+    restore_messages: list[dict] | None = None,
+    restore_tool_metadata: dict[str, object] | None = None,
 ) -> int:
     """Launch the React terminal frontend as the default UI."""
     frontend_dir = get_frontend_dir()
@@ -145,35 +151,57 @@ async def launch_react_tui(
         if await install.wait() != 0:
             raise RuntimeError("Failed to install React terminal frontend dependencies")
 
-    env = os.environ.copy()
-    env["OPENHARNESS_FRONTEND_CONFIG"] = json.dumps(
-        {
-            "backend_command": build_backend_command(
-                cwd=cwd or str(Path.cwd()),
-                model=model,
-                max_turns=max_turns,
-                effort=effort,
-                base_url=base_url,
-                system_prompt=system_prompt,
-                api_key=api_key,
-                api_format=api_format,
-                permission_mode=permission_mode,
+    restore_dir: tempfile.TemporaryDirectory[str] | None = None
+    restore_session_file: str | None = None
+    if restore_messages is not None or restore_tool_metadata is not None:
+        restore_dir = tempfile.TemporaryDirectory(prefix="openharness-restore-")
+        restore_path = Path(restore_dir.name) / "session.json"
+        restore_path.write_text(
+            json.dumps(
+                {
+                    "messages": restore_messages or [],
+                    "tool_metadata": restore_tool_metadata or {},
+                },
+                ensure_ascii=False,
             ),
-            "initial_prompt": prompt,
-            "theme": _resolve_theme(),
-        }
-    )
-    tsx_cmd = _resolve_tsx(frontend_dir)
-    process = await asyncio.create_subprocess_exec(
-        *tsx_cmd,
-        "src/index.tsx",
-        cwd=str(frontend_dir),
-        env=env,
-        stdin=None,
-        stdout=None,
-        stderr=None,
-    )
-    return await process.wait()
+            encoding="utf-8",
+        )
+        restore_session_file = str(restore_path)
+
+    try:
+        env = os.environ.copy()
+        env["OPENHARNESS_FRONTEND_CONFIG"] = json.dumps(
+            {
+                "backend_command": build_backend_command(
+                    cwd=cwd or str(Path.cwd()),
+                    model=model,
+                    max_turns=max_turns,
+                    effort=effort,
+                    base_url=base_url,
+                    system_prompt=system_prompt,
+                    api_key=api_key,
+                    api_format=api_format,
+                    permission_mode=permission_mode,
+                    restore_session_file=restore_session_file,
+                ),
+                "initial_prompt": prompt,
+                "theme": _resolve_theme(),
+            }
+        )
+        tsx_cmd = _resolve_tsx(frontend_dir)
+        process = await asyncio.create_subprocess_exec(
+            *tsx_cmd,
+            "src/index.tsx",
+            cwd=str(frontend_dir),
+            env=env,
+            stdin=None,
+            stdout=None,
+            stderr=None,
+        )
+        return await process.wait()
+    finally:
+        if restore_dir is not None:
+            restore_dir.cleanup()
 
 
 __all__ = ["build_backend_command", "get_frontend_dir", "launch_react_tui"]

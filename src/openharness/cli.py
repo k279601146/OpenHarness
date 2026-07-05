@@ -2296,6 +2296,12 @@ def main(
         help="Run the stdin-driven headless worker loop used for background agent tasks",
         hidden=True,
     ),
+    restore_session_file: str | None = typer.Option(
+        None,
+        "--restore-session-file",
+        help="Load restored session JSON for the React backend host",
+        hidden=True,
+    ),
 ) -> None:
     """Start an interactive session or run a single prompt."""
     if ctx.invoked_subcommand is not None:
@@ -2327,6 +2333,20 @@ def main(
         save_settings(settings)
 
     from openharness.ui.app import run_print_mode, run_repl, run_task_worker
+
+    restore_messages = None
+    restore_tool_metadata = None
+    if restore_session_file:
+        try:
+            payload = json.loads(Path(restore_session_file).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"Error: failed to load restored session file: {exc}", file=sys.stderr)
+            raise typer.Exit(1)
+        if not isinstance(payload, dict):
+            print("Error: restored session file must contain a JSON object.", file=sys.stderr)
+            raise typer.Exit(1)
+        restore_messages = payload.get("messages")
+        restore_tool_metadata = payload.get("tool_metadata")
 
     if dry_run and (continue_session or resume is not None):
         print("Error: --dry-run does not support --continue/--resume yet.", file=sys.stderr)
@@ -2478,6 +2498,8 @@ def main(
             api_key=api_key,
             api_format=api_format,
             permission_mode=permission_mode,
+            restore_messages=restore_messages,
+            restore_tool_metadata=restore_tool_metadata,
             effort=effort,
         )
     )

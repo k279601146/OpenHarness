@@ -7,11 +7,14 @@ Keep user-facing provider docs in sync with these entries.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json
+import os
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 
 Provider = Literal["seedance", "veo", "kling"]
+BASE_BILLING_OVERRIDE_ENV = "OPENHARNESS_VIDEO_MODEL_BASE_BILLING_UNITS"
 
 
 @dataclass(frozen=True)
@@ -211,11 +214,44 @@ def get_model_spec(model_id: str | None) -> VideoModelSpec:
         key = DEFAULT_VIDEO_MODEL
     key = ALIASES.get(key, key)
     if key in VIDEO_MODEL_REGISTRY:
-        return VIDEO_MODEL_REGISTRY[key]
+        return _apply_base_billing_override(VIDEO_MODEL_REGISTRY[key])
     if "keling" in key or "kling" in key:
-        return VIDEO_MODEL_REGISTRY["kling-3.0"]
+        return _apply_base_billing_override(VIDEO_MODEL_REGISTRY["kling-3.0"])
     if "video3" in key or "veo" in key:
-        return VIDEO_MODEL_REGISTRY["veo-3.1"]
+        return _apply_base_billing_override(VIDEO_MODEL_REGISTRY["veo-3.1"])
     if "seedance" in key or "doubao" in key:
-        return VIDEO_MODEL_REGISTRY[DEFAULT_VIDEO_MODEL]
-    return VIDEO_MODEL_REGISTRY[DEFAULT_VIDEO_MODEL]
+        return _apply_base_billing_override(VIDEO_MODEL_REGISTRY[DEFAULT_VIDEO_MODEL])
+    return _apply_base_billing_override(VIDEO_MODEL_REGISTRY[DEFAULT_VIDEO_MODEL])
+
+
+def _apply_base_billing_override(spec: VideoModelSpec) -> VideoModelSpec:
+    value = _base_billing_overrides().get(spec.model_id.lower())
+    if value is None:
+        return spec
+    return replace(
+        spec,
+        base_billing_units=value,
+        usd_per_second_by_resolution={},
+        usd_per_second_with_audio_by_resolution={},
+    )
+
+
+def _base_billing_overrides() -> dict[str, float]:
+    raw = os.getenv(BASE_BILLING_OVERRIDE_ENV, "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    result: dict[str, float] = {}
+    for model_id, value in data.items():
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            continue
+        if numeric >= 0:
+            result[str(model_id).strip().lower()] = numeric
+    return result

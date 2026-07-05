@@ -507,8 +507,10 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 				<ConversationView
 					items={deferredTranscript}
 					assistantBuffer={deferredAssistantBuffer}
-					showWelcome={session.ready && outputStyle !== 'codex'}
+					showWelcome={deferredTranscript.length === 0 && deferredAssistantBuffer.length === 0}
 					outputStyle={outputStyle}
+					status={deferredStatus}
+					commands={session.commands}
 				/>
 			</Box>
 
