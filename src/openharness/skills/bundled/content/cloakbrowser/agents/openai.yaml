@@ -1,0 +1,4 @@
+interface:
+  display_name: "CloakBrowser"
+  short_description: "隐蔽浏览器自动化与用户级隔离"
+  default_prompt: "Use $cloakbrowser to automate a bot-protected website with an isolated profile."
