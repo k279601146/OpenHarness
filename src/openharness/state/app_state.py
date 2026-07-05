@@ -13,9 +13,15 @@ class AppState:
     permission_mode: str
     theme: str
     cwd: str = "."
+    active_profile: str = "unknown"
+    profile_label: str = "unknown"
     provider: str = "unknown"
     auth_status: str = "missing"
     base_url: str = ""
+    allowed_models: list[str] = field(default_factory=list)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    estimated_tokens: int = 0
     vim_enabled: bool = False
     voice_enabled: bool = False
     voice_available: bool = False
