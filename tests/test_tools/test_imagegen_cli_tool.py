@@ -7,7 +7,13 @@ from pathlib import Path
 import pytest
 
 from openharness.tools.base import ToolExecutionContext
-from openharness.tools.imagegen_cli_tool import ImagegenCliInput, ImagegenCliTool, _build_argv, _build_output_paths
+from openharness.tools.imagegen_cli_tool import (
+    ImagegenCliInput,
+    ImagegenCliTool,
+    _build_argv,
+    _build_output_paths,
+    _normalize_openai_sdk_base_url,
+)
 
 
 class FakeE2BProcess:
@@ -190,6 +196,17 @@ def test_build_argv_filters_png_output_compression(tmp_path: Path) -> None:
     assert "--output-format" in argv
     assert argv[argv.index("--output-format") + 1] == "png"
     assert "--output-compression" not in argv
+
+
+def test_normalize_openai_sdk_base_url_adds_v1() -> None:
+    assert (
+        _normalize_openai_sdk_base_url("https://api.packyapi.com")
+        == "https://api.packyapi.com/v1"
+    )
+    assert (
+        _normalize_openai_sdk_base_url("https://api.packyapi.com/v1")
+        == "https://api.packyapi.com/v1"
+    )
 
 
 def test_build_argv_keeps_legacy_gpt_image_input_fidelity(tmp_path: Path) -> None:

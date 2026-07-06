@@ -19,6 +19,7 @@ import re
 import sys
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+from urllib.parse import urlparse
 
 from io import BytesIO
 
@@ -74,6 +75,51 @@ def _get_api_credentials() -> tuple[str, str]:
     api_key = os.getenv("GPT_IMAGEGEN_API_KEY", "")
     base_url = os.getenv("GPT_IMAGEGEN_BASE_URL", "https://api.packyapi.com")
     return api_key, base_url
+
+
+def _normalize_openai_sdk_base_url(base_url: str) -> str:
+    base = base_url.strip().rstrip("/")
+    if base.endswith("/images/generations"):
+        base = base[: -len("/images/generations")].rstrip("/")
+    if base.endswith("/images/edits"):
+        base = base[: -len("/images/edits")].rstrip("/")
+    if not base.endswith("/v1"):
+        base = f"{base}/v1"
+    return base
+
+
+def _is_official_openai_base_url(base_url: str) -> bool:
+    host = (urlparse(base_url).hostname or "").lower()
+    return host == "api.openai.com"
+
+
+def _openai_sdk_compat_headers(base_url: str) -> dict[str, str] | None:
+    if _is_official_openai_base_url(base_url):
+        return None
+    # Some OpenAI-compatible gateways block the SDK's default Stainless headers.
+    return {
+        "User-Agent": "python-httpx/0.28.1",
+        "X-Stainless-Lang": "",
+        "X-Stainless-Package-Version": "",
+        "X-Stainless-OS": "",
+        "X-Stainless-Arch": "",
+        "X-Stainless-Runtime": "",
+        "X-Stainless-Runtime-Version": "",
+        "X-Stainless-Retry-Count": "",
+        "X-Stainless-Read-Timeout": "",
+    }
+
+
+def _openai_client_kwargs(api_key: str, base_url: str) -> dict[str, Any]:
+    normalized_base_url = _normalize_openai_sdk_base_url(base_url)
+    kwargs: dict[str, Any] = {
+        "api_key": api_key,
+        "base_url": normalized_base_url,
+    }
+    compat_headers = _openai_sdk_compat_headers(normalized_base_url)
+    if compat_headers is not None:
+        kwargs["default_headers"] = compat_headers
+    return kwargs
 
 
 def _ensure_api_key(dry_run: bool) -> None:
@@ -417,7 +463,7 @@ def _create_client():
     except ImportError:
         _die(f"openai SDK not installed in the active environment. {_dependency_hint('openai')}")
     api_key, base_url = _get_api_credentials()
-    return OpenAI(api_key=api_key, base_url=base_url)
+    return OpenAI(**_openai_client_kwargs(api_key, base_url))
 
 
 def _create_async_client():
@@ -435,7 +481,7 @@ def _create_async_client():
             f"{_dependency_hint('openai', upgrade=True)}"
         )
     api_key, base_url = _get_api_credentials()
-    return AsyncOpenAI(api_key=api_key, base_url=base_url)
+    return AsyncOpenAI(**_openai_client_kwargs(api_key, base_url))
 
 
 def _slugify(value: str) -> str:
