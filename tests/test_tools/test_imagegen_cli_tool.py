@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from openharness.tools.base import ToolExecutionContext
-from openharness.tools.imagegen_cli_tool import ImagegenCliInput, ImagegenCliTool, _build_output_paths
+from openharness.tools.imagegen_cli_tool import ImagegenCliInput, ImagegenCliTool, _build_argv, _build_output_paths
 
 
 class FakeE2BProcess:
@@ -96,24 +96,152 @@ async def test_imagegen_cli_dry_run_routes_doubao_and_multiple_outputs(
     assert result.metadata["billing_units"] == 1.4
 
 
-@pytest.mark.asyncio
-async def test_imagegen_cli_rejects_gpt_image_2_transparent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GPT_IMAGEGEN_API_KEY", "test-key")
-
-    tool = ImagegenCliTool()
-    result = await tool.execute(
+def test_build_argv_filters_gpt_image_2_unsupported_parameters(tmp_path: Path) -> None:
+    argv = _build_argv(
+        Path("image_gen.py"),
         ImagegenCliInput(
-            command="generate",
-            prompt="a transparent icon",
+            command="edit",
+            prompt="make it brighter",
+            images=["source.png"],
             model="gpt-image-2",
             background="transparent",
-            dry_run=True,
+            input_fidelity="high",
         ),
-        ToolExecutionContext(cwd=tmp_path),
+        tmp_path,
     )
 
-    assert result.is_error
-    assert "transparent backgrounds are not supported in gpt-image-2" in result.output
+    assert "--input-fidelity" not in argv
+    assert "--background" not in argv
+
+
+def test_build_argv_keeps_gpt_image_2_supported_parameters(tmp_path: Path) -> None:
+    argv = _build_argv(
+        Path("image_gen.py"),
+        ImagegenCliInput(
+            command="generate",
+            prompt="a poster",
+            model="gpt-image-2",
+            n=3,
+            size="1536x1024",
+            quality="high",
+            background="opaque",
+            output_format="webp",
+            output_compression=82,
+            moderation="low",
+        ),
+        tmp_path,
+    )
+
+    for flag, value in {
+        "--n": "3",
+        "--size": "1536x1024",
+        "--quality": "high",
+        "--background": "opaque",
+        "--output-format": "webp",
+        "--output-compression": "82",
+        "--moderation": "low",
+    }.items():
+        assert flag in argv
+        assert argv[argv.index(flag) + 1] == value
+
+
+def test_build_argv_filters_png_output_compression(tmp_path: Path) -> None:
+    argv = _build_argv(
+        Path("image_gen.py"),
+        ImagegenCliInput(
+            command="generate",
+            prompt="a poster",
+            model="gpt-image-2",
+            output_format="png",
+            output_compression=82,
+        ),
+        tmp_path,
+    )
+
+    assert "--output-format" in argv
+    assert argv[argv.index("--output-format") + 1] == "png"
+    assert "--output-compression" not in argv
+
+
+def test_build_argv_keeps_legacy_gpt_image_input_fidelity(tmp_path: Path) -> None:
+    argv = _build_argv(
+        Path("image_gen.py"),
+        ImagegenCliInput(
+            command="edit",
+            prompt="make it brighter",
+            images=["source.png"],
+            model="gpt-image-1.5",
+            input_fidelity="high",
+        ),
+        tmp_path,
+    )
+
+    assert "--input-fidelity" in argv
+    assert argv[argv.index("--input-fidelity") + 1] == "high"
+
+
+def test_build_argv_filters_non_gpt_provider_parameters(tmp_path: Path) -> None:
+    argv = _build_argv(
+        Path("image_gen.py"),
+        ImagegenCliInput(
+            command="edit",
+            prompt="make it brighter",
+            images=["source.png"],
+            mask="mask.png",
+            model="nano-banana-pro",
+            n=2,
+            aspect_ratio="16:9",
+            quality="high",
+            background="opaque",
+            output_format="webp",
+            output_compression=82,
+            moderation="low",
+            input_fidelity="high",
+        ),
+        tmp_path,
+    )
+
+    assert "--size" in argv
+    assert "--aspect-ratio" in argv
+    assert argv[argv.index("--aspect-ratio") + 1] == "16:9"
+    for flag in [
+        "--n",
+        "--quality",
+        "--background",
+        "--output-format",
+        "--output-compression",
+        "--moderation",
+        "--mask",
+        "--input-fidelity",
+    ]:
+        assert flag not in argv
+
+
+def test_build_argv_keeps_doubao_supported_parameters(tmp_path: Path) -> None:
+    argv = _build_argv(
+        Path("image_gen.py"),
+        ImagegenCliInput(
+            command="generate",
+            prompt="a poster",
+            model="doubao-seedream-5-0-260128",
+            n=2,
+            size="2048x2048",
+            aspect_ratio="1:1",
+            quality="high",
+            output_format="webp",
+        ),
+        tmp_path,
+    )
+
+    for flag, value in {
+        "--n": "2",
+        "--size": "2048x2048",
+        "--aspect-ratio": "1:1",
+    }.items():
+        assert flag in argv
+        assert argv[argv.index(flag) + 1] == value
+    assert "--quality" not in argv
+    assert "--output-format" not in argv
 
 
 def test_build_output_paths_multiple(tmp_path: Path) -> None:
