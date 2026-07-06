@@ -203,6 +203,7 @@ def build_runtime_system_prompt(
     sections.append(
         f"# Environment Context\n"
         f"- Current Date (UTC): {env_info.date}\n"
+        f"- User Default Timezone: Asia/Shanghai\n"
         f"- Working Directory: {env_info.cwd}\n"
         f"- OS: {env_info.os_name} {env_info.os_version}\n"
         f"- Sudo: {env_info.extra.get('sudo', 'Not available')}\n"

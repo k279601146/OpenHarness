@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 import json
 import os
 import posixpath
@@ -18,24 +17,6 @@ from pydantic import BaseModel, Field, field_validator
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.tools.bash_tool import _build_provider_tool_env
 from openharness.tools.sandbox_workspace import get_e2b_task_session, to_sandbox_path, uses_e2b_task_workspace
-
-
-GPT_IMAGE_2_MODEL = "gpt-image-2"
-
-
-@dataclass(frozen=True)
-class ImagegenCliCapabilities:
-    n: bool = True
-    size: bool = True
-    aspect_ratio: bool = False
-    quality: bool = False
-    background: bool = False
-    transparent_background: bool = False
-    output_format: bool = False
-    output_compression: bool = False
-    moderation: bool = False
-    input_fidelity: bool = False
-    mask: bool = False
 
 
 class ImagegenCliInput(BaseModel):
@@ -63,8 +44,6 @@ class ImagegenCliInput(BaseModel):
         description="Image API background mode. Only use transparent, opaque, or auto; visual scene backgrounds belong in prompt/scene.",
     )
     output_format: str = Field(default="png")
-    output_compression: int | None = Field(default=None, ge=0, le=100)
-    moderation: str | None = Field(default=None)
     input_fidelity: str | None = Field(default=None)
     use_case: str | None = None
     scene: str | None = None
@@ -359,31 +338,17 @@ def _script_path() -> Path:
 
 
 def _build_argv(script: Path, arguments: ImagegenCliInput, cwd: Path) -> list[str]:
-    capabilities = _capabilities_for_model(arguments.model)
     argv = [sys.executable, str(script), arguments.command]
 
     _add_value(argv, "--model", arguments.model)
-    if capabilities.n:
-        _add_value(argv, "--n", str(arguments.num_images or arguments.n))
-    if capabilities.size:
-        _add_value(argv, "--size", arguments.size)
-    if capabilities.aspect_ratio:
-        _add_value(argv, "--aspect-ratio", arguments.aspect_ratio)
-    if capabilities.quality:
-        _add_value(argv, "--quality", arguments.quality)
-    if capabilities.output_format:
-        _add_value(argv, "--output-format", arguments.output_format)
-    if capabilities.output_compression and _supports_output_compression(arguments.output_format):
-        _add_value(argv, "--output-compression", str(arguments.output_compression) if arguments.output_compression is not None else None)
-    if capabilities.moderation:
-        _add_value(argv, "--moderation", arguments.moderation)
+    _add_value(argv, "--n", str(arguments.num_images or arguments.n))
+    _add_value(argv, "--size", arguments.size)
+    _add_value(argv, "--aspect-ratio", arguments.aspect_ratio)
+    _add_value(argv, "--quality", arguments.quality)
+    _add_value(argv, "--output-format", arguments.output_format)
     _add_value(argv, "--out", _as_cli_path(arguments.out, cwd))
     _add_value(argv, "--out-dir", _as_cli_path(arguments.out_dir, cwd) if arguments.out_dir else None)
-    background = arguments.background
-    if background == "transparent" and not capabilities.transparent_background:
-        background = None
-    if capabilities.background:
-        _add_value(argv, "--background", background)
+    _add_value(argv, "--background", arguments.background)
     _add_value(argv, "--use-case", arguments.use_case)
     _add_value(argv, "--scene", arguments.scene)
     _add_value(argv, "--subject", arguments.subject)
@@ -406,60 +371,12 @@ def _build_argv(script: Path, arguments: ImagegenCliInput, cwd: Path) -> list[st
     if arguments.command == "edit":
         for image in arguments.images:
             _add_value(argv, "--image", _as_cli_path(image, cwd))
-        if capabilities.mask:
-            _add_value(argv, "--mask", _as_cli_path(arguments.mask, cwd) if arguments.mask else None)
-        if capabilities.input_fidelity:
-            _add_value(argv, "--input-fidelity", arguments.input_fidelity)
+        _add_value(argv, "--mask", _as_cli_path(arguments.mask, cwd) if arguments.mask else None)
+        _add_value(argv, "--input-fidelity", arguments.input_fidelity)
     elif arguments.command == "generate-batch":
         _add_value(argv, "--input", _as_cli_path(arguments.input_file, cwd) if arguments.input_file else None)
 
     return argv
-
-
-def _capabilities_for_model(model: str | None) -> ImagegenCliCapabilities:
-    normalized = _normalize_model_id(model)
-    if normalized.startswith("gpt-image-"):
-        supports_gpt_image_2_only = normalized == GPT_IMAGE_2_MODEL or normalized.startswith(f"{GPT_IMAGE_2_MODEL}-")
-        return ImagegenCliCapabilities(
-            n=True,
-            size=True,
-            quality=True,
-            background=True,
-            transparent_background=not supports_gpt_image_2_only,
-            output_format=True,
-            output_compression=True,
-            moderation=True,
-            input_fidelity=not supports_gpt_image_2_only,
-            mask=True,
-        )
-    if "banana" in normalized or "gemini" in normalized:
-        return ImagegenCliCapabilities(
-            n=False,
-            size=True,
-            aspect_ratio=True,
-        )
-    if "doubao" in normalized or "seedream" in normalized:
-        return ImagegenCliCapabilities(
-            n=True,
-            size=True,
-            aspect_ratio=True,
-        )
-    return ImagegenCliCapabilities(
-        n=True,
-        size=True,
-        aspect_ratio=True,
-    )
-
-
-def _normalize_model_id(model: str | None) -> str:
-    normalized = (model or GPT_IMAGE_2_MODEL).strip().lower()
-    if normalized in {"", "auto", "default"}:
-        return GPT_IMAGE_2_MODEL
-    return normalized
-
-
-def _supports_output_compression(output_format: str | None) -> bool:
-    return (output_format or "").strip().lower() in {"jpeg", "jpg", "webp"}
 
 
 async def _prepare_e2b_arguments(

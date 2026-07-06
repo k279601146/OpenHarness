@@ -124,7 +124,6 @@ def test_build_argv_keeps_gpt_image_2_supported_parameters(tmp_path: Path) -> No
             n=3,
             size="1536x1024",
             quality="high",
-            background="opaque",
             output_format="webp",
             output_compression=82,
             moderation="low",
@@ -136,13 +135,43 @@ def test_build_argv_keeps_gpt_image_2_supported_parameters(tmp_path: Path) -> No
         "--n": "3",
         "--size": "1536x1024",
         "--quality": "high",
-        "--background": "opaque",
         "--output-format": "webp",
         "--output-compression": "82",
         "--moderation": "low",
     }.items():
         assert flag in argv
         assert argv[argv.index(flag) + 1] == value
+
+
+def test_build_argv_omits_gpt_image_2_opaque_background_default(tmp_path: Path) -> None:
+    argv = _build_argv(
+        Path("image_gen.py"),
+        ImagegenCliInput(
+            command="generate",
+            prompt="a poster",
+            model="gpt-image-2",
+            background="opaque",
+        ),
+        tmp_path,
+    )
+
+    assert "--background" not in argv
+
+
+def test_build_argv_keeps_gpt_image_2_auto_background(tmp_path: Path) -> None:
+    argv = _build_argv(
+        Path("image_gen.py"),
+        ImagegenCliInput(
+            command="generate",
+            prompt="a poster",
+            model="gpt-image-2",
+            background="auto",
+        ),
+        tmp_path,
+    )
+
+    assert "--background" in argv
+    assert argv[argv.index("--background") + 1] == "auto"
 
 
 def test_build_argv_filters_png_output_compression(tmp_path: Path) -> None:

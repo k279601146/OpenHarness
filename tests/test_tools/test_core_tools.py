@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from openharness.services.cron import get_cron_job
 from openharness.tools.bash_tool import BashTool, BashToolInput
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.brief_tool import BriefTool, BriefToolInput
@@ -383,6 +384,9 @@ async def test_cron_and_remote_trigger_tools(tmp_path: Path, monkeypatch):
         context,
     )
     assert create_result.is_error is False
+    job = get_cron_job("nightly")
+    assert job is not None
+    assert job["timezone"] == "Asia/Shanghai"
 
     list_result = await CronListTool().execute(CronListToolInput(), context)
     assert "nightly" in list_result.output

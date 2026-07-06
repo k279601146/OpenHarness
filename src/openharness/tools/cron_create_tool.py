@@ -18,6 +18,9 @@ from openharness.services.cron import upsert_cron_job, validate_cron_expression,
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
 
+DEFAULT_TIMEZONE = "Asia/Shanghai"
+
+
 def _build_saas_task_command(api_dir: str, payload: dict[str, Any]) -> str:
     encoded = base64.urlsafe_b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode("ascii")
     command = " ".join(
@@ -95,7 +98,7 @@ def _create_saas_scheduled_task(arguments: "CronCreateToolInput", payload: dict[
         prompt=prompt,
         schedule=arguments.schedule.strip(),
         frequency=str(payload.get("frequency") or _frequency_from_schedule(arguments.schedule)).strip() or "custom",
-        timezone=arguments.timezone or "Asia/Shanghai",
+        timezone=arguments.timezone or DEFAULT_TIMEZONE,
         enabled=arguments.enabled,
         skip_confirmation=bool(payload.get("skip_confirmation") or payload.get("skipConfirmation") or False),
         run_mode=str(payload.get("run_mode") or "continue_thread"),
@@ -163,7 +166,13 @@ class CronCreateToolInput(BaseModel):
     )
     command: str | None = Field(default=None, description="Shell command to run when triggered")
     message: str | None = Field(default=None, description="Instruction for an agent_turn cron job")
-    timezone: str | None = Field(default=None, description="IANA timezone for interpreting cron schedule")
+    timezone: str | None = Field(
+        default=None,
+        description=(
+            "IANA timezone for interpreting cron schedule. If omitted, use the user's default timezone "
+            f"({DEFAULT_TIMEZONE}) and do not ask a timezone-only clarification."
+        ),
+    )
     cwd: str | None = Field(default=None, description="Optional working directory override")
     enabled: bool = Field(default=True, description="Whether the job is active")
     payload: dict[str, Any] | None = Field(
@@ -188,6 +197,8 @@ class CronCreateTool(BaseTool):
     name = "cron_create"
     description = (
         "Create or replace a local cron job with a standard cron expression. "
+        f"When the user gives a local time without a timezone, default to {DEFAULT_TIMEZONE}; "
+        "ask about timezone only when another region, multiple locales, or material ambiguity is involved. "
         "Use 'oh cron start' to run the scheduler daemon."
     )
     input_model = CronCreateToolInput
@@ -208,6 +219,7 @@ class CronCreateTool(BaseTool):
             )
         if not validate_timezone(arguments.timezone):
             return ToolResult(output=f"Invalid timezone: {arguments.timezone!r}", is_error=True)
+        effective_timezone = arguments.timezone or DEFAULT_TIMEZONE
 
         payload = dict(arguments.payload or {})
         if arguments.message:
@@ -235,11 +247,10 @@ class CronCreateTool(BaseTool):
         job = {
             "name": arguments.name,
             "schedule": arguments.schedule,
+            "timezone": effective_timezone,
             "cwd": arguments.cwd or str(context.cwd),
             "enabled": arguments.enabled,
         }
-        if arguments.timezone:
-            job["timezone"] = arguments.timezone
         if arguments.command is not None:
             job["command"] = arguments.command
         if payload:

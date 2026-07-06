@@ -38,9 +38,12 @@ Use a scheduled AI task only when the run genuinely needs agent reasoning or con
 When the user asks in chat to create a scheduled task, the expected OpenHarness SaaS behavior is:
 
 1. Parse the requested cadence and action.
-2. Create `ScheduledTask` through the SaaS API.
-3. Write a `scheduled_task_card` event back into the current chat.
-4. Show the card with title, prompt summary, repeat schedule, next run, status, skip confirmation, and actions.
-5. Let the user run now, pause/resume, edit, open all scheduled tasks, or delete from the card.
+2. Use `Asia/Shanghai` as the default timezone when the user gives a local time without specifying a timezone.
+3. Do not ask a timezone-only clarification when the user's requested time can reasonably use the default timezone.
+4. Ask about timezone only when the user mentions another region, multiple locales are involved, or the timezone materially changes the outcome.
+5. Create `ScheduledTask` through the SaaS API.
+6. Write a `scheduled_task_card` event back into the current chat.
+7. Show the card with title, prompt summary, repeat schedule, next run, status, skip confirmation, and actions.
+8. Let the user run now, pause/resume, edit, open all scheduled tasks, or delete from the card.
 
 See `references/openharness-scheduled-task-flow.md` for implementation details.
