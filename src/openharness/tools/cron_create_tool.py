@@ -74,7 +74,7 @@ def _create_saas_scheduled_task(arguments: "CronCreateToolInput", payload: dict[
 
     try:
         from models import AgentEvent, AgentThread, ScheduledTask
-        from scheduled_task_service import apply_context_defaults, next_run_time, normalize_list, serialize_task
+        from scheduled_task_service import apply_context_defaults, execution_skill_ids, next_run_time, normalize_list, serialize_task
         from scheduled_tasks import scheduled_task_card_payload
     except Exception as exc:
         return ToolResult(
@@ -91,6 +91,46 @@ def _create_saas_scheduled_task(arguments: "CronCreateToolInput", payload: dict[
     if not prompt:
         return ToolResult(output="Scheduled task requires message.", is_error=True)
 
+    scheduled_run_id = str(metadata.get("scheduled_run_id") or "")
+    if scheduled_run_id:
+        scheduled_task_id = str(metadata.get("scheduled_task_id") or "")
+        scheduled_task_title = str(metadata.get("scheduled_task_title") or "").strip()
+        scheduled_task_schedule = str(metadata.get("scheduled_task_schedule") or "").strip()
+        existing = None
+        if scheduled_task_id:
+            existing = (
+                db.query(ScheduledTask.id)
+                .filter(
+                    ScheduledTask.id == scheduled_task_id,
+                    ScheduledTask.owner_id == int(user_id),
+                    ScheduledTask.deleted_at.is_(None),
+                )
+                .first()
+            )
+        elif scheduled_task_title and scheduled_task_schedule:
+            existing = (
+                db.query(ScheduledTask.id)
+                .filter(
+                    ScheduledTask.owner_id == int(user_id),
+                    ScheduledTask.title == scheduled_task_title,
+                    ScheduledTask.schedule == scheduled_task_schedule,
+                    ScheduledTask.deleted_at.is_(None),
+                )
+                .first()
+            )
+        same_request = (
+            (scheduled_task_title and title == scheduled_task_title)
+            or (scheduled_task_schedule and arguments.schedule.strip() == scheduled_task_schedule)
+        )
+        if existing or same_request:
+            return ToolResult(
+                output=(
+                    "Cannot create a scheduled task from inside an existing scheduled task run. "
+                    "This run should execute the task content directly instead of creating another schedule."
+                ),
+                is_error=True,
+            )
+
     task = ScheduledTask(
         id=str(uuid.uuid4()),
         owner_id=int(user_id),
@@ -103,7 +143,7 @@ def _create_saas_scheduled_task(arguments: "CronCreateToolInput", payload: dict[
         skip_confirmation=bool(payload.get("skip_confirmation") or payload.get("skipConfirmation") or False),
         run_mode=str(payload.get("run_mode") or "continue_thread"),
         model_id=thread.model_id,
-        enabled_skills=normalize_list(thread.enabled_skills),
+        enabled_skills=execution_skill_ids(thread.enabled_skills),
         selected_connectors=normalize_list(thread.selected_connectors, limit=8),
         preferred_image_model=thread.preferred_image_model,
         preferred_video_model=thread.preferred_video_model,
