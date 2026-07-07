@@ -296,7 +296,7 @@ def test_build_output_paths_multiple(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_imagegen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
+async def test_imagegen_cli_e2b_publishes_without_uploading_artifact(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -353,15 +353,14 @@ async def test_imagegen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
     )
 
     assert not result.is_error
-    assert result.metadata["artifact_paths"] == ["/home/user/projects/deck/images/cover_bg.png"]
-    assert result.metadata["sandbox_path_role"] == "workspace_mirror"
+    assert len(result.metadata["artifact_paths"]) == 1
+    assert "sandbox_path_role" not in result.metadata
     assert result.metadata["publish_state"] == "published"
     assert result.metadata["delivery_required"] is False
     assert result.metadata["do_not_deliver_artifact"] is True
-    assert sandbox.files["/home/user/projects/deck/images/cover_bg.png"] == b"png-bytes"
+    assert sandbox.files == {}
     assert "D:\\home\\user" not in result.output
-    assert "/home/user/projects/deck/images/cover_bg.png" in result.output
-    assert "Do not call deliver_artifact" in result.output
+    assert "Published artifact paths:" in result.output
     assert seen_env["GPT_IMAGEGEN_API_KEY"] == "test-image-key"
     assert hook.calls == [
         {
@@ -370,8 +369,6 @@ async def test_imagegen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
             "source_tool": "imagegen_cli",
             "tool_use_id": "call-image",
             "origin": "host_generated",
-            "sandbox_path": "/home/user/projects/deck/images/cover_bg.png",
-            "sandbox_path_role": "workspace_mirror",
             "metadata": {
                 "publish_state": "published",
                 "published_artifact": True,
@@ -380,3 +377,62 @@ async def test_imagegen_cli_e2b_uploads_artifact_and_returns_sandbox_path(
             },
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_imagegen_cli_e2b_materializes_artifact_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sandbox = FakeE2BSession()
+    sandbox.files["/home/user/tasks/thread-1/inputs/materialized/cat-art_123.png"] = b"cat"
+    seen_argv: list[str] = []
+    seen_input = b""
+
+    async def fake_get_session(context):
+        del context
+        return sandbox
+
+    async def fake_materializer(raw, *, sandbox_session):
+        assert raw == "artifact:art_123"
+        assert sandbox_session is sandbox
+        return {"sandbox_path": "/home/user/tasks/thread-1/inputs/materialized/cat-art_123.png"}
+
+    def fake_run(argv, cwd, env, text, stdout, stderr, timeout, check):
+        nonlocal seen_input
+        del cwd, env, text, stdout, stderr, timeout, check
+        seen_argv[:] = list(argv)
+        seen_input = Path(argv[argv.index("--image") + 1]).read_bytes()
+        out_index = argv.index("--out") + 1
+        local_path = Path(argv[out_index])
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        local_path.write_bytes(b"png-bytes")
+
+        class Completed:
+            returncode = 0
+            stdout = f"IMAGEGEN_METADATA:{__import__('json').dumps({'artifact_paths': [str(local_path)]})}"
+
+        return Completed()
+
+    monkeypatch.setattr("openharness.tools.imagegen_cli_tool.get_e2b_task_session", fake_get_session)
+    monkeypatch.setattr("openharness.tools.imagegen_cli_tool.subprocess.run", fake_run)
+
+    result = await ImagegenCliTool().execute(
+        ImagegenCliInput(command="edit", prompt="hat", images=["artifact:art_123"], out="output/imagegen/hat.png"),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={
+                "workspace_backend": "e2b",
+                "primary_workspace": "/home/user/tasks/thread-1",
+                "settings": object(),
+                "user_id": 1,
+                "thread_id": "thread-1",
+                "artifact_materializer": fake_materializer,
+            },
+        ),
+    )
+
+    assert not result.is_error
+    image_arg = seen_argv[seen_argv.index("--image") + 1]
+    assert image_arg.endswith("image_1.png")
+    assert seen_input == b"cat"

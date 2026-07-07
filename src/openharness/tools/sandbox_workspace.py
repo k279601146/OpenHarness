@@ -188,12 +188,15 @@ def sandbox_artifacts_root(context: ToolExecutionContext) -> str:
 
 def sandbox_read_roots(context: ToolExecutionContext) -> tuple[str, ...]:
     workspace = sandbox_primary_workspace(context)
+    skills = sandbox_skills_root(context)
     artifacts = sandbox_artifacts_root(context)
-    return (workspace, artifacts, "/code", "/tmp")
+    return (workspace, skills, artifacts, "/code", "/tmp")
 
 
 def sandbox_write_roots(context: ToolExecutionContext) -> tuple[str, ...]:
-    return (sandbox_primary_workspace(context),)
+    workspace = sandbox_primary_workspace(context)
+    artifacts = sandbox_artifacts_root(context)
+    return (workspace, artifacts)
 
 
 def sandbox_skill_dir(context: ToolExecutionContext, skill: Any) -> str:
