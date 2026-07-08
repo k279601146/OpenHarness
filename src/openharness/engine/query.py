@@ -839,7 +839,12 @@ async def run_query(
                             message=(
                                 f"Request failed; retrying in {event.delay_seconds:.1f}s "
                                 f"(attempt {event.attempt + 1} of {event.max_attempts}): {event.message}"
-                            )
+                            ),
+                            kind="model_retrying",
+                            attempt=event.attempt + 1,
+                            max_attempts=event.max_attempts,
+                            delay_seconds=event.delay_seconds,
+                            detail=event.message,
                         ), None
                         continue
 

@@ -81,6 +81,11 @@ class StatusEvent:
     """A transient system status message shown to the user."""
 
     message: str
+    kind: str | None = None
+    attempt: int | None = None
+    max_attempts: int | None = None
+    delay_seconds: float | None = None
+    detail: str | None = None
 
 
 @dataclass(frozen=True)
