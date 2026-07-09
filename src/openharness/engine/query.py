@@ -1217,10 +1217,28 @@ async def _execute_tool_call(
                 )
             except Exception as exc:
                 log.warning("media execution slot acquisition failed: name=%s id=%s error=%s", tool_name, tool_use_id, exc)
+                release_metadata: dict[str, Any] = {}
+                if media_reservation and hook is not None and hasattr(hook, "release_media_tool_usage"):
+                    try:
+                        released = hook.release_media_tool_usage(
+                            media_reservation,
+                            reason="media_execution_slot_failed",
+                            tool_metadata={"error": str(exc)},
+                        )
+                        if isinstance(released, dict):
+                            release_metadata.update(released)
+                    except Exception as release_exc:
+                        log.exception("media usage reservation release failed after slot acquisition error: name=%s id=%s", tool_name, tool_use_id)
+                        return ToolResultBlock(
+                            tool_use_id=tool_use_id,
+                            content=f"Media billing release failed after concurrency limit error: {type(release_exc).__name__}: {release_exc}",
+                            is_error=True,
+                        )
                 return ToolResultBlock(
                     tool_use_id=tool_use_id,
                     content=f"Media execution concurrency limit failed: {type(exc).__name__}: {exc}",
                     is_error=True,
+                    result_metadata=release_metadata,
                 )
         result = await tool.execute(
             parsed_input,
