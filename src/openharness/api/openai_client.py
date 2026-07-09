@@ -381,9 +381,57 @@ def _looks_like_hosted_web_search_unsupported(exc: Exception) -> bool:
     )
 
 
+def _looks_like_endpoint_unsupported(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    body = getattr(exc, "body", None)
+    text = f"{body or ''} {exc}".lower()
+    if status_code in {404, 405}:
+        return True
+    if status_code not in {400, 422}:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "no route",
+            "route not found",
+            "unknown endpoint",
+            "unsupported endpoint",
+            "endpoint not found",
+            "unsupported api",
+            "unsupported route",
+            "wrong_api_format",
+            "api format",
+            "responses api is not",
+            "responses endpoint",
+            "chat/completions endpoint",
+        )
+    )
+
+
+def _looks_like_stream_options_unsupported(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code not in {400, 422}:
+        return False
+    body = getattr(exc, "body", None)
+    text = f"{body or ''} {exc}".lower()
+    if "stream_options" not in text:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "unsupported",
+            "not supported",
+            "unknown",
+            "unrecognized",
+            "invalid",
+            "extra_forbidden",
+        )
+    )
+
+
 def _convert_messages_to_openai(
     messages: list[ConversationMessage],
-    system_prompt: str | None,
+    system_prompt: Any,
 ) -> list[dict[str, Any]]:
     """Convert Anthropic-style messages to OpenAI chat format.
 
@@ -763,6 +811,24 @@ def _normalize_openai_base_url(base_url: str | None) -> str | None:
     return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
 
 
+def _chat_completion_params_for_request(request: ApiMessageRequest, *, stream: bool) -> dict[str, Any]:
+    tools = _convert_tools_to_openai(request.tools) if request.tools else None
+    params: dict[str, Any] = {
+        "model": request.model,
+        "messages": _convert_messages_to_openai(request.messages, request.system_prompt),
+        "stream": stream,
+    }
+    params.update(_token_limit_param_for_model(request.model, request.max_tokens))
+    params.update(_reasoning_effort_param_for_model(request.model, request.effort))
+    params.update(_service_tier_param())
+    if stream and not _openai_stream_usage_disabled():
+        params["stream_options"] = {"include_usage": True}
+    if tools:
+        params["tools"] = tools
+        params["tool_choice"] = "auto"
+    return params
+
+
 class OpenAICompatibleClient:
     """Client for OpenAI-compatible APIs (DashScope, GitHub Models, etc.).
 
@@ -865,6 +931,7 @@ class OpenAICompatibleClient:
         )
         params.update(prompt_cache_params)
         params.update(_service_tier_param())
+        chat_params = _chat_completion_params_for_request(request, stream=bool(params.get("stream")))
 
         async def _create_response_with_optional_param_fallback(create_params: dict[str, Any]) -> Any:
             try:
@@ -883,6 +950,41 @@ class OpenAICompatibleClient:
                     )
                     return await self._client.responses.create(**create_params)
                 raise
+
+        async def _create_chat_completion_with_optional_param_fallback(create_params: dict[str, Any]) -> Any:
+            try:
+                return await self._client.chat.completions.create(**create_params)
+            except Exception as exc:
+                if _looks_like_service_tier_unsupported(exc) and _strip_service_tier_param(create_params):
+                    log.warning(
+                        "[OpenAICompat:%s] chat service_tier unsupported by upstream; retrying without it",
+                        request_id,
+                    )
+                    return await self._client.chat.completions.create(**create_params)
+                if (
+                    _usage_attr(create_params, "stream_options") is not None
+                    and _looks_like_service_tier_unsupported(exc) is False
+                    and _looks_like_stream_options_unsupported(exc)
+                ):
+                    create_params.pop("stream_options", None)
+                    log.warning(
+                        "[OpenAICompat:%s] chat stream_options unsupported by upstream; retrying without usage include flag",
+                        request_id,
+                    )
+                    return await self._client.chat.completions.create(**create_params)
+                raise
+
+        async def _create_response_or_chat(create_params: dict[str, Any], chat_create_params: dict[str, Any]) -> tuple[str, Any]:
+            try:
+                return "responses", await _create_response_with_optional_param_fallback(create_params)
+            except Exception as exc:
+                if not _looks_like_endpoint_unsupported(exc):
+                    raise
+                log.warning(
+                    "[OpenAICompat:%s] responses endpoint unsupported by upstream; retrying via chat/completions",
+                    request_id,
+                )
+                return "chat/completions", await _create_chat_completion_with_optional_param_fallback(chat_create_params)
 
         log.info(
             "[OpenAICompat:%s] responses request model=%s stream=%s input_items=%d system=%s "
@@ -904,8 +1006,9 @@ class OpenAICompatibleClient:
 
         if not params.get("stream"):
             response: Any | None = None
+            response_protocol = "responses"
             try:
-                response = await _create_response_with_optional_param_fallback(params)
+                response_protocol, response = await _create_response_or_chat(params, chat_params)
             except Exception as exc:
                 if _has_hosted_web_search(responses_tools) and _looks_like_hosted_web_search_unsupported(exc):
                     fallback_tools = _convert_tools_to_responses_local_web_search_fallback(request.tools)
@@ -915,7 +1018,8 @@ class OpenAICompatibleClient:
                             "[OpenAICompat:%s] hosted web_search unsupported; retrying non-stream with local web_search function fallback",
                             request_id,
                         )
-                        response = await _create_response_with_optional_param_fallback(params)
+                        chat_params["tools"] = _convert_tools_to_openai(request.tools)
+                        response_protocol, response = await _create_response_or_chat(params, chat_params)
                     else:
                         raise
                 else:
@@ -941,6 +1045,23 @@ class OpenAICompatibleClient:
                 raise RequestFailure("Responses API returned no response")
 
             content: list[ContentBlock] = []
+            if response_protocol == "chat/completions":
+                message = _parse_assistant_response(response)
+                if message.text:
+                    yield ApiTextDeltaEvent(text=message.text)
+                log.info(
+                    "[OpenAICompat:%s] chat non-stream complete content_chars=%d tools=%d",
+                    request_id,
+                    len(message.text),
+                    len(message.tool_uses),
+                )
+                yield ApiMessageCompleteEvent(
+                    message=message,
+                    usage=_usage_snapshot_from_chat_response(response),
+                    stop_reason=_usage_attr(_usage_attr(response, "choices", [None])[0], "finish_reason"),
+                )
+                return
+
             for item in _usage_attr(response, "output", []) or []:
                 item_type = _response_item_attr(item, "type")
                 if item_type == "message":
@@ -973,35 +1094,40 @@ class OpenAICompatibleClient:
         collected_reasoning = ""
         function_call_items: list[Any] = []
         function_call_arguments: dict[str, str] = {}
+        chat_tool_calls: dict[int, dict[str, Any]] = {}
         finish_reason: str | None = None
         usage = UsageSnapshot()
         _think_buf = ""
 
         request_started_at = asyncio.get_event_loop().time()
+        response_protocol = "responses"
         try:
-            response_stream = await _create_response_with_optional_param_fallback(params)
+            response_protocol, response_stream = await _create_response_or_chat(params, chat_params)
             stream_opened_at = asyncio.get_event_loop().time()
             log.info(
-                "[OpenAICompat:%s] stream_open latency=%.3fs",
+                "[OpenAICompat:%s] stream_open latency=%.3fs protocol=%s",
                 request_id,
                 stream_opened_at - request_started_at,
+                response_protocol,
             )
         except Exception as exc:
             if _has_hosted_web_search(responses_tools) and _looks_like_hosted_web_search_unsupported(exc):
                 fallback_tools = _convert_tools_to_responses_local_web_search_fallback(request.tools)
                 if fallback_tools:
                     params["tools"] = fallback_tools
+                    chat_params["tools"] = _convert_tools_to_openai(request.tools)
                     log.warning(
                         "[OpenAICompat:%s] hosted web_search unsupported; retrying with local web_search function fallback",
                         request_id,
                     )
                     try:
-                        response_stream = await _create_response_with_optional_param_fallback(params)
+                        response_protocol, response_stream = await _create_response_or_chat(params, chat_params)
                         stream_opened_at = asyncio.get_event_loop().time()
                         log.info(
-                            "[OpenAICompat:%s] stream_open latency=%.3fs fallback=yes",
+                            "[OpenAICompat:%s] stream_open latency=%.3fs fallback=yes protocol=%s",
                             request_id,
                             stream_opened_at - request_started_at,
+                            response_protocol,
                         )
                     except Exception as fallback_exc:
                         log.warning(
@@ -1161,20 +1287,51 @@ class OpenAICompatibleClient:
                     continue
 
                 choices = _usage_attr(event, "choices")
+                event_usage = _usage_attr(event, "usage")
+                if event_usage:
+                    usage = _usage_snapshot_from_openai_usage(event_usage)
                 if not choices:
                     continue
                 choice = choices[0]
-                delta = _usage_attr(choice, "delta")
-                if not delta:
-                    continue
                 chunk_finish = _usage_attr(choice, "finish_reason")
                 if chunk_finish:
                     finish_reason = chunk_finish
+                delta = _usage_attr(choice, "delta")
+                if not delta:
+                    continue
 
                 reasoning_piece = _usage_attr(delta, "reasoning_content", "") or ""
                 if reasoning_piece:
                     collected_reasoning += reasoning_piece
                     yield ApiReasoningDeltaEvent(text=reasoning_piece)
+
+                delta_tool_calls = _usage_attr(delta, "tool_calls")
+                if delta_tool_calls:
+                    for raw_tool_call in delta_tool_calls:
+                        index = _usage_attr(raw_tool_call, "index", 0)
+                        try:
+                            index = int(index)
+                        except (TypeError, ValueError):
+                            index = len(chat_tool_calls)
+                        entry = chat_tool_calls.setdefault(
+                            index,
+                            {
+                                "type": "function_call",
+                                "call_id": f"call_{index}",
+                                "name": "",
+                                "arguments": "",
+                            },
+                        )
+                        call_id = _usage_attr(raw_tool_call, "id")
+                        if isinstance(call_id, str) and call_id:
+                            entry["call_id"] = call_id
+                        function = _usage_attr(raw_tool_call, "function") or {}
+                        name = _usage_attr(function, "name")
+                        if isinstance(name, str) and name:
+                            entry["name"] = name
+                        arguments = _usage_attr(function, "arguments")
+                        if isinstance(arguments, str) and arguments:
+                            entry["arguments"] = str(entry.get("arguments") or "") + arguments
 
                 delta_content = _usage_attr(delta, "content", "")
                 if delta_content:
@@ -1190,12 +1347,8 @@ class OpenAICompatibleClient:
                                 first_visible_delta_at - request_started_at,
                                 first_visible_delta_at - stream_opened_at,
                                 len(visible),
-                            )
+                        )
                         yield ApiTextDeltaEvent(text=visible)
-
-                event_usage = _usage_attr(event, "usage")
-                if event_usage:
-                    usage = _usage_snapshot_from_openai_usage(event_usage)
         except Exception as exc:
             log.warning(
                 "[OpenAICompat:%s] responses stream failed type=%s status=%s body=%s "
@@ -1212,6 +1365,7 @@ class OpenAICompatibleClient:
             )
             raise
 
+        function_call_items.extend(item for item in chat_tool_calls.values() if item.get("name"))
         collected_tool_calls: list[ToolUseBlock] = []
         for item in function_call_items:
             streamed_arguments = _function_argument_for_item(item, function_call_arguments)

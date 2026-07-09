@@ -29,6 +29,7 @@ from openharness.api.openai_client import (
     _strip_think_blocks,
     _token_limit_param_for_model,
 )
+from openharness.api.errors import AuthenticationFailure, RateLimitFailure, RequestFailure
 from openharness.engine.messages import (
     ConversationMessage,
     ImageBlock,
@@ -854,6 +855,172 @@ class TestStreamMessageTokenParams:
         assert fake_sdk.responses.calls[0]["tools"][0] == {"type": "web_search"}
         assert all(tool.get("type") != "web_search" for tool in fake_sdk.responses.calls[1]["tools"])
         assert fake_sdk.responses.calls[1]["tools"][0]["name"] == "web_search"
+
+    @pytest.mark.asyncio
+    async def test_responses_endpoint_unsupported_falls_back_to_chat_stream(self):
+        class _ResponsesNotFound(Exception):
+            status_code = 404
+            body = {"error": {"message": "NOT_FOUND"}}
+
+        class _FallbackResponses:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            async def create(self, **kwargs):
+                self.calls.append(kwargs)
+                raise _ResponsesNotFound("responses endpoint not found")
+
+        class _FallbackChatCompletions:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            async def create(self, **kwargs):
+                self.calls.append(kwargs)
+
+                async def _stream():
+                    yield {
+                        "id": "chatcmpl_fallback",
+                        "choices": [{"delta": {"content": "hello"}, "finish_reason": None}],
+                    }
+                    yield {
+                        "id": "chatcmpl_fallback",
+                        "choices": [{"delta": {}, "finish_reason": "stop"}],
+                        "usage": {"prompt_tokens": 2, "completion_tokens": 3},
+                    }
+
+                return _stream()
+
+        class _FallbackChat:
+            def __init__(self) -> None:
+                self.completions = _FallbackChatCompletions()
+
+        class _FallbackClient:
+            def __init__(self) -> None:
+                self.responses = _FallbackResponses()
+                self.chat = _FallbackChat()
+
+        client = OpenAICompatibleClient(api_key="test-key", base_url="http://localhost:3000/v1")
+        fake_sdk = _FallbackClient()
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="deepseek-v4-flash",
+            messages=[ConversationMessage.from_user_text("Say hi")],
+            tools=[{"name": "bash", "description": "Run shell", "input_schema": {"type": "object"}}],
+        )
+
+        events = [event async for event in client.stream_message(request)]
+
+        complete = events[-1]
+        assert complete.message.text == "hello"
+        assert complete.usage.input_tokens == 2
+        assert complete.usage.output_tokens == 3
+        assert fake_sdk.responses.calls[0]["input"][0]["content"][0]["text"] == "Say hi"
+        assert fake_sdk.chat.completions.calls[0]["messages"] == [{"role": "user", "content": "Say hi"}]
+        assert fake_sdk.chat.completions.calls[0]["tools"][0]["function"]["name"] == "bash"
+        assert fake_sdk.chat.completions.calls[0]["stream_options"] == {"include_usage": True}
+
+    @pytest.mark.asyncio
+    async def test_responses_model_not_found_does_not_fallback_to_chat_stream(self):
+        class _ModelNotFound(Exception):
+            status_code = 400
+            body = {"error": {"code": "model_not_found", "message": "model not found"}}
+
+        class _ResponsesModelNotFound:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            async def create(self, **kwargs):
+                self.calls.append(kwargs)
+                raise _ModelNotFound("model_not_found: model not found")
+
+        class _UnexpectedChatCompletions:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            async def create(self, **kwargs):
+                self.calls.append(kwargs)
+                raise AssertionError("chat fallback should not be called for model_not_found")
+
+        class _UnexpectedChat:
+            def __init__(self) -> None:
+                self.completions = _UnexpectedChatCompletions()
+
+        class _FallbackClient:
+            def __init__(self) -> None:
+                self.responses = _ResponsesModelNotFound()
+                self.chat = _UnexpectedChat()
+
+        client = OpenAICompatibleClient(api_key="test-key", base_url="http://localhost:3000/v1")
+        fake_sdk = _FallbackClient()
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="missing-model",
+            messages=[ConversationMessage.from_user_text("Say hi")],
+        )
+
+        with pytest.raises(RequestFailure):
+            [event async for event in client.stream_message(request)]
+
+        assert len(fake_sdk.responses.calls) == 1
+        assert fake_sdk.chat.completions.calls == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status_code", [401, 429])
+    async def test_chat_stream_options_text_does_not_retry_on_auth_or_rate_limit(self, monkeypatch, status_code):
+        class _ResponsesNotFound(Exception):
+            status_code = 404
+            body = {"error": {"message": "responses endpoint not found"}}
+
+        class _ChatStreamOptionsError(Exception):
+            def __init__(self, code: int) -> None:
+                self.status_code = code
+                self.body = {"error": {"message": "stream_options unsupported but request is not retryable"}}
+                super().__init__("stream_options unsupported but request is not retryable")
+
+        class _FallbackResponses:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            async def create(self, **kwargs):
+                self.calls.append(kwargs)
+                raise _ResponsesNotFound("responses endpoint not found")
+
+        class _FallbackChatCompletions:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            async def create(self, **kwargs):
+                self.calls.append(kwargs)
+                raise _ChatStreamOptionsError(status_code)
+
+        class _FallbackChat:
+            def __init__(self) -> None:
+                self.completions = _FallbackChatCompletions()
+
+        class _FallbackClient:
+            def __init__(self) -> None:
+                self.responses = _FallbackResponses()
+                self.chat = _FallbackChat()
+
+        client = OpenAICompatibleClient(api_key="test-key", base_url="http://localhost:3000/v1")
+        fake_sdk = _FallbackClient()
+        client._client = fake_sdk
+        monkeypatch.setattr(OpenAICompatibleClient, "_is_retryable", staticmethod(lambda exc: False))
+
+        request = ApiMessageRequest(
+            model="deepseek-v4-flash",
+            messages=[ConversationMessage.from_user_text("Say hi")],
+        )
+
+        expected_error = AuthenticationFailure if status_code == 401 else RateLimitFailure
+        with pytest.raises(expected_error):
+            [event async for event in client.stream_message(request)]
+
+        assert len(fake_sdk.responses.calls) == 1
+        assert len(fake_sdk.chat.completions.calls) == 1
+        assert fake_sdk.chat.completions.calls[0]["stream_options"] == {"include_usage": True}
 
 
 class TestStripThinkBlocks:
