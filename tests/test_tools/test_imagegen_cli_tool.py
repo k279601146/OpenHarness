@@ -436,3 +436,66 @@ async def test_imagegen_cli_e2b_materializes_artifact_input(
     image_arg = seen_argv[seen_argv.index("--image") + 1]
     assert image_arg.endswith("image_1.png")
     assert seen_input == b"cat"
+
+
+@pytest.mark.asyncio
+async def test_imagegen_cli_e2b_copies_host_image_and_mask_inputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sandbox = FakeE2BSession()
+    image_path = tmp_path / "uploads" / "source.png"
+    mask_path = tmp_path / "uploads" / "mask.png"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_bytes(b"source-image")
+    mask_path.write_bytes(b"mask-image")
+    seen_argv: list[str] = []
+
+    async def fake_get_session(context):
+        del context
+        return sandbox
+
+    def fake_run(argv, cwd, env, text, stdout, stderr, timeout, check):
+        del cwd, env, text, stdout, stderr, timeout, check
+        seen_argv[:] = list(argv)
+        assert Path(argv[argv.index("--image") + 1]).read_bytes() == b"source-image"
+        assert Path(argv[argv.index("--mask") + 1]).read_bytes() == b"mask-image"
+        out_index = argv.index("--out") + 1
+        local_path = Path(argv[out_index])
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        local_path.write_bytes(b"png-bytes")
+
+        class Completed:
+            returncode = 0
+            stdout = f"IMAGEGEN_METADATA:{__import__('json').dumps({'artifact_paths': [str(local_path)]})}"
+
+        return Completed()
+
+    monkeypatch.setattr("openharness.tools.imagegen_cli_tool.get_e2b_task_session", fake_get_session)
+    monkeypatch.setattr("openharness.tools.imagegen_cli_tool.subprocess.run", fake_run)
+
+    result = await ImagegenCliTool().execute(
+        ImagegenCliInput(
+            command="edit",
+            prompt="put a cat",
+            model="gpt-image-2",
+            images=[str(image_path)],
+            mask=str(mask_path),
+            out="output/imagegen/cat.png",
+        ),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={
+                "workspace_backend": "e2b",
+                "primary_workspace": "/home/user/tasks/thread-1",
+                "settings": object(),
+                "user_id": 1,
+                "thread_id": "thread-1",
+            },
+        ),
+    )
+
+    assert not result.is_error
+    assert seen_argv[seen_argv.index("--image") + 1].endswith("image_1.png")
+    assert seen_argv[seen_argv.index("--mask") + 1].endswith("mask.png")
+    assert sandbox.files == {}

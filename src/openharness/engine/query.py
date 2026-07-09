@@ -6,7 +6,7 @@ import asyncio
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 from uuid import uuid4
@@ -42,7 +42,7 @@ from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
 from openharness.services.tool_outputs import tool_output_inline_chars, tool_output_preview_chars
 from openharness.tools.ask_user_question_tool import AskUserQuestionPaused
-from openharness.tools.base import ToolExecutionContext
+from openharness.tools.base import ToolExecutionContext, ToolResult
 from openharness.tools.base import ToolRegistry
 from openharness.utils.paths import normalize_host_path
 
@@ -1079,7 +1079,21 @@ async def _execute_tool_call(
     tool_use_id: str,
     tool_input: dict[str, object],
     progress_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    *,
+    allow_media_split: bool = True,
 ) -> ToolResultBlock:
+    if allow_media_split and _is_media_generation_tool(tool_name):
+        output_count = _media_output_count(tool_input)
+        if output_count > 1:
+            return await _execute_media_generation_batch(
+                context,
+                tool_name,
+                tool_use_id,
+                tool_input,
+                output_count=output_count,
+                progress_callback=progress_callback,
+            )
+
     if context.hook_executor is not None:
         pre_hooks = await context.hook_executor.execute(
             HookEvent.PRE_TOOL_USE,
@@ -1165,6 +1179,31 @@ async def _execute_tool_call(
                 is_error=True,
             )
 
+    media_reservation: dict[str, Any] | None = None
+    media_billing_disabled = bool((context.tool_metadata or {}).get("media_billing_disabled"))
+    hook = (context.tool_metadata or {}).get("hook")
+    if _is_media_generation_tool(tool_name) and not media_billing_disabled and hook is not None and hasattr(hook, "reserve_media_tool_usage"):
+        try:
+            media_reservation = hook.reserve_media_tool_usage(tool_name, tool_input, tool_use_id, {})
+        except Exception as exc:
+            log.warning("media usage reservation failed: name=%s id=%s error=%s", tool_name, tool_use_id, exc)
+            return ToolResultBlock(
+                tool_use_id=tool_use_id,
+                content=f"Media billing reservation failed: {exc}",
+                is_error=True,
+            )
+        if str((media_reservation or {}).get("billing_status") or "") == "recorded":
+            return ToolResultBlock(
+                tool_use_id=tool_use_id,
+                content="Media generation was already recorded for this tool_use_id; skipping duplicate provider call.",
+                is_error=False,
+                result_metadata={
+                    "media_billing_status": "recorded",
+                    "media_billing_resource_log_id": media_reservation.get("resource_log_id"),
+                    "media_billing_request_id": media_reservation.get("billing_request_id"),
+                },
+            )
+
     log.debug("executing %s ...", tool_name)
     t0 = time.monotonic()
     result = await tool.execute(
@@ -1177,6 +1216,7 @@ async def _execute_tool_call(
                 "tool_name": tool_name,
                 "tool_use_id": tool_use_id,
                 **(context.tool_metadata or {}),
+                "media_billing_reservation": media_reservation,
             },
             hook_executor=context.hook_executor,
             progress_callback=progress_callback,
@@ -1185,6 +1225,34 @@ async def _execute_tool_call(
     elapsed = time.monotonic() - t0
     log.debug("executed %s in %.2fs err=%s output_len=%d",
               tool_name, elapsed, result.is_error, len(result.output or ""))
+    result_metadata = dict(result.metadata or {})
+    if media_reservation and hook is not None and not result_metadata.get("media_billing_status"):
+        if result.is_error:
+            try:
+                result_metadata.update(
+                    hook.release_media_tool_usage(
+                        media_reservation,
+                        reason="media_tool_failed",
+                        tool_metadata={"error": result.output},
+                    )
+                )
+            except Exception as exc:
+                log.exception("media usage reservation release failed: name=%s id=%s", tool_name, tool_use_id)
+                result = ToolResult(
+                    output=f"Media billing release failed after provider error: {type(exc).__name__}: {exc}",
+                    is_error=True,
+                    metadata=result_metadata,
+                )
+        else:
+            try:
+                result_metadata.update(hook.commit_media_tool_usage(media_reservation, result_metadata))
+            except Exception as exc:
+                log.exception("media usage reservation commit failed: name=%s id=%s", tool_name, tool_use_id)
+                result = ToolResult(
+                    output=f"Media billing commit failed after provider success: {type(exc).__name__}: {exc}",
+                    is_error=True,
+                    metadata=result_metadata,
+                )
     inline_output, artifact_path = _offload_tool_output_if_needed(
         tool_name=tool_name,
         tool_use_id=tool_use_id,
@@ -1198,7 +1266,7 @@ async def _execute_tool_call(
         tool_use_id=tool_use_id,
         content=inline_output,
         is_error=result.is_error,
-        result_metadata=dict(result.metadata or {}),
+        result_metadata=result_metadata,
     )
     _record_tool_carryover(
         context,
@@ -1284,6 +1352,261 @@ async def _run_tool_with_progress(
             metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
         ), None
     yield None, await task
+
+
+def _is_media_generation_tool(tool_name: str) -> bool:
+    return str(tool_name or "").lower() in {"imagegen_cli", "videogen_cli"}
+
+
+def _media_kind_for_tool(tool_name: str) -> str:
+    return "video" if str(tool_name or "").lower() == "videogen_cli" else "image"
+
+
+def _media_output_count(tool_input: dict[str, object]) -> int:
+    count = 1
+    for key in ("outputCount", "output_count", "num_images", "num_videos", "count", "n"):
+        try:
+            count = max(count, int(tool_input.get(key) or 0))
+        except (TypeError, ValueError):
+            continue
+    return count
+
+
+def _media_batch_concurrency(kind: str) -> int:
+    return 2 if kind == "video" else 3
+
+
+def _media_subtask_input(tool_input: dict[str, object], *, index: int, kind: str) -> dict[str, object]:
+    item = dict(tool_input)
+    for key in ("outputCount", "output_count", "count", "num_images", "num_videos"):
+        item.pop(key, None)
+    item["n"] = 1
+    if kind == "image":
+        item["num_images"] = 1
+    else:
+        item["num_videos"] = 1
+    out = str(item.get("out") or "").strip()
+    if out:
+        path = Path(out)
+        suffix = path.suffix or (".mp4" if kind == "video" else ".png")
+        item["out"] = str(path.with_name(f"{path.stem}-{index}{suffix}"))
+    elif kind == "video":
+        item["out"] = f"output/videogen/output-{index}.mp4"
+    else:
+        item["out"] = f"output/imagegen/output-{index}.png"
+    return item
+
+
+def _media_subtask_artifact_metadata(context: QueryContext, *, index: int, output_count: int) -> dict[str, object]:
+    canvas_request = (context.tool_metadata or {}).get("canvas_request")
+    if not isinstance(canvas_request, dict):
+        return {"media_branch_index": index - 1, "media_output_count": output_count}
+    target_node_ids = canvas_request.get("targetNodeIds") or canvas_request.get("target_node_ids")
+    target_node_id = ""
+    if isinstance(target_node_ids, list) and len(target_node_ids) >= index:
+        target_node_id = str(target_node_ids[index - 1] or "")
+    elif index == 1:
+        target_node_id = str(canvas_request.get("targetNodeId") or canvas_request.get("target_node_id") or "")
+    metadata: dict[str, object] = {
+        "media_branch_index": index - 1,
+        "media_output_count": output_count,
+        "canvas_branch_index": index - 1,
+        "canvas_output_count": output_count,
+    }
+    request_id = str(canvas_request.get("id") or "")
+    if request_id:
+        metadata["canvas_request_id"] = request_id
+    kind = str(canvas_request.get("kind") or "")
+    if kind:
+        metadata["canvas_generation_kind"] = kind
+    if target_node_id:
+        metadata["canvas_target_node_id"] = target_node_id
+    if isinstance(target_node_ids, list):
+        metadata["canvas_target_node_ids"] = [str(item) for item in target_node_ids if str(item)]
+    return metadata
+
+
+async def _execute_media_generation_batch(
+    context: QueryContext,
+    tool_name: str,
+    tool_use_id: str,
+    tool_input: dict[str, object],
+    *,
+    output_count: int,
+    progress_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+) -> ToolResultBlock:
+    kind = _media_kind_for_tool(tool_name)
+    concurrency = _media_batch_concurrency(kind)
+    semaphore = asyncio.Semaphore(concurrency)
+    hook = (context.tool_metadata or {}).get("hook")
+    results: list[ToolResultBlock | None] = [None] * output_count
+
+    async def run_one(index: int) -> None:
+        sub_tool_use_id = f"{tool_use_id}:{kind}:{index}"
+        sub_input = _media_subtask_input(tool_input, index=index, kind=kind)
+        artifact_metadata = _media_subtask_artifact_metadata(context, index=index, output_count=output_count)
+        reservation: dict[str, Any] | None = None
+        async with semaphore:
+            if progress_callback is not None:
+                await progress_callback(
+                    {
+                        "phase": "media_subtask_start",
+                        "status": "running",
+                        "message": f"{'视频' if kind == 'video' else '图片'}生成 {index}/{output_count} 已开始。",
+                        "tool_name": tool_name,
+                        "tool_use_id": sub_tool_use_id,
+                        "metadata": artifact_metadata,
+                    }
+                )
+            if hook is not None and hasattr(hook, "reserve_media_tool_usage"):
+                try:
+                    reservation = hook.reserve_media_tool_usage(tool_name, sub_input, sub_tool_use_id, {"output_count": 1})
+                except Exception as exc:
+                    results[index - 1] = ToolResultBlock(
+                        tool_use_id=sub_tool_use_id,
+                        content=f"Media billing reservation failed: {type(exc).__name__}: {exc}",
+                        is_error=True,
+                        result_metadata={"media_billing_status": "failed", **artifact_metadata},
+                    )
+                    return
+                if str((reservation or {}).get("billing_status") or "") == "recorded":
+                    results[index - 1] = ToolResultBlock(
+                        tool_use_id=sub_tool_use_id,
+                        content="Media generation was already recorded for this subtask tool_use_id; skipping duplicate provider call.",
+                        is_error=False,
+                        result_metadata={"media_billing_status": "recorded", **artifact_metadata},
+                    )
+                    return
+            last_result: ToolResultBlock | None = None
+            for attempt in range(2):
+                sub_metadata = {
+                    **(context.tool_metadata or {}),
+                    "media_billing_disabled": True,
+                    "media_billing_reservation": reservation,
+                    "media_billing_defer_failure_release": True,
+                    "media_artifact_metadata": {
+                        **artifact_metadata,
+                        "media_retry_count": attempt,
+                    },
+                }
+                sub_context = replace(context, tool_metadata=sub_metadata)
+                last_result = await _execute_tool_call(
+                    sub_context,
+                    tool_name,
+                    sub_tool_use_id,
+                    sub_input,
+                    progress_callback=progress_callback,
+                    allow_media_split=False,
+                )
+                if not last_result.is_error:
+                    break
+                if attempt == 0 and progress_callback is not None:
+                    await progress_callback(
+                        {
+                            "phase": "media_subtask_retry",
+                            "status": "running",
+                            "message": f"{'视频' if kind == 'video' else '图片'}生成 {index}/{output_count} 失败，正在重试。",
+                            "tool_name": tool_name,
+                            "tool_use_id": sub_tool_use_id,
+                            "metadata": artifact_metadata,
+                        }
+                    )
+            if last_result is None:
+                last_result = ToolResultBlock(
+                    tool_use_id=sub_tool_use_id,
+                    content=f"Tool {tool_name} failed: missing execution result",
+                    is_error=True,
+                    result_metadata=artifact_metadata,
+                )
+            if last_result.is_error:
+                await _emit_canvas_subtask_error(hook, artifact_metadata, last_result.content)
+            billing_metadata: dict[str, Any] = {}
+            if reservation and hook is not None and not (last_result.result_metadata or {}).get("media_billing_status"):
+                try:
+                    if last_result.is_error:
+                        billing_metadata = hook.release_media_tool_usage(
+                            reservation,
+                            reason="media_subtask_failed",
+                            tool_metadata={"error": last_result.content},
+                        )
+                    else:
+                        billing_metadata = hook.commit_media_tool_usage(reservation, last_result.result_metadata)
+                except Exception as exc:
+                    last_result = ToolResultBlock(
+                        tool_use_id=sub_tool_use_id,
+                        content=f"Media billing settlement failed: {type(exc).__name__}: {exc}",
+                        is_error=True,
+                        result_metadata={**last_result.result_metadata, **artifact_metadata},
+                    )
+            results[index - 1] = ToolResultBlock(
+                tool_use_id=sub_tool_use_id,
+                content=last_result.content,
+                is_error=last_result.is_error,
+                result_metadata={
+                    **(last_result.result_metadata or {}),
+                    **artifact_metadata,
+                    **billing_metadata,
+                },
+            )
+
+    await asyncio.gather(*(run_one(index) for index in range(1, output_count + 1)))
+    completed = [item for item in results if item is not None]
+    successes = [item for item in completed if not item.is_error]
+    artifact_paths: list[str] = []
+    for item in successes:
+        paths = (item.result_metadata or {}).get("artifact_paths")
+        if isinstance(paths, list):
+            artifact_paths.extend(str(path) for path in paths if str(path).strip())
+    content_lines = [
+        f"{tool_name} media batch completed: {len(successes)}/{output_count} succeeded.",
+        *[
+            f"[{idx + 1}] {'failed' if item.is_error else 'succeeded'}: {item.content}"
+            for idx, item in enumerate(completed)
+        ],
+    ]
+    return ToolResultBlock(
+        tool_use_id=tool_use_id,
+        content="\n\n".join(content_lines),
+        is_error=len(successes) == 0,
+        result_metadata={
+            "media_batch": True,
+            "media_batch_kind": kind,
+            "media_batch_output_count": output_count,
+            "media_batch_success_count": len(successes),
+            "media_batch_failure_count": output_count - len(successes),
+            "media_billing_status": "recorded" if successes else "refunded",
+            "artifact_paths": artifact_paths,
+        },
+    )
+
+
+async def _emit_canvas_subtask_error(hook: Any, metadata: dict[str, object], message: str) -> None:
+    if hook is None or not hasattr(hook, "_emit"):
+        return
+    target_node_id = str(metadata.get("canvas_target_node_id") or "")
+    if not target_node_id:
+        return
+    try:
+        await hook._emit(
+            "canvas_ops",
+            {
+                "ops": [
+                    {
+                        "type": "update_node",
+                        "id": target_node_id,
+                        "metadata": {
+                            "status": "error",
+                            "errorDetails": (message or "生成失败")[:1000],
+                        },
+                    }
+                ],
+                "request_id": metadata.get("canvas_request_id"),
+                "message": "画布生成失败，已更新节点状态。",
+            },
+            save=False,
+        )
+    except Exception:
+        log.debug("failed to emit canvas subtask error", exc_info=True)
 
 
 def _resolve_permission_file_path(
