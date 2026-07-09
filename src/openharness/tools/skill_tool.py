@@ -6,7 +6,11 @@ from pydantic import BaseModel, Field
 
 from openharness.skills import load_skill_registry
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
-from openharness.tools.sandbox_workspace import ensure_skill_installed_in_sandbox, uses_e2b_task_workspace
+from openharness.tools.sandbox_workspace import (
+    ensure_skill_installed_in_sandbox,
+    preinstalled_bundled_skill_dir,
+    uses_e2b_task_workspace,
+)
 
 
 class SkillToolInput(BaseModel):
@@ -64,6 +68,33 @@ class SkillTool(BaseTool):
             )
         if skill.base_dir:
             if uses_e2b_task_workspace(context):
+                sandbox_skill_dir = preinstalled_bundled_skill_dir(context, skill)
+                if sandbox_skill_dir is not None:
+                    if context.progress_callback is not None:
+                        await context.progress_callback(
+                            {
+                                "phase": "skill_ready",
+                                "status": "success",
+                                "message": f"预置技能 {skill.name} 已可用。",
+                                "path": sandbox_skill_dir,
+                                "workspace": "e2b",
+                                "metadata": {"skill": skill.name, "preinstalled": True},
+                            }
+                        )
+                    return ToolResult(
+                        output=(
+                            f"Sandbox directory for this skill: {sandbox_skill_dir}\n"
+                            "Use files under this sandbox directory only. "
+                            "Do not use host-only bundled skill paths.\n\n"
+                            f"{skill.content}"
+                        ),
+                        metadata={
+                            "workspace": "e2b",
+                            "path": sandbox_skill_dir,
+                            "skill": skill.name,
+                            "preinstalled": True,
+                        },
+                    )
                 try:
                     sandbox_skill_dir = await ensure_skill_installed_in_sandbox(context, skill)
                 except Exception as exc:
