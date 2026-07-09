@@ -13,7 +13,7 @@ import uuid
 from typing import Any, AsyncIterator
 from urllib.parse import urlsplit, urlunsplit
 
-from openai import AsyncOpenAI
+from openai import APIConnectionError, APITimeoutError, AsyncOpenAI
 
 from openharness.api.client import (
     ApiMessageCompleteEvent,
@@ -1405,6 +1405,8 @@ class OpenAICompatibleClient:
     def _is_retryable(exc: Exception) -> bool:
         status = getattr(exc, "status_code", None)
         if status and status in {429, 500, 502, 503}:
+            return True
+        if isinstance(exc, (APIConnectionError, APITimeoutError)):
             return True
         if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
             return True

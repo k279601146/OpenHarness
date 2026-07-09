@@ -6,6 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from openharness.tools.artifact_reference_guard import artifact_lookup_guard_result
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.tools.sandbox_workspace import (
     get_e2b_task_session,
@@ -48,6 +49,9 @@ class FileReadTool(BaseTool):
         arguments: FileReadToolInput,
         context: ToolExecutionContext,
     ) -> ToolResult:
+        guard_result = artifact_lookup_guard_result(context, arguments.path)
+        if guard_result is not None:
+            return guard_result
         if uses_e2b_task_workspace(context):
             return await _read_sandbox_file(arguments, context)
 

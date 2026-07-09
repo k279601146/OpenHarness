@@ -7,8 +7,10 @@ import json
 import httpx
 
 import pytest
+from openai import APITimeoutError
 
-from openharness.api.client import ApiMessageRequest
+import openharness.api.openai_client as openai_client_module
+from openharness.api.client import ApiMessageRequest, ApiRetryEvent
 from openharness.api.openai_client import (
     OpenAICompatibleClient,
     _convert_assistant_message,
@@ -540,6 +542,51 @@ async def test_openai_client_aclose_closes_underlying_sdk_client():
     await client.aclose()
 
     assert client._client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_openai_client_retries_openai_sdk_timeout(monkeypatch):
+    class _TimeoutThenSuccessResponses:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def create(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                request = httpx.Request("POST", "https://example.com/v1/responses")
+                raise APITimeoutError(request)
+
+            async def _stream():
+                yield {
+                    "type": "response.completed",
+                    "response": {
+                        "status": "completed",
+                        "usage": {"input_tokens": 1, "output_tokens": 1},
+                    },
+                }
+
+            return _stream()
+
+    class _TimeoutThenSuccessClient:
+        def __init__(self) -> None:
+            self.responses = _TimeoutThenSuccessResponses()
+
+    monkeypatch.setattr(openai_client_module, "MAX_RETRIES", 1)
+    monkeypatch.setattr(openai_client_module, "BASE_DELAY", 0)
+
+    client = OpenAICompatibleClient(api_key="test-key", base_url="https://example.com/v1")
+    fake_sdk = _TimeoutThenSuccessClient()
+    client._client = fake_sdk
+
+    request = ApiMessageRequest(
+        model="gpt-5.4",
+        messages=[ConversationMessage.from_user_text("Say hi")],
+    )
+
+    events = [event async for event in client.stream_message(request)]
+
+    assert fake_sdk.responses.calls == 2
+    assert any(isinstance(event, ApiRetryEvent) for event in events)
 
 
 

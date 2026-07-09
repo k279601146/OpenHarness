@@ -15,6 +15,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from openharness.tools.artifact_reference_guard import (
+    looks_like_media_reuse_prompt,
+    media_input_refs,
+    wrong_media_type_error,
+)
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.tools.bash_tool import _build_provider_tool_env
 from openharness.tools.sandbox_workspace import get_e2b_task_session, to_sandbox_path, uses_e2b_task_workspace
@@ -70,6 +75,9 @@ class VideogenCliTool(BaseTool):
         cwd = context.cwd.resolve()
         cwd.mkdir(parents=True, exist_ok=True)
         arguments = _apply_context_defaults(arguments, context)
+        guard_error = _validate_video_artifact_inputs(arguments, context)
+        if guard_error is not None:
+            return guard_error
         if uses_e2b_task_workspace(context):
             return await _execute_e2b_videogen(script, arguments, context, cwd)
 
@@ -414,7 +422,32 @@ def _apply_context_defaults(arguments: VideogenCliInput, context: ToolExecutionC
         updates["model"] = "doubao-seedance-2-0-260128"
     if arguments.num_videos is not None:
         updates["n"] = arguments.num_videos
+    image_refs = media_input_refs(context, "image")
+    video_refs = media_input_refs(context, "video")
+    if arguments.command == "image-to-video" and image_refs and not arguments.images:
+        updates["images"] = image_refs
+    elif arguments.command == "reference-to-video" and not arguments.reference_files:
+        refs = [*image_refs, *video_refs]
+        if refs:
+            updates["reference_files"] = refs
+    elif arguments.command == "generate" and looks_like_media_reuse_prompt(arguments.prompt):
+        if image_refs and not arguments.images:
+            updates["command"] = "image-to-video"
+            updates["images"] = image_refs
+        elif video_refs and not arguments.reference_files:
+            updates["command"] = "reference-to-video"
+            updates["reference_files"] = video_refs
     return arguments.model_copy(update=updates) if updates else arguments
+
+
+def _validate_video_artifact_inputs(arguments: VideogenCliInput, context: ToolExecutionContext) -> ToolResult | None:
+    if arguments.command == "image-to-video" and not arguments.images:
+        if media_input_refs(context):
+            return wrong_media_type_error(context, "image")
+    if arguments.command == "reference-to-video" and not arguments.reference_files:
+        if media_input_refs(context):
+            return wrong_media_type_error(context, "image/video")
+    return None
 
 
 def _add_value(argv: list[str], flag: str, value: str | None) -> None:

@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, Field
 
 from openharness.sandbox import SandboxUnavailableError
+from openharness.tools.artifact_reference_guard import artifact_lookup_guard_result
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.tools.sandbox_workspace import sandbox_primary_workspace, uses_e2b_task_workspace
 from openharness.utils.shell import create_shell_subprocess
@@ -48,6 +49,9 @@ class BashTool(BaseTool):
             cwd = Path(arguments.cwd).expanduser()
             if not cwd.is_absolute():
                 cwd = context.cwd / cwd
+        guard_result = artifact_lookup_guard_result(context, arguments.command)
+        if guard_result is not None:
+            return guard_result
         preflight_error = _preflight_interactive_command(arguments.command)
         if preflight_error is not None:
             return ToolResult(

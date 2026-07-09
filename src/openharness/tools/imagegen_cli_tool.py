@@ -16,6 +16,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from openharness.tools.artifact_reference_guard import (
+    looks_like_media_reuse_prompt,
+    media_input_refs,
+    wrong_media_type_error,
+)
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.tools.bash_tool import _build_provider_tool_env
 from openharness.tools.sandbox_workspace import get_e2b_task_session, to_sandbox_path, uses_e2b_task_workspace
@@ -116,6 +121,9 @@ class ImagegenCliTool(BaseTool):
         cwd = context.cwd.resolve()
         cwd.mkdir(parents=True, exist_ok=True)
         arguments = _apply_context_defaults(arguments, context)
+        guard_error = _validate_image_artifact_inputs(arguments, context)
+        if guard_error is not None:
+            return guard_error
         if uses_e2b_task_workspace(context):
             return await _execute_e2b_imagegen(script, arguments, context, cwd)
 
@@ -594,9 +602,24 @@ def _apply_context_defaults(arguments: ImagegenCliInput, context: ToolExecutionC
         updates["model"] = "gpt-image-2"
     if arguments.num_images is not None:
         updates["n"] = arguments.num_images
+    image_refs = media_input_refs(context, "image")
+    if image_refs and not arguments.images:
+        if arguments.command == "edit":
+            updates["images"] = image_refs
+        elif arguments.command == "generate" and looks_like_media_reuse_prompt(arguments.prompt):
+            updates["command"] = "edit"
+            updates["images"] = image_refs
     if not updates:
         return arguments
     return arguments.model_copy(update=updates)
+
+
+def _validate_image_artifact_inputs(arguments: ImagegenCliInput, context: ToolExecutionContext) -> ToolResult | None:
+    if arguments.command != "edit" or arguments.images:
+        return None
+    if media_input_refs(context):
+        return wrong_media_type_error(context, "image")
+    return None
 
 
 def _add_value(argv: list[str], flag: str, value: str | None) -> None:

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from pydantic import AliasChoices, BaseModel, Field
 
+from openharness.tools.artifact_reference_guard import artifact_lookup_guard_result
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.tools.sandbox_workspace import get_e2b_task_session, sandbox_glob, to_sandbox_path, uses_e2b_task_workspace
 from openharness.utils.paths import normalize_host_path
@@ -36,6 +37,9 @@ class GlobTool(BaseTool):
         return True
 
     async def execute(self, arguments: GlobToolInput, context: ToolExecutionContext) -> ToolResult:
+        guard_result = artifact_lookup_guard_result(context, " ".join(part for part in [arguments.root or "", arguments.pattern] if part))
+        if guard_result is not None:
+            return guard_result
         if uses_e2b_task_workspace(context):
             try:
                 session = await get_e2b_task_session(context)
