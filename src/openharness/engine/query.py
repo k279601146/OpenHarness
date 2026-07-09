@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass, replace
@@ -1206,22 +1208,42 @@ async def _execute_tool_call(
 
     log.debug("executing %s ...", tool_name)
     t0 = time.monotonic()
-    result = await tool.execute(
-        parsed_input,
-        ToolExecutionContext(
-            cwd=_concrete_path(context.cwd),
-            metadata={
-                "tool_registry": context.tool_registry,
-                "ask_user_prompt": context.ask_user_prompt,
-                "tool_name": tool_name,
-                "tool_use_id": tool_use_id,
-                **(context.tool_metadata or {}),
-                "media_billing_reservation": media_reservation,
-            },
-            hook_executor=context.hook_executor,
-            progress_callback=progress_callback,
-        ),
-    )
+    media_execution_slot: dict[str, Any] | None = None
+    try:
+        if _is_media_generation_tool(tool_name) and hook is not None and hasattr(hook, "acquire_media_execution_slot"):
+            try:
+                media_execution_slot = await _maybe_await(
+                    hook.acquire_media_execution_slot(tool_name, tool_input, tool_use_id)
+                )
+            except Exception as exc:
+                log.warning("media execution slot acquisition failed: name=%s id=%s error=%s", tool_name, tool_use_id, exc)
+                return ToolResultBlock(
+                    tool_use_id=tool_use_id,
+                    content=f"Media execution concurrency limit failed: {type(exc).__name__}: {exc}",
+                    is_error=True,
+                )
+        result = await tool.execute(
+            parsed_input,
+            ToolExecutionContext(
+                cwd=_concrete_path(context.cwd),
+                metadata={
+                    "tool_registry": context.tool_registry,
+                    "ask_user_prompt": context.ask_user_prompt,
+                    "tool_name": tool_name,
+                    "tool_use_id": tool_use_id,
+                    **(context.tool_metadata or {}),
+                    "media_billing_reservation": media_reservation,
+                },
+                hook_executor=context.hook_executor,
+                progress_callback=progress_callback,
+            ),
+        )
+    finally:
+        if media_execution_slot and hook is not None and hasattr(hook, "release_media_execution_slot"):
+            try:
+                await _maybe_await(hook.release_media_execution_slot(media_execution_slot))
+            except Exception:
+                log.debug("media execution slot release failed", exc_info=True)
     elapsed = time.monotonic() - t0
     log.debug("executed %s in %.2fs err=%s output_len=%d",
               tool_name, elapsed, result.is_error, len(result.output or ""))
@@ -1354,6 +1376,12 @@ async def _run_tool_with_progress(
     yield None, await task
 
 
+async def _maybe_await(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
 def _is_media_generation_tool(tool_name: str) -> bool:
     return str(tool_name or "").lower() in {"imagegen_cli", "videogen_cli"}
 
@@ -1373,7 +1401,17 @@ def _media_output_count(tool_input: dict[str, object]) -> int:
 
 
 def _media_batch_concurrency(kind: str) -> int:
-    return 2 if kind == "video" else 3
+    env_name = "MEDIA_VIDEO_BATCH_CONCURRENCY" if kind == "video" else "MEDIA_IMAGE_BATCH_CONCURRENCY"
+    default = 2 if kind == "video" else 3
+    return _bounded_media_int(os.getenv(env_name), default=default, minimum=1, maximum=16)
+
+
+def _bounded_media_int(raw: object, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
 
 
 def _media_subtask_input(tool_input: dict[str, object], *, index: int, kind: str) -> dict[str, object]:
@@ -1500,6 +1538,8 @@ async def _execute_media_generation_batch(
                 )
                 if not last_result.is_error:
                     break
+                if not _is_retryable_media_error(last_result.content):
+                    break
                 if attempt == 0 and progress_callback is not None:
                     await progress_callback(
                         {
@@ -1578,6 +1618,48 @@ async def _execute_media_generation_batch(
             "artifact_paths": artifact_paths,
         },
     )
+
+
+def _is_retryable_media_error(message: str) -> bool:
+    text = str(message or "").lower()
+    non_retryable_markers = (
+        "usage_limit",
+        "billing",
+        "reservation",
+        "commit",
+        "refund",
+        "auth",
+        "unauthorized",
+        "forbidden",
+        "invalid input",
+        "invalid parameter",
+        "content policy",
+        "safety",
+        "moderation",
+        "not supported",
+        "unsupported",
+        "pricing_not_configured",
+        "media_model_pricing_not_configured",
+    )
+    if any(marker in text for marker in non_retryable_markers):
+        return False
+    retryable_markers = (
+        "timeout",
+        "timed out",
+        "429",
+        "rate limit",
+        "rate_limited",
+        "temporarily",
+        "connection",
+        "network",
+        "5xx",
+        " 500",
+        " 502",
+        " 503",
+        " 504",
+        "poll",
+    )
+    return any(marker in text for marker in retryable_markers)
 
 
 async def _emit_canvas_subtask_error(hook: Any, metadata: dict[str, object], message: str) -> None:
