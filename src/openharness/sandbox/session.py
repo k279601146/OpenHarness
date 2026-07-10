@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import datetime
 import inspect
 import json
 import logging
 import os
 import shlex
+import threading
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 if TYPE_CHECKING:
     from openharness.config import Settings
@@ -45,7 +47,18 @@ DEFAULT_GC_CHECK_THROTTLE_SECONDS = 3600
 _sandbox_registry: dict[str, E2BSandboxSession] = {}
 _thread_scope_registry: dict[str, str] = {}
 _gc_last_checked: dict[str, float] = {}
-_registry_lock = asyncio.Lock()
+_registry_lock = threading.Lock()
+
+
+@asynccontextmanager
+async def _locked_registry() -> AsyncIterator[None]:
+    """Serialize process-local registry lifecycle work across event loops."""
+    while not _registry_lock.acquire(blocking=False):
+        await asyncio.sleep(0.01)
+    try:
+        yield
+    finally:
+        _registry_lock.release()
 
 
 def _registry_key(user_id: int, scope_type: str, scope_key: str) -> str:
@@ -157,7 +170,7 @@ async def get_or_start_sandbox(
         logger.warning("E2B sandbox unavailable: %s", availability.reason)
         return None
 
-    async with _registry_lock:
+    async with _locked_registry():
         active = get_active_sandbox(user_id, thread_id)
         if active is not None:
             _touch_last_active(db_session, thread_id)
@@ -689,6 +702,11 @@ def _lease_expires_at(settings: Settings) -> datetime.datetime:
 
 async def suspend_sandbox(user_id: int, thread_id: str, db_session=None) -> None:
     """Release the sandbox lease held by a task."""
+    async with _locked_registry():
+        await _suspend_sandbox_locked(user_id, thread_id, db_session)
+
+
+async def _suspend_sandbox_locked(user_id: int, thread_id: str, db_session: Any) -> None:
     thread_key = _thread_key(user_id, thread_id)
     registry_key = _thread_scope_registry.pop(thread_key, None)
     session = _sandbox_registry.pop(registry_key, None) if registry_key else None
@@ -728,6 +746,11 @@ async def suspend_sandbox(user_id: int, thread_id: str, db_session=None) -> None
 
 async def destroy_sandbox(user_id: int, thread_id: str, db_session=None) -> None:
     """Destroy the sandbox currently associated with a task."""
+    async with _locked_registry():
+        await _destroy_sandbox_locked(user_id, thread_id, db_session)
+
+
+async def _destroy_sandbox_locked(user_id: int, thread_id: str, db_session: Any) -> None:
     thread_key = _thread_key(user_id, thread_id)
     registry_key = _thread_scope_registry.pop(thread_key, None)
     session = _sandbox_registry.pop(registry_key, None) if registry_key else None

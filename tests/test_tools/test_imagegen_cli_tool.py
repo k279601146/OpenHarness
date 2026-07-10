@@ -296,17 +296,16 @@ def test_build_output_paths_multiple(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_imagegen_cli_e2b_publishes_without_uploading_artifact(
+async def test_imagegen_cli_text_generation_skips_e2b_workspace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sandbox = FakeE2BSession()
     hook = FakeArtifactHook()
     seen_env: dict[str, str] = {}
 
     async def fake_get_session(context):
         del context
-        return sandbox
+        raise AssertionError("text-to-image generation must not acquire an E2B session")
 
     def fake_run(argv, cwd, env, text, stdout, stderr, timeout, check):
         del cwd, text, stdout, stderr, timeout, check
@@ -358,7 +357,6 @@ async def test_imagegen_cli_e2b_publishes_without_uploading_artifact(
     assert result.metadata["publish_state"] == "published"
     assert result.metadata["delivery_required"] is False
     assert result.metadata["do_not_deliver_artifact"] is True
-    assert sandbox.files == {}
     assert "D:\\home\\user" not in result.output
     assert "Published artifact paths:" in result.output
     assert seen_env["GPT_IMAGEGEN_API_KEY"] == "test-image-key"

@@ -210,16 +210,32 @@ class ImagegenCliTool(BaseTool):
         )
 
 
+def _requires_e2b_imagegen_session(
+    arguments: ImagegenCliInput,
+) -> bool:
+    """Acquire E2B only when the host-side CLI must read task workspace inputs."""
+    return bool(
+        arguments.images
+        or arguments.mask
+        or arguments.input_file
+        or arguments.command in {"edit", "generate-batch"}
+    )
+
+
 async def _execute_e2b_imagegen(
     script: Path,
     arguments: ImagegenCliInput,
     context: ToolExecutionContext,
     host_cwd: Path,
 ) -> ToolResult:
-    try:
-        session = await get_e2b_task_session(context)
-    except Exception as exc:
-        return await _media_billing_error_result(context, f"E2B imagegen workspace error: {exc}")
+    session = None
+    if _requires_e2b_imagegen_session(arguments):
+        try:
+            session = await get_e2b_task_session(context)
+        except Exception as exc:
+            return await _media_billing_error_result(context, f"E2B imagegen workspace error: {exc}")
+
+    execution_workspace = "e2b" if session is not None else "host"
 
     if context.progress_callback is not None:
         await context.progress_callback(
@@ -227,7 +243,7 @@ async def _execute_e2b_imagegen(
                 "phase": "media_generate",
                 "status": "running",
                 "message": "正在生成图片...",
-                "workspace": "e2b",
+                "workspace": execution_workspace,
             }
         )
 
@@ -300,7 +316,7 @@ async def _execute_e2b_imagegen(
                     "phase": "artifact_ready",
                     "status": "success",
                     "message": "图片已生成并交付。",
-                    "workspace": "e2b",
+                    "workspace": execution_workspace,
                     "detail": "\n".join(str(path) for path in local_artifacts),
                     "metadata": {
                         "artifact_paths": [str(path) for path in local_artifacts],
@@ -328,7 +344,7 @@ async def _execute_e2b_imagegen(
                 **parsed_metadata,
                 **billing_metadata,
                 "artifact_paths": [str(path) for path in local_artifacts],
-                "workspace": "e2b",
+                "workspace": execution_workspace,
                 "publish_state": "published",
                 "published_artifact": True,
                 "delivery_required": False,
