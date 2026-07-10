@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -16,7 +17,8 @@ IMAGEGEN_METADATA_PREFIX = "IMAGEGEN_METADATA:"
 CONTENT_DIR = Path(__file__).resolve().parents[3]
 if str(CONTENT_DIR) not in sys.path:
     sys.path.insert(0, str(CONTENT_DIR))
-from media_pricing_runtime import estimate_image_pricing
+from media_pricing_runtime import estimate_image_pricing  # noqa: E402
+from media_safe_http import safe_download_bytes, validate_public_http_url  # noqa: E402
 
 ASPECT_TO_OPENAI_SIZE = {"1:1": "1024x1024", "16:9": "1792x1024", "9:16": "1024x1792"}
 ASPECT_TO_DOUBAO_SIZE = {
@@ -63,18 +65,19 @@ def provider_metadata(spec: ImageModelSpec, outputs: list[Path], args: Any | Non
 
 
 def run_non_gpt_image(args: Any, outputs: list[Path], prompt: str) -> dict[str, Any]:
-    spec = get_model_spec(getattr(args, "model", None))
+    spec = _runtime_spec(get_model_spec(getattr(args, "model", None)))
     if spec.provider == "gpt_image":
         raise ImagegenProviderError("run_non_gpt_image cannot execute GPT Image models")
     if getattr(args, "command", "") == "generate-batch":
         raise ImagegenProviderError(f"{spec.model_id} does not support generate-batch in the unified imagegen CLI yet.")
 
-    api_key = _credential(spec.api_key_env)
+    api_key = _credential("OPENHARNESS_MEDIA_GATEWAY_API_KEY") or _credential(spec.api_key_env)
     if not api_key and getattr(args, "dry_run", False):
         api_key = "dry-run"
     if not api_key:
         raise ImagegenProviderError(f"{spec.api_key_env} is not set. Configure it before using {spec.model_id}.")
-    base_url = _credential(spec.base_url_env) or spec.default_base_url
+    gateway_base_url = _credential("OPENHARNESS_MEDIA_GATEWAY_BASE_URL")
+    base_url = validate_public_http_url(gateway_base_url) if gateway_base_url else _credential(spec.base_url_env) or spec.default_base_url
 
     if getattr(args, "dry_run", False):
         preview = _build_payload(spec, args, prompt)
@@ -102,6 +105,11 @@ def run_non_gpt_image(args: Any, outputs: list[Path], prompt: str) -> dict[str, 
 
 def _credential(name: str) -> str:
     return os.getenv(name, "").strip()
+
+
+def _runtime_spec(spec: ImageModelSpec) -> ImageModelSpec:
+    upstream_model_id = _credential("OPENHARNESS_MEDIA_GATEWAY_MODEL_ID")
+    return replace(spec, api_model=upstream_model_id) if upstream_model_id else spec
 
 
 def _build_payload(spec: ImageModelSpec, args: Any, prompt: str) -> dict[str, Any]:
@@ -231,21 +239,24 @@ def _run_openai_compatible(
     response.raise_for_status()
     data = response.json().get("data", [])
     saved: list[Path] = []
-    with httpx.Client(timeout=180.0) as client:
-        for index, item in enumerate(data):
-            if index >= len(outputs):
-                break
-            b64 = item.get("b64_json")
-            url = item.get("url")
-            if b64:
-                _write_b64(outputs[index], b64)
-            elif url:
-                image_response = client.get(url)
-                image_response.raise_for_status()
-                _write_bytes(outputs[index], image_response.content)
-            else:
-                continue
-            saved.append(outputs[index])
+    for index, item in enumerate(data):
+        if index >= len(outputs):
+            break
+        b64 = item.get("b64_json")
+        url = item.get("url")
+        if b64:
+            _write_b64(outputs[index], b64)
+        elif url:
+            content = safe_download_bytes(
+                str(url),
+                max_bytes=15 * 1024 * 1024,
+                allowed_content_types=("image/",),
+                timeout_seconds=180.0,
+            )
+            _write_bytes(outputs[index], content)
+        else:
+            continue
+        saved.append(outputs[index])
     if not saved:
         raise ImagegenProviderError("OpenAI-compatible image API did not return image data.")
     return saved

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -13,10 +14,12 @@ from .registry import VideoModelSpec, get_model_spec
 
 
 VIDEOGEN_METADATA_PREFIX = "VIDEOGEN_METADATA:"
+VIDEOGEN_EVENT_PREFIX = "VIDEOGEN_EVENT:"
 CONTENT_DIR = Path(__file__).resolve().parents[3]
 if str(CONTENT_DIR) not in sys.path:
     sys.path.insert(0, str(CONTENT_DIR))
-from media_pricing_runtime import estimate_video_pricing
+from media_pricing_runtime import estimate_video_pricing  # noqa: E402
+from media_safe_http import safe_download_video, validate_public_http_url  # noqa: E402
 
 
 class VideogenProviderError(RuntimeError):
@@ -27,14 +30,22 @@ def emit_metadata(metadata: dict[str, Any]) -> None:
     print(f"{VIDEOGEN_METADATA_PREFIX}{json.dumps(metadata, ensure_ascii=False, sort_keys=True)}")
 
 
+def _emit_submission_event(spec: VideoModelSpec, operation_id: str) -> None:
+    print(
+        f"{VIDEOGEN_EVENT_PREFIX}{json.dumps({'type': 'submitted', 'provider': spec.provider, 'operation_id': operation_id}, ensure_ascii=False, sort_keys=True)}",
+        flush=True,
+    )
+
+
 def run_video(args: Any, outputs: list[Path], prompt: str) -> dict[str, Any]:
-    spec = get_model_spec(getattr(args, "model", None))
-    api_key = _credential(spec.api_key_env)
+    spec = _runtime_spec(get_model_spec(getattr(args, "model", None)))
+    api_key = _credential("OPENHARNESS_MEDIA_GATEWAY_API_KEY") or _credential(spec.api_key_env)
     if not api_key and getattr(args, "dry_run", False):
         api_key = "dry-run"
     if not api_key:
         raise VideogenProviderError(f"{spec.api_key_env} is not set. Configure it before using {spec.model_id}.")
-    base_url = _credential(spec.base_url_env) or spec.default_base_url
+    gateway_base_url = _credential("OPENHARNESS_MEDIA_GATEWAY_BASE_URL")
+    base_url = validate_public_http_url(gateway_base_url) if gateway_base_url else _credential(spec.base_url_env) or spec.default_base_url
 
     payload = _build_payload(spec, args, prompt)
     if getattr(args, "dry_run", False):
@@ -108,6 +119,11 @@ def provider_metadata(
 
 def _credential(name: str) -> str:
     return os.getenv(name, "").strip()
+
+
+def _runtime_spec(spec: VideoModelSpec) -> VideoModelSpec:
+    upstream_model_id = _credential("OPENHARNESS_MEDIA_GATEWAY_MODEL_ID")
+    return replace(spec, api_model=upstream_model_id) if upstream_model_id else spec
 
 
 def _build_payload(spec: VideoModelSpec, args: Any, prompt: str) -> dict[str, Any]:
@@ -199,9 +215,13 @@ def _run_seedance(
         task_id = data.get("id") or data.get("task_id")
         if not task_id:
             raise VideogenProviderError("Seedance API did not return a task id.")
+        _emit_submission_event(spec, str(task_id))
         for _ in range(120):
-            poll = client.get(f"{endpoint.rstrip('/')}/{task_id}", headers=headers, timeout=60.0)
-            poll.raise_for_status()
+            try:
+                poll = client.get(f"{endpoint.rstrip('/')}/{task_id}", headers=headers, timeout=60.0)
+                poll.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise VideogenProviderError("Seedance operation state unknown after task submission; do not resubmit.") from exc
             status_data = poll.json()
             status = status_data.get("status")
             if status == "succeeded":
@@ -236,10 +256,14 @@ def _run_veo(
         operation_name = response.json().get("name")
         if not operation_name:
             raise VideogenProviderError("Veo API did not return an operation name.")
+        _emit_submission_event(spec, str(operation_name))
         for _ in range(90):
             time.sleep(10)
-            poll = client.get(f"{clean_url.rstrip('/')}/{operation_name}", headers={"x-goog-api-key": api_key})
-            poll.raise_for_status()
+            try:
+                poll = client.get(f"{clean_url.rstrip('/')}/{operation_name}", headers={"x-goog-api-key": api_key})
+                poll.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise VideogenProviderError("Veo operation state unknown after task submission; do not resubmit.") from exc
             data = poll.json()
             if data.get("done"):
                 if "error" in data:
@@ -269,10 +293,14 @@ def _run_kling(
         task_id = data.get("id") or data.get("task_id") or data.get("data", {}).get("task_id")
         if not task_id:
             raise VideogenProviderError("Kling API did not return a task id.")
+        _emit_submission_event(spec, str(task_id))
         for _ in range(120):
             time.sleep(10)
-            poll = client.get(f"{clean_url}/v1/videos/generations/{task_id}", headers=headers)
-            poll.raise_for_status()
+            try:
+                poll = client.get(f"{clean_url}/v1/videos/generations/{task_id}", headers=headers)
+                poll.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise VideogenProviderError("Kling operation state unknown after task submission; do not resubmit.") from exc
             status_data = poll.json()
             status = status_data.get("status") or status_data.get("data", {}).get("status")
             if status in {"succeeded", "completed", "success"}:
@@ -321,20 +349,14 @@ def _load_image(file_path: str, api_format: str) -> str | dict[str, Any]:
 
 
 def _download_videos(urls: list[str | None], outputs: list[Path]) -> list[Path]:
-    import httpx
-
     clean_urls = [url for url in urls if url and "http" in url]
     if not clean_urls:
         raise VideogenProviderError("Provider did not return a valid video URL.")
     saved: list[Path] = []
-    with httpx.Client(timeout=300.0) as client:
-        for url, path in zip(clean_urls, outputs):
-            response = client.get(str(url))
-            response.raise_for_status()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(response.content)
-            print(f"Wrote {path}")
-            saved.append(path)
+    for url, path in zip(clean_urls, outputs):
+        safe_download_video(str(url), path)
+        print(f"Wrote {path}")
+        saved.append(path)
     if not saved:
         raise VideogenProviderError("No videos were saved.")
     return saved

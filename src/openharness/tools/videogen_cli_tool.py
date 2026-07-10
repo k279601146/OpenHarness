@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import json
 import os
 import posixpath
 from pathlib import Path, PurePosixPath
-import subprocess
 import sys
 import tempfile
 from typing import Literal
@@ -22,6 +20,7 @@ from openharness.tools.artifact_reference_guard import (
 )
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.tools.bash_tool import _build_provider_tool_env
+from openharness.tools.media_gateway_runtime import run_media_subprocess
 from openharness.tools.sandbox_workspace import get_e2b_task_session, to_sandbox_path, uses_e2b_task_workspace
 
 
@@ -85,27 +84,19 @@ class VideogenCliTool(BaseTool):
         env = os.environ.copy()
         env.update(_build_provider_tool_env(context) or {})
 
-        try:
-            completed = await asyncio.to_thread(
-                subprocess.run,
-                argv,
-                cwd=str(cwd),
-                env=env,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                timeout=arguments.timeout_seconds,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            output = (exc.stdout or "").strip()
-            return await _media_billing_error_result(context, f"videogen CLI timed out after {arguments.timeout_seconds}s.\n{output}".strip())
-
-        output = (completed.stdout or "").strip()
+        completed = await run_media_subprocess(
+            argv=argv,
+            cwd=str(cwd),
+            env=env,
+            timeout_seconds=arguments.timeout_seconds,
+            context=context,
+            kind="video",
+        )
+        output = completed.output.strip()
         if completed.returncode != 0:
-            return await _media_billing_error_result(context, output or f"videogen CLI failed with code {completed.returncode}")
+            return await _media_billing_error_result(context, output or f"videogen CLI failed with code {completed.returncode}", completed.metadata)
 
-        parsed_metadata = _parse_cli_metadata(output)
+        parsed_metadata = {**_parse_cli_metadata(output), **completed.metadata}
         artifacts = [] if arguments.dry_run else _expected_artifacts(arguments, cwd, parsed_metadata)
         missing = [path for path in artifacts if not path.is_file()]
         if missing:
@@ -116,12 +107,12 @@ class VideogenCliTool(BaseTool):
                 parsed_metadata,
             )
 
-        billing_error, billing_metadata = await _settle_media_billing_before_publish(context, parsed_metadata)
+        billing_error, billing_metadata, finalized = await _finalize_media_artifacts(context, artifacts, parsed_metadata)
         if billing_error is not None:
             return billing_error
 
         hook = context.metadata.get("hook")
-        if hook is not None:
+        if hook is not None and not finalized:
             artifact_metadata = context.metadata.get("media_artifact_metadata")
             artifact_metadata = artifact_metadata if isinstance(artifact_metadata, dict) else {}
             for artifact in artifacts:
@@ -196,39 +187,31 @@ async def _execute_e2b_videogen(
         env = os.environ.copy()
         env.update(_build_provider_tool_env(context) or {})
 
-        try:
-            completed = await asyncio.to_thread(
-                subprocess.run,
-                argv,
-                cwd=str(host_cwd),
-                env=env,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                timeout=arguments.timeout_seconds,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            output = (exc.stdout or "").strip()
-            return await _media_billing_error_result(context, f"videogen CLI timed out after {arguments.timeout_seconds}s.\n{output}".strip())
-
-        output = (completed.stdout or "").strip()
+        completed = await run_media_subprocess(
+            argv=argv,
+            cwd=str(host_cwd),
+            env=env,
+            timeout_seconds=arguments.timeout_seconds,
+            context=context,
+            kind="video",
+        )
+        output = completed.output.strip()
         if completed.returncode != 0:
-            return await _media_billing_error_result(context, output or f"videogen CLI failed with code {completed.returncode}")
+            return await _media_billing_error_result(context, output or f"videogen CLI failed with code {completed.returncode}", completed.metadata)
 
-        parsed_metadata = _parse_cli_metadata(output)
+        parsed_metadata = {**_parse_cli_metadata(output), **completed.metadata}
         local_artifacts = [] if arguments.dry_run else _expected_artifacts(local_arguments, local_cwd, parsed_metadata)
         missing = [path for path in local_artifacts if not path.is_file()]
         if missing:
             missing_text = "\n".join(f"- {path}" for path in missing)
             return await _media_billing_error_result(context, f"videogen CLI completed, but expected local output file(s) were missing:\n{missing_text}", parsed_metadata)
 
-        billing_error, billing_metadata = await _settle_media_billing_before_publish(context, parsed_metadata)
+        billing_error, billing_metadata, finalized = await _finalize_media_artifacts(context, local_artifacts, parsed_metadata)
         if billing_error is not None:
             return billing_error
 
         hook = context.metadata.get("hook")
-        if hook is not None:
+        if hook is not None and not finalized:
             artifact_metadata = context.metadata.get("media_artifact_metadata")
             artifact_metadata = artifact_metadata if isinstance(artifact_metadata, dict) else {}
             for local_path in local_artifacts:
@@ -580,6 +563,11 @@ async def _media_billing_error_result(
     metadata: dict[str, object] | None = None,
 ) -> ToolResult:
     billing_metadata = dict(metadata or {})
+    attempts = billing_metadata.get("gateway_attempts") if isinstance(billing_metadata.get("gateway_attempts"), list) else []
+    if any(isinstance(item, dict) and item.get("error_code") == "remote_state_unknown" for item in attempts):
+        billing_metadata["media_billing_status"] = "reserved"
+        billing_metadata["media_recovery_required"] = True
+        return ToolResult(output=output, is_error=True, metadata=billing_metadata)
     if context.metadata.get("media_billing_defer_failure_release"):
         return ToolResult(output=output, is_error=True, metadata=billing_metadata)
     hook = context.metadata.get("hook")
@@ -602,21 +590,44 @@ async def _media_billing_error_result(
     return ToolResult(output=output, is_error=True, metadata=billing_metadata)
 
 
-async def _settle_media_billing_before_publish(
+async def _finalize_media_artifacts(
     context: ToolExecutionContext,
+    artifacts: list[Path],
     metadata: dict[str, object] | None = None,
-) -> tuple[ToolResult | None, dict[str, object]]:
+) -> tuple[ToolResult | None, dict[str, object], bool]:
     billing_metadata = dict(metadata or {})
     hook = context.metadata.get("hook")
     reservation = context.metadata.get("media_billing_reservation")
     if hook is None or not reservation or not hasattr(hook, "commit_media_tool_usage"):
-        return None, {}
+        return None, {}, False
     try:
-        settled = hook.commit_media_tool_usage(
-            reservation if isinstance(reservation, dict) else {},
-            billing_metadata,
-        )
-        return None, settled if isinstance(settled, dict) else {}
+        if hasattr(hook, "finalize_media_artifacts"):
+            artifact_metadata = context.metadata.get("media_artifact_metadata")
+            artifact_metadata = artifact_metadata if isinstance(artifact_metadata, dict) else {}
+            settled = await hook.finalize_media_artifacts(
+                reservation if isinstance(reservation, dict) else {},
+                [
+                    {
+                        "file_path": str(artifact),
+                        "reason": f"Generated video via videogen CLI: {artifact.name}",
+                        "source_tool": "videogen_cli",
+                        "tool_use_id": _context_tool_use_id(context),
+                        "origin": "host_generated",
+                        "metadata": {
+                            **artifact_metadata,
+                            "publish_state": "published",
+                            "published_artifact": True,
+                            "delivery_required": False,
+                            "do_not_deliver_artifact": True,
+                        },
+                    }
+                    for artifact in artifacts
+                ],
+                billing_metadata,
+            )
+            return None, settled if isinstance(settled, dict) else {}, True
+        settled = hook.commit_media_tool_usage(reservation if isinstance(reservation, dict) else {}, billing_metadata)
+        return None, settled if isinstance(settled, dict) else {}, False
     except Exception as exc:
         return (
             ToolResult(
@@ -625,6 +636,7 @@ async def _settle_media_billing_before_publish(
                 metadata=billing_metadata,
             ),
             {},
+            False,
         )
 
 

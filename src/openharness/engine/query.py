@@ -1210,7 +1210,12 @@ async def _execute_tool_call(
     t0 = time.monotonic()
     media_execution_slot: dict[str, Any] | None = None
     try:
-        if _is_media_generation_tool(tool_name) and hook is not None and hasattr(hook, "acquire_media_execution_slot"):
+        if (
+            _is_media_generation_tool(tool_name)
+            and hook is not None
+            and hasattr(hook, "acquire_media_execution_slot")
+            and not hasattr(hook, "get_media_gateway_runtime_candidate")
+        ):
             try:
                 media_execution_slot = await _maybe_await(
                     hook.acquire_media_execution_slot(tool_name, tool_input, tool_use_id)
@@ -1534,7 +1539,8 @@ async def _execute_media_generation_batch(
                     )
                     return
             last_result: ToolResultBlock | None = None
-            for attempt in range(2):
+            max_attempts = 1 if hook is not None and hasattr(hook, "get_media_gateway_runtime_candidate") else 2
+            for attempt in range(max_attempts):
                 sub_metadata = {
                     **(context.tool_metadata or {}),
                     "media_billing_disabled": True,
@@ -1558,7 +1564,7 @@ async def _execute_media_generation_batch(
                     break
                 if not _is_retryable_media_error(last_result.content):
                     break
-                if attempt == 0 and progress_callback is not None:
+                if attempt + 1 < max_attempts and progress_callback is not None:
                     await progress_callback(
                         {
                             "phase": "media_subtask_retry",

@@ -25,6 +25,7 @@ from io import BytesIO
 
 from imagegen_runtime import get_model_spec, run_non_gpt_image
 from imagegen_runtime.providers import ImagegenProviderError, emit_metadata, provider_metadata
+from media_safe_http import validate_public_http_url
 
 DEFAULT_MODEL = "gpt-image-2"
 DEFAULT_SIZE = "auto"
@@ -72,9 +73,14 @@ def _dependency_hint(package: str, *, upgrade: bool = False) -> str:
 
 def _get_api_credentials() -> tuple[str, str]:
     """Return the gpt-image-2 image generation API key and base URL."""
-    api_key = os.getenv("GPT_IMAGEGEN_API_KEY", "")
-    base_url = os.getenv("GPT_IMAGEGEN_BASE_URL", "https://api.packyapi.com")
-    return api_key, base_url
+    gateway_base_url = os.getenv("OPENHARNESS_MEDIA_GATEWAY_BASE_URL", "").strip()
+    api_key = os.getenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY") or os.getenv("GPT_IMAGEGEN_API_KEY", "")
+    base_url = gateway_base_url or os.getenv("GPT_IMAGEGEN_BASE_URL", "https://api.packyapi.com")
+    return api_key, validate_public_http_url(base_url) if gateway_base_url else base_url
+
+
+def _runtime_model_id(model_id: str) -> str:
+    return os.getenv("OPENHARNESS_MEDIA_GATEWAY_MODEL_ID", "").strip() or model_id
 
 
 def _normalize_openai_sdk_base_url(base_url: str) -> str:
@@ -639,7 +645,7 @@ async def _run_generate_batch(args: argparse.Namespace) -> int:
 
     base_fields = _fields_from_args(args)
     base_payload = {
-        "model": args.model,
+        "model": _runtime_model_id(args.model),
         "n": args.n,
         "size": args.size,
         "quality": args.quality,
@@ -790,7 +796,7 @@ def _generate(args: argparse.Namespace) -> None:
         return
 
     payload = {
-        "model": args.model,
+        "model": _runtime_model_id(args.model),
         "prompt": prompt,
         "n": args.n,
         "size": args.size,
@@ -871,7 +877,7 @@ def _edit(args: argparse.Namespace) -> None:
             _warn(f"Mask exceeds 50MB limit: {mask_path}")
 
     payload = {
-        "model": args.model,
+        "model": _runtime_model_id(args.model),
         "prompt": prompt,
         "n": args.n,
         "size": args.size,
