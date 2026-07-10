@@ -71,13 +71,15 @@ def run_non_gpt_image(args: Any, outputs: list[Path], prompt: str) -> dict[str, 
     if getattr(args, "command", "") == "generate-batch":
         raise ImagegenProviderError(f"{spec.model_id} does not support generate-batch in the unified imagegen CLI yet.")
 
-    api_key = _credential("OPENHARNESS_MEDIA_GATEWAY_API_KEY") or _credential(spec.api_key_env)
+    api_key = _credential("OPENHARNESS_MEDIA_GATEWAY_API_KEY")
     if not api_key and getattr(args, "dry_run", False):
         api_key = "dry-run"
     if not api_key:
-        raise ImagegenProviderError(f"{spec.api_key_env} is not set. Configure it before using {spec.model_id}.")
+        raise ImagegenProviderError(
+            f"OPENHARNESS_MEDIA_GATEWAY_API_KEY is not set. Configure the media model gateway before using {spec.model_id}."
+        )
     gateway_base_url = _credential("OPENHARNESS_MEDIA_GATEWAY_BASE_URL")
-    base_url = validate_public_http_url(gateway_base_url) if gateway_base_url else _credential(spec.base_url_env) or spec.default_base_url
+    base_url = validate_public_http_url(gateway_base_url) if gateway_base_url else spec.default_base_url
 
     if getattr(args, "dry_run", False):
         preview = _build_payload(spec, args, prompt)

@@ -28,7 +28,7 @@ These rules are authoritative in the OpenHarness SaaS agent runtime.
 
 This skill has two execution contexts:
 
-- **OpenHarness CLI mode (preferred in SaaS):** call `imagegen_cli` for normal image generation and editing. It wraps this skill's bundled `scripts/image_gen.py`, uses host-side dependencies, requires `GPT_IMAGEGEN_API_KEY`, and uses `GPT_IMAGEGEN_BASE_URL` when set.
+- **OpenHarness CLI mode (preferred in SaaS):** call `imagegen_cli` for normal image generation and editing. It wraps this skill's bundled `scripts/image_gen.py`, uses host-side dependencies, and receives provider credentials from the configured SaaS media model gateway.
 - **Codex host built-in mode:** use the built-in `image_gen` tool only in Codex host runtimes where that tool is actually available. It is not available in the OpenHarness SaaS agent runtime.
 
 The CLI exposes three subcommands:
@@ -163,7 +163,7 @@ Do not automatically use CLI `gpt-image-1.5 --background transparent --output-fo
 Use a concise confirmation like:
 
 ```text
-This likely needs true native transparency. The default OpenHarness CLI path uses a chroma-key background plus local removal, but true transparency requires gpt-image-1.5 because gpt-image-2 does not support background=transparent. It also requires GPT_IMAGEGEN_API_KEY. Should I proceed with that model downgrade?
+This likely needs true native transparency. The default OpenHarness CLI path uses a chroma-key background plus local removal, but true transparency requires gpt-image-1.5 because gpt-image-2 does not support background=transparent. It also requires an enabled media model gateway for the selected image model. Should I proceed with that model downgrade?
 ```
 
 ## Prompt augmentation
@@ -340,16 +340,16 @@ Portability note:
 - In uv-managed environments, `uv pip install ...` remains the preferred path.
 
 ### Environment
-- `GPT_IMAGEGEN_API_KEY` must be set for live API calls.
-- `GPT_IMAGEGEN_BASE_URL` is optional and defaults to `https://api.packyapi.com`.
-- Do not ask the user for `GPT_IMAGEGEN_API_KEY` when it is already available in the runtime environment. If it is missing, report that exact failure.
-- Never ask the user to paste the full key in chat. Ask them to set it locally and confirm when ready.
+- Live API calls require an enabled SaaS media model gateway for the selected image model.
+- The runtime injects `OPENHARNESS_MEDIA_GATEWAY_API_KEY`, `OPENHARNESS_MEDIA_GATEWAY_BASE_URL`, and `OPENHARNESS_MEDIA_GATEWAY_MODEL_ID` for the selected gateway.
+- Do not ask the user to set legacy provider-specific environment variables; media credentials must be configured through the SaaS admin media model gateway.
+- Never ask the user to paste the full key in chat. Ask them to configure the media model gateway in the admin console and confirm when ready.
 
-If the key is missing, give the user these steps:
-1. Create or obtain the API key for the configured image generation gateway.
-2. Set `GPT_IMAGEGEN_API_KEY` as an environment variable in their system.
-3. Optionally set `GPT_IMAGEGEN_BASE_URL`; if omitted, the CLI uses `https://api.packyapi.com`.
-4. Offer to guide them through setting the environment variable for their OS/shell if needed.
+If the gateway key is missing, give the user these steps:
+1. Create or obtain the provider API key for the selected image model.
+2. Configure it in the SaaS admin media model gateway.
+3. Enable a gateway mapping for the selected image model.
+4. Retry the image generation task.
 
 If installation is not possible in this environment, tell the user which dependency is missing and how to install it into their active environment.
 

@@ -155,6 +155,7 @@ SANDBOX_ENV_KEYS = (
 )
 
 PROVIDER_TOOL_ENV_KEYS = (
+    # Legacy provider env names are denied to avoid leaking stale host secrets.
     "GPT_IMAGEGEN_API_KEY",
     "GPT_IMAGEGEN_BASE_URL",
     "NANO_BANANA_API_KEY",

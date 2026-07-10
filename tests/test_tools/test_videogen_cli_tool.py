@@ -8,6 +8,7 @@ import pytest
 
 from openharness.tools import create_default_tool_registry
 from openharness.tools.base import ToolExecutionContext
+from openharness.tools.media_gateway_runtime import MediaSubprocessResult
 from openharness.tools.videogen_cli_tool import VideogenCliInput, VideogenCliTool, _build_output_paths
 
 
@@ -46,7 +47,7 @@ class FakeArtifactHook:
 
 @pytest.mark.asyncio
 async def test_videogen_cli_dry_run_routes_keling_alias(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("KLING_VIDEO_API_KEY", "test-key")
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-key")
 
     tool = VideogenCliTool()
     result = await tool.execute(
@@ -73,7 +74,7 @@ async def test_videogen_cli_dry_run_routes_keling_alias(tmp_path: Path, monkeypa
 
 @pytest.mark.asyncio
 async def test_videogen_cli_uses_ui_preferred_video_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("VEO_VIDEO_API_KEY", "test-key")
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-key")
 
     tool = VideogenCliTool()
     result = await tool.execute(
@@ -99,7 +100,7 @@ async def test_videogen_cli_veo_fast_uses_resolution_second_billing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("VEO_VIDEO_API_KEY", "test-key")
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-key")
     monkeypatch.setenv("BILLING_CREDITS_PER_USD", "25")
 
     tool = VideogenCliTool()
@@ -127,7 +128,7 @@ async def test_videogen_cli_seedance_first_last_billing_dimensions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("SEEDANCE_VIDEO_API_KEY", "test-key")
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-key")
     first = tmp_path / "first.png"
     last = tmp_path / "last.png"
     first.write_bytes(b"png")
@@ -191,8 +192,8 @@ async def test_videogen_cli_e2b_publishes_without_uploading_artifact(
         del context
         return sandbox
 
-    def fake_run(argv, cwd, env, text, stdout, stderr, timeout, check):
-        del cwd, text, stdout, stderr, timeout, check
+    async def fake_run_media_subprocess(*, argv, cwd, env, timeout_seconds, context, kind):
+        del cwd, timeout_seconds, context, kind
         seen_env.update(env)
         out_index = argv.index("--out") + 1
         local_path = Path(argv[out_index])
@@ -204,15 +205,12 @@ async def test_videogen_cli_e2b_publishes_without_uploading_artifact(
             "provider": "seedance",
         }
 
-        class Completed:
-            returncode = 0
-            stdout = f"Wrote {local_path}\nVIDEOGEN_METADATA:{__import__('json').dumps(metadata)}"
-
-        return Completed()
+        output = f"Wrote {local_path}\nVIDEOGEN_METADATA:{__import__('json').dumps(metadata)}"
+        return MediaSubprocessResult(0, output, {})
 
     monkeypatch.setattr("openharness.tools.videogen_cli_tool.get_e2b_task_session", fake_get_session)
-    monkeypatch.setattr("openharness.tools.videogen_cli_tool.subprocess.run", fake_run)
-    monkeypatch.setenv("SEEDANCE_VIDEO_API_KEY", "test-video-key")
+    monkeypatch.setattr("openharness.tools.videogen_cli_tool.run_media_subprocess", fake_run_media_subprocess)
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-video-key")
 
     result = await VideogenCliTool().execute(
         VideogenCliInput(
@@ -244,7 +242,7 @@ async def test_videogen_cli_e2b_publishes_without_uploading_artifact(
     assert sandbox.files == {}
     assert "D:\\home\\user" not in result.output
     assert "Published artifact paths:" in result.output
-    assert seen_env["SEEDANCE_VIDEO_API_KEY"] == "test-video-key"
+    assert seen_env["OPENHARNESS_MEDIA_GATEWAY_API_KEY"] == "test-video-key"
     assert hook.calls == [
         {
             "file_path": hook.calls[0]["file_path"],
@@ -281,24 +279,20 @@ async def test_videogen_cli_e2b_materializes_artifact_input(
         assert sandbox_session is sandbox
         return {"sandbox_path": "/home/user/tasks/thread-1/inputs/materialized/first-art_123.png"}
 
-    def fake_run(argv, cwd, env, text, stdout, stderr, timeout, check):
+    async def fake_run_media_subprocess(*, argv, cwd, env, timeout_seconds, context, kind):
         nonlocal seen_input
-        del cwd, env, text, stdout, stderr, timeout, check
+        del cwd, env, timeout_seconds, context, kind
         seen_argv[:] = list(argv)
         seen_input = Path(argv[argv.index("--image") + 1]).read_bytes()
         out_index = argv.index("--out") + 1
         local_path = Path(argv[out_index])
         local_path.parent.mkdir(parents=True, exist_ok=True)
         local_path.write_bytes(b"mp4-bytes")
-
-        class Completed:
-            returncode = 0
-            stdout = f"VIDEOGEN_METADATA:{__import__('json').dumps({'artifact_paths': [str(local_path)]})}"
-
-        return Completed()
+        output = f"VIDEOGEN_METADATA:{__import__('json').dumps({'artifact_paths': [str(local_path)]})}"
+        return MediaSubprocessResult(0, output, {})
 
     monkeypatch.setattr("openharness.tools.videogen_cli_tool.get_e2b_task_session", fake_get_session)
-    monkeypatch.setattr("openharness.tools.videogen_cli_tool.subprocess.run", fake_run)
+    monkeypatch.setattr("openharness.tools.videogen_cli_tool.run_media_subprocess", fake_run_media_subprocess)
 
     result = await VideogenCliTool().execute(
         VideogenCliInput(command="image-to-video", prompt="animate", images=["artifact:art_123"], out="output/videogen/clip.mp4"),

@@ -10,7 +10,7 @@ The word `batch` in a user request is not CLI opt-in by itself.
 - `edit`: edit one or more existing images
 - `generate-batch`: run many generation jobs from a JSONL file after the user explicitly chooses CLI/API/model controls
 
-Real API calls require **network access** + `GPT_IMAGEGEN_API_KEY`. `--dry-run` does not. The CLI reads `GPT_IMAGEGEN_BASE_URL` when set and defaults to `https://api.packyapi.com`.
+Real API calls require **network access** and an injected SaaS media model gateway credential (`OPENHARNESS_MEDIA_GATEWAY_API_KEY`). `--dry-run` does not. The CLI reads `OPENHARNESS_MEDIA_GATEWAY_BASE_URL` when set and otherwise uses the model's default public base URL.
 
 ## Quick start (works from any repo)
 Set a stable path to the skill CLI (default `CODEX_HOME` is `~/.codex`):
@@ -37,7 +37,7 @@ Notes:
 - One-off dry-runs print the API payload and the computed output path(s).
 - Repo-local finals should live under `output/imagegen/`.
 
-Generate (requires `GPT_IMAGEGEN_API_KEY` + network):
+Generate (requires an enabled media model gateway + network):
 
 ```bash
 python "$IMAGE_GEN" generate \

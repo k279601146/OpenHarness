@@ -39,13 +39,15 @@ def _emit_submission_event(spec: VideoModelSpec, operation_id: str) -> None:
 
 def run_video(args: Any, outputs: list[Path], prompt: str) -> dict[str, Any]:
     spec = _runtime_spec(get_model_spec(getattr(args, "model", None)))
-    api_key = _credential("OPENHARNESS_MEDIA_GATEWAY_API_KEY") or _credential(spec.api_key_env)
+    api_key = _credential("OPENHARNESS_MEDIA_GATEWAY_API_KEY")
     if not api_key and getattr(args, "dry_run", False):
         api_key = "dry-run"
     if not api_key:
-        raise VideogenProviderError(f"{spec.api_key_env} is not set. Configure it before using {spec.model_id}.")
+        raise VideogenProviderError(
+            f"OPENHARNESS_MEDIA_GATEWAY_API_KEY is not set. Configure the media model gateway before using {spec.model_id}."
+        )
     gateway_base_url = _credential("OPENHARNESS_MEDIA_GATEWAY_BASE_URL")
-    base_url = validate_public_http_url(gateway_base_url) if gateway_base_url else _credential(spec.base_url_env) or spec.default_base_url
+    base_url = validate_public_http_url(gateway_base_url) if gateway_base_url else spec.default_base_url
 
     payload = _build_payload(spec, args, prompt)
     if getattr(args, "dry_run", False):

@@ -14,6 +14,7 @@ from openharness.tools.imagegen_cli_tool import (
     _build_output_paths,
     _normalize_openai_sdk_base_url,
 )
+from openharness.tools.media_gateway_runtime import MediaSubprocessResult
 
 
 class FakeE2BProcess:
@@ -51,7 +52,7 @@ class FakeArtifactHook:
 
 @pytest.mark.asyncio
 async def test_imagegen_cli_dry_run_routes_nano_banana(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NANO_BANANA_API_KEY", "test-key")
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-key")
 
     tool = ImagegenCliTool()
     result = await tool.execute(
@@ -79,7 +80,7 @@ async def test_imagegen_cli_dry_run_routes_doubao_and_multiple_outputs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("DOUBAO_IMAGE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-key")
 
     tool = ImagegenCliTool()
     result = await tool.execute(
@@ -307,8 +308,8 @@ async def test_imagegen_cli_text_generation_skips_e2b_workspace(
         del context
         raise AssertionError("text-to-image generation must not acquire an E2B session")
 
-    def fake_run(argv, cwd, env, text, stdout, stderr, timeout, check):
-        del cwd, text, stdout, stderr, timeout, check
+    async def fake_run_media_subprocess(*, argv, cwd, env, timeout_seconds, context, kind):
+        del cwd, timeout_seconds, context, kind
         seen_env.update(env)
         out_index = argv.index("--out") + 1
         local_path = Path(argv[out_index])
@@ -320,15 +321,12 @@ async def test_imagegen_cli_text_generation_skips_e2b_workspace(
             "provider": "openai_compatible",
         }
 
-        class Completed:
-            returncode = 0
-            stdout = f"Wrote {local_path}\nIMAGEGEN_METADATA:{__import__('json').dumps(metadata)}"
-
-        return Completed()
+        output = f"Wrote {local_path}\nIMAGEGEN_METADATA:{__import__('json').dumps(metadata)}"
+        return MediaSubprocessResult(0, output, {})
 
     monkeypatch.setattr("openharness.tools.imagegen_cli_tool.get_e2b_task_session", fake_get_session)
-    monkeypatch.setattr("openharness.tools.imagegen_cli_tool.subprocess.run", fake_run)
-    monkeypatch.setenv("GPT_IMAGEGEN_API_KEY", "test-image-key")
+    monkeypatch.setattr("openharness.tools.imagegen_cli_tool.run_media_subprocess", fake_run_media_subprocess)
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-image-key")
 
     result = await ImagegenCliTool().execute(
         ImagegenCliInput(
@@ -359,7 +357,7 @@ async def test_imagegen_cli_text_generation_skips_e2b_workspace(
     assert result.metadata["do_not_deliver_artifact"] is True
     assert "D:\\home\\user" not in result.output
     assert "Published artifact paths:" in result.output
-    assert seen_env["GPT_IMAGEGEN_API_KEY"] == "test-image-key"
+    assert seen_env["OPENHARNESS_MEDIA_GATEWAY_API_KEY"] == "test-image-key"
     assert hook.calls == [
         {
             "file_path": hook.calls[0]["file_path"],
@@ -396,24 +394,20 @@ async def test_imagegen_cli_e2b_materializes_artifact_input(
         assert sandbox_session is sandbox
         return {"sandbox_path": "/home/user/tasks/thread-1/inputs/materialized/cat-art_123.png"}
 
-    def fake_run(argv, cwd, env, text, stdout, stderr, timeout, check):
+    async def fake_run_media_subprocess(*, argv, cwd, env, timeout_seconds, context, kind):
         nonlocal seen_input
-        del cwd, env, text, stdout, stderr, timeout, check
+        del cwd, env, timeout_seconds, context, kind
         seen_argv[:] = list(argv)
         seen_input = Path(argv[argv.index("--image") + 1]).read_bytes()
         out_index = argv.index("--out") + 1
         local_path = Path(argv[out_index])
         local_path.parent.mkdir(parents=True, exist_ok=True)
         local_path.write_bytes(b"png-bytes")
-
-        class Completed:
-            returncode = 0
-            stdout = f"IMAGEGEN_METADATA:{__import__('json').dumps({'artifact_paths': [str(local_path)]})}"
-
-        return Completed()
+        output = f"IMAGEGEN_METADATA:{__import__('json').dumps({'artifact_paths': [str(local_path)]})}"
+        return MediaSubprocessResult(0, output, {})
 
     monkeypatch.setattr("openharness.tools.imagegen_cli_tool.get_e2b_task_session", fake_get_session)
-    monkeypatch.setattr("openharness.tools.imagegen_cli_tool.subprocess.run", fake_run)
+    monkeypatch.setattr("openharness.tools.imagegen_cli_tool.run_media_subprocess", fake_run_media_subprocess)
 
     result = await ImagegenCliTool().execute(
         ImagegenCliInput(command="edit", prompt="hat", images=["artifact:art_123"], out="output/imagegen/hat.png"),
@@ -453,8 +447,8 @@ async def test_imagegen_cli_e2b_copies_host_image_and_mask_inputs(
         del context
         return sandbox
 
-    def fake_run(argv, cwd, env, text, stdout, stderr, timeout, check):
-        del cwd, env, text, stdout, stderr, timeout, check
+    async def fake_run_media_subprocess(*, argv, cwd, env, timeout_seconds, context, kind):
+        del cwd, env, timeout_seconds, context, kind
         seen_argv[:] = list(argv)
         assert Path(argv[argv.index("--image") + 1]).read_bytes() == b"source-image"
         assert Path(argv[argv.index("--mask") + 1]).read_bytes() == b"mask-image"
@@ -462,15 +456,11 @@ async def test_imagegen_cli_e2b_copies_host_image_and_mask_inputs(
         local_path = Path(argv[out_index])
         local_path.parent.mkdir(parents=True, exist_ok=True)
         local_path.write_bytes(b"png-bytes")
-
-        class Completed:
-            returncode = 0
-            stdout = f"IMAGEGEN_METADATA:{__import__('json').dumps({'artifact_paths': [str(local_path)]})}"
-
-        return Completed()
+        output = f"IMAGEGEN_METADATA:{__import__('json').dumps({'artifact_paths': [str(local_path)]})}"
+        return MediaSubprocessResult(0, output, {})
 
     monkeypatch.setattr("openharness.tools.imagegen_cli_tool.get_e2b_task_session", fake_get_session)
-    monkeypatch.setattr("openharness.tools.imagegen_cli_tool.subprocess.run", fake_run)
+    monkeypatch.setattr("openharness.tools.imagegen_cli_tool.run_media_subprocess", fake_run_media_subprocess)
 
     result = await ImagegenCliTool().execute(
         ImagegenCliInput(

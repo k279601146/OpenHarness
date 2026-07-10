@@ -74,8 +74,8 @@ def _dependency_hint(package: str, *, upgrade: bool = False) -> str:
 def _get_api_credentials() -> tuple[str, str]:
     """Return the gpt-image-2 image generation API key and base URL."""
     gateway_base_url = os.getenv("OPENHARNESS_MEDIA_GATEWAY_BASE_URL", "").strip()
-    api_key = os.getenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY") or os.getenv("GPT_IMAGEGEN_API_KEY", "")
-    base_url = gateway_base_url or os.getenv("GPT_IMAGEGEN_BASE_URL", "https://api.packyapi.com")
+    api_key = os.getenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "")
+    base_url = gateway_base_url or "https://api.packyapi.com"
     return api_key, validate_public_http_url(base_url) if gateway_base_url else base_url
 
 
@@ -131,12 +131,12 @@ def _openai_client_kwargs(api_key: str, base_url: str) -> dict[str, Any]:
 def _ensure_api_key(dry_run: bool) -> None:
     api_key, _ = _get_api_credentials()
     if api_key:
-        print("GPT_IMAGEGEN_API_KEY is set.", file=sys.stderr)
+        print("OPENHARNESS_MEDIA_GATEWAY_API_KEY is set.", file=sys.stderr)
         return
     if dry_run:
-        _warn("GPT_IMAGEGEN_API_KEY is not set; dry-run only.")
+        _warn("OPENHARNESS_MEDIA_GATEWAY_API_KEY is not set; dry-run only.")
         return
-    _die("GPT_IMAGEGEN_API_KEY is not set. Export it before running.")
+    _die("OPENHARNESS_MEDIA_GATEWAY_API_KEY is not set. Configure the media model gateway before running imagegen.")
 
 
 def _read_prompt(prompt: Optional[str], prompt_file: Optional[str]) -> str:

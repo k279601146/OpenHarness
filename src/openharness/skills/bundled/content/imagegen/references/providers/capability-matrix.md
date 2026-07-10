@@ -9,9 +9,9 @@
 | Doubao Seedream | `doubao` | `doubao-seedream-5-0-260128`, `doubao-seedream-5-0-lite-260128`, `doubao-seedream-4-5-251128`, `doubao-seedream-4-0-250828` | Yes | Yes | 2.0 per output |
 | Kolors | `openai_compatible` | `kolors` | Yes | No guaranteed edit support | 1.0 per output |
 
-Credentials are provider-specific environment variables:
+Credentials come from the SaaS media model gateway:
 
-- GPT Image: `GPT_IMAGEGEN_API_KEY`, optional `GPT_IMAGEGEN_BASE_URL`
-- Nano Banana / Gemini: `NANO_BANANA_API_KEY`, optional `NANO_BANANA_BASE_URL`
-- Doubao Seedream: `DOUBAO_IMAGE_API_KEY`, optional `DOUBAO_IMAGE_BASE_URL`
-- Kolors: `KOLORS_IMAGE_API_KEY`, optional `KOLORS_IMAGE_BASE_URL`
+- The runtime injects `OPENHARNESS_MEDIA_GATEWAY_API_KEY`.
+- The runtime injects `OPENHARNESS_MEDIA_GATEWAY_BASE_URL`.
+- The runtime injects `OPENHARNESS_MEDIA_GATEWAY_MODEL_ID`.
+- Do not use provider-specific environment variables for SaaS media generation.

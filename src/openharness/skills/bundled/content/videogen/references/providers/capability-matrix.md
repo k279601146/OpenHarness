@@ -10,8 +10,9 @@
 
 Do not use this v1 runtime for MiniMax Hailuo, Vidu, Wanxiang/Wan, Sora, Runway Gen, Luma, or Pika.
 
-Credentials are provider-specific environment variables:
+Credentials come from the SaaS media model gateway:
 
-- Seedance: `SEEDANCE_VIDEO_API_KEY`, optional `SEEDANCE_VIDEO_BASE_URL`
-- Veo/video3: `VEO_VIDEO_API_KEY`, optional `VEO_VIDEO_BASE_URL`
-- Kling/keling: `KLING_VIDEO_API_KEY`, optional `KLING_VIDEO_BASE_URL`
+- The runtime injects `OPENHARNESS_MEDIA_GATEWAY_API_KEY`.
+- The runtime injects `OPENHARNESS_MEDIA_GATEWAY_BASE_URL`.
+- The runtime injects `OPENHARNESS_MEDIA_GATEWAY_MODEL_ID`.
+- Do not use provider-specific environment variables for SaaS media generation.

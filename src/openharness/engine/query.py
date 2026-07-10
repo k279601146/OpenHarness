@@ -1181,9 +1181,12 @@ async def _execute_tool_call(
                 is_error=True,
             )
 
-    media_reservation: dict[str, Any] | None = None
-    media_billing_disabled = bool((context.tool_metadata or {}).get("media_billing_disabled"))
-    hook = (context.tool_metadata or {}).get("hook")
+    tool_metadata = context.tool_metadata or {}
+    existing_reservation = tool_metadata.get("media_billing_reservation")
+    media_reservation: dict[str, Any] | None = existing_reservation if isinstance(existing_reservation, dict) else None
+    media_billing_disabled = bool(tool_metadata.get("media_billing_disabled"))
+    media_billing_defer_failure_release = bool(tool_metadata.get("media_billing_defer_failure_release"))
+    hook = tool_metadata.get("hook")
     if _is_media_generation_tool(tool_name) and not media_billing_disabled and hook is not None and hasattr(hook, "reserve_media_tool_usage"):
         try:
             media_reservation = hook.reserve_media_tool_usage(tool_name, tool_input, tool_use_id, {})
@@ -1254,7 +1257,7 @@ async def _execute_tool_call(
                     "ask_user_prompt": context.ask_user_prompt,
                     "tool_name": tool_name,
                     "tool_use_id": tool_use_id,
-                    **(context.tool_metadata or {}),
+                    **tool_metadata,
                     "media_billing_reservation": media_reservation,
                 },
                 hook_executor=context.hook_executor,
@@ -1271,7 +1274,7 @@ async def _execute_tool_call(
     log.debug("executed %s in %.2fs err=%s output_len=%d",
               tool_name, elapsed, result.is_error, len(result.output or ""))
     result_metadata = dict(result.metadata or {})
-    if media_reservation and hook is not None and not result_metadata.get("media_billing_status"):
+    if media_reservation and hook is not None and not media_billing_defer_failure_release and not result_metadata.get("media_billing_status"):
         if result.is_error:
             try:
                 result_metadata.update(
