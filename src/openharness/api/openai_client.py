@@ -738,6 +738,21 @@ def _text_from_response_message_item(item: Any) -> str:
     return "".join(parts)
 
 
+def _message_from_responses_response(response: Any) -> ConversationMessage:
+    content: list[ContentBlock] = []
+    for item in _usage_attr(response, "output", []) or []:
+        item_type = _response_item_attr(item, "type")
+        if item_type == "message":
+            text = _text_from_response_message_item(item)
+            if text:
+                content.append(TextBlock(text=text))
+        else:
+            tool_use = _tool_use_from_response_item(item)
+            if tool_use:
+                content.append(tool_use)
+    return ConversationMessage(role="assistant", content=content)
+
+
 def _tool_use_from_response_item(item: Any) -> ToolUseBlock | None:
     item_type = _response_item_attr(item, "type")
     if item_type != "function_call":
@@ -1044,7 +1059,6 @@ class OpenAICompatibleClient:
                 )
                 raise RequestFailure("Responses API returned no response")
 
-            content: list[ContentBlock] = []
             if response_protocol == "chat/completions":
                 message = _parse_assistant_response(response)
                 if message.text:
@@ -1062,18 +1076,7 @@ class OpenAICompatibleClient:
                 )
                 return
 
-            for item in _usage_attr(response, "output", []) or []:
-                item_type = _response_item_attr(item, "type")
-                if item_type == "message":
-                    text = _text_from_response_message_item(item)
-                    if text:
-                        content.append(TextBlock(text=text))
-                else:
-                    tool_use = _tool_use_from_response_item(item)
-                    if tool_use:
-                        content.append(tool_use)
-
-            message = ConversationMessage(role="assistant", content=content)
+            message = _message_from_responses_response(response)
             if message.text:
                 yield ApiTextDeltaEvent(text=message.text)
             log.info(
@@ -1364,6 +1367,55 @@ class OpenAICompatibleClient:
                 exc,
             )
             raise
+
+        if (
+            first_stream_event_at is None
+            and not collected_content
+            and not collected_reasoning
+            and not function_call_items
+            and not chat_tool_calls
+            and finish_reason is None
+        ):
+            log.warning(
+                "[OpenAICompat:%s] responses stream returned no events; retrying without streaming",
+                request_id,
+            )
+            fallback_params = {**params, "stream": False}
+            fallback_chat_params = _chat_completion_params_for_request(request, stream=False)
+            fallback_protocol, fallback_response = await _create_response_or_chat(fallback_params, fallback_chat_params)
+            if fallback_protocol == "chat/completions":
+                message = _parse_assistant_response(fallback_response)
+                if message.text:
+                    yield ApiTextDeltaEvent(text=message.text)
+                log.info(
+                    "[OpenAICompat:%s] chat non-stream fallback complete content_chars=%d tools=%d",
+                    request_id,
+                    len(message.text),
+                    len(message.tool_uses),
+                )
+                yield ApiMessageCompleteEvent(
+                    message=message,
+                    usage=_usage_snapshot_from_chat_response(fallback_response),
+                    stop_reason=_usage_attr(_usage_attr(fallback_response, "choices", [None])[0], "finish_reason"),
+                )
+                return
+
+            message = _message_from_responses_response(fallback_response)
+            if message.text:
+                yield ApiTextDeltaEvent(text=message.text)
+            log.info(
+                "[OpenAICompat:%s] responses non-stream fallback complete content_chars=%d tools=%d status=%s",
+                request_id,
+                len(message.text),
+                len(message.tool_uses),
+                _usage_attr(fallback_response, "status"),
+            )
+            yield ApiMessageCompleteEvent(
+                message=message,
+                usage=_usage_snapshot_from_responses_response(fallback_response),
+                stop_reason=_usage_attr(fallback_response, "status"),
+            )
+            return
 
         function_call_items.extend(item for item in chat_tool_calls.values() if item.get("name"))
         collected_tool_calls: list[ToolUseBlock] = []

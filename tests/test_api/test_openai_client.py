@@ -453,6 +453,54 @@ class _FakeOpenAIClient:
 
 
 @pytest.mark.asyncio
+async def test_responses_empty_stream_falls_back_to_non_stream():
+    class _FallbackResponses:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def create(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs.get("stream"):
+                async def _empty_stream():
+                    if False:
+                        yield {}
+
+                return _empty_stream()
+
+            return {
+                "status": "completed",
+                "usage": {"input_tokens": 2, "output_tokens": 3},
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "hello"}],
+                    }
+                ],
+            }
+
+    class _FallbackClient:
+        def __init__(self) -> None:
+            self.responses = _FallbackResponses()
+
+    client = OpenAICompatibleClient(api_key="test-key")
+    fake_sdk = _FallbackClient()
+    client._client = fake_sdk
+
+    request = ApiMessageRequest(
+        model="gpt-5.5",
+        messages=[ConversationMessage.from_user_text("Say hi")],
+    )
+
+    events = [event async for event in client.stream_message(request)]
+
+    assert [call["stream"] for call in fake_sdk.responses.calls] == [True, False]
+    assert events[0].text == "hello"
+    assert events[-1].message.text == "hello"
+    assert events[-1].usage.input_tokens == 2
+    assert events[-1].usage.output_tokens == 3
+
+
+@pytest.mark.asyncio
 async def test_openai_client_uses_full_base_url_path_for_requests():
     seen_urls: list[str] = []
 
@@ -485,7 +533,8 @@ async def test_openai_client_uses_full_base_url_path_for_requests():
     events = [event async for event in client.stream_message(request)]
 
     assert events
-    assert seen_urls == ["https://jarodfund.xyz/openai/v1/responses"]
+    assert seen_urls
+    assert all(url == "https://jarodfund.xyz/openai/v1/responses" for url in seen_urls)
     await http_client.aclose()
 
 
