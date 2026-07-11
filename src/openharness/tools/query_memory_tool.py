@@ -8,7 +8,7 @@ from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 class QueryMemoryInput(BaseModel):
     """Input for QueryMemoryTool."""
     query: str = Field(..., description="The search query (e.g., 'yesterday's generated cat image' or 'code for the react project')")
-    limit: int = Field(5, description="Maximum number of memory entries to retrieve")
+    limit: int = Field(20, description="Maximum number of memory entries to retrieve")
     purpose: Optional[str] = Field(None, description="The reasoning behind why you are querying memory")
 
 class QueryMemoryTool(BaseTool):

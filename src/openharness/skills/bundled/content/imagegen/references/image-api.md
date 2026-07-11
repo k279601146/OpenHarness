@@ -40,6 +40,7 @@ Popular sizes:
 | Auto | `auto` | Default size |
 
 Square images are typically fastest to generate. For 4K-style output, use `3840x2160` or `2160x3840`.
+UI presets should keep resolution separate from aspect ratio. Common `gpt-image-2` aspect-ratio presets are `1:1`, `3:2`, `2:3`, `4:3`, `3:4`, `5:4`, `4:5`, `16:9`, `9:16`, `2:1`, `1:2`, `21:9`, and `9:21`; generate a valid `WIDTHxHEIGHT` size from the selected ratio and resolution before calling the provider.
 
 ## Endpoints
 - Generate: `POST /v1/images/generations` (`client.images.generate(...)`)

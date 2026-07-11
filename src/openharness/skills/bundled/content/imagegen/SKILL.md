@@ -303,6 +303,7 @@ The CLI defaults to `gpt-image-2`.
 - Square images are typically fastest to generate. Use `1024x1024` for fast square drafts.
 - If the user asks for 4K-style output, use `3840x2160` for landscape or `2160x3840` for portrait.
 - `gpt-image-2` size may be `auto` or `WIDTHxHEIGHT` if all constraints hold: max edge `<= 3840px`, both edges multiples of `16px`, long-to-short ratio `<= 3:1`, total pixels between `655,360` and `8,294,400`.
+- Keep aspect ratio and resolution separate in UI/client flows. Common `gpt-image-2` aspect-ratio presets are `1:1`, `3:2`, `2:3`, `4:3`, `3:4`, `5:4`, `4:5`, `16:9`, `9:16`, `2:1`, `1:2`, `21:9`, and `9:21`.
 
 Popular `gpt-image-2` sizes:
 - `1024x1024` square

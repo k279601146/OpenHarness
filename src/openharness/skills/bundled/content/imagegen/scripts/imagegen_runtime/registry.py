@@ -54,6 +54,7 @@ GPT_IMAGE_2_SIZES = (
     "2160x3840",
 )
 GPT_IMAGE_2_QUALITIES = ("auto", "low", "medium", "high")
+GPT_IMAGE_2_ASPECT_RATIOS = ("1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "2:1", "1:2", "21:9", "9:21")
 DOUBAO_IMAGE_SIZES = ("2048x2048", "2848x1600", "1600x2848", "2304x1728", "1728x2304")
 DOUBAO_IMAGE_ASPECT_RATIOS = ("1:1", "16:9", "9:16", "4:3", "3:4")
 KOLORS_IMAGE_SIZES = ("1024x1024", "1792x1024", "1024x1792")
@@ -121,7 +122,7 @@ IMAGE_MODEL_REGISTRY: dict[str, ImageModelSpec] = {
         default_aspect_ratio="1:1",
         supported_sizes=GPT_IMAGE_2_SIZES,
         supported_resolutions=("1K", "2K", "4K"),
-        supported_aspect_ratios=("1:1", "3:2", "2:3", "16:9", "9:16"),
+        supported_aspect_ratios=GPT_IMAGE_2_ASPECT_RATIOS,
         size_presets=GPT_IMAGE_2_PRESETS,
         supported_qualities=GPT_IMAGE_2_QUALITIES,
         max_outputs=10,
@@ -301,6 +302,8 @@ def resolve_image_dimensions(
     raw_aspect = str(aspect_ratio or "").strip().lower() or None
     if raw_size.lower() == "auto":
         raw_size = ""
+    if raw_aspect in {"auto", "adaptive"}:
+        raw_aspect = None
     if raw_aspect and raw_size.lower() == str(spec.default_size).lower():
         raw_size = ""
 
@@ -315,9 +318,10 @@ def resolve_image_dimensions(
 
     if raw_size and not preset_by_size and spec.supports_flexible_size and _is_valid_flexible_image_size(raw_size):
         effective_resolution = raw_resolution or _resolution_from_size(raw_size) or spec.default_resolution
-        effective_aspect = raw_aspect or _aspect_from_size(raw_size)
-        if raw_aspect and effective_aspect and raw_aspect.lower() != effective_aspect.lower():
+        size_aspect = _aspect_from_size(raw_size)
+        if raw_aspect and size_aspect and not _same_aspect_ratio(raw_aspect, size_aspect):
             raise ValueError("Image size conflicts with aspect_ratio")
+        effective_aspect = raw_aspect or size_aspect
         return effective_resolution, raw_size, effective_aspect
 
     if spec.dimension_mode == "resolution_aspect":
@@ -349,7 +353,9 @@ def resolve_image_dimensions(
     if spec.supports_flexible_size and effective_aspect:
         flexible_size = _flexible_size_from_aspect(effective_aspect, effective_resolution)
         if flexible_size:
-            return effective_resolution or _resolution_from_size(flexible_size) or spec.default_resolution, flexible_size, _aspect_from_size(flexible_size) or effective_aspect
+            size_aspect = _aspect_from_size(flexible_size)
+            returned_aspect = effective_aspect if size_aspect and _same_aspect_ratio(effective_aspect, size_aspect) else size_aspect or effective_aspect
+            return effective_resolution or _resolution_from_size(flexible_size) or spec.default_resolution, flexible_size, returned_aspect
         if raw_aspect:
             raise ValueError(f"Unsupported image aspect_ratio: {raw_aspect}")
     if effective_aspect and not spec.supports_flexible_size:
@@ -403,6 +409,21 @@ def _parse_pixel_size(size: str) -> tuple[int, int] | None:
     if not match:
         return None
     return int(match.group(1)), int(match.group(2))
+
+
+def _parse_aspect_ratio(aspect_ratio: str | None) -> tuple[int, int] | None:
+    match = re.fullmatch(r"([1-9][0-9]?):([1-9][0-9]?)", str(aspect_ratio or "").strip())
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def _same_aspect_ratio(left: str | None, right: str | None) -> bool:
+    parsed_left = _parse_aspect_ratio(left)
+    parsed_right = _parse_aspect_ratio(right)
+    if not parsed_left or not parsed_right:
+        return False
+    return parsed_left[0] * parsed_right[1] == parsed_right[0] * parsed_left[1]
 
 
 def _is_valid_flexible_image_size(size: str) -> bool:
