@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 
 from io import BytesIO
 
-from imagegen_runtime import get_model_spec, run_non_gpt_image
+from imagegen_runtime import get_model_spec, resolve_image_dimensions, run_non_gpt_image
 from imagegen_runtime.providers import ImagegenProviderError, emit_metadata, provider_metadata
 from media_safe_http import validate_public_http_url
 
@@ -795,11 +795,21 @@ def _generate(args: argparse.Namespace) -> None:
         emit_metadata(metadata)
         return
 
+    try:
+        _, effective_size, _ = resolve_image_dimensions(
+            spec,
+            resolution=args.resolution,
+            size=args.size,
+            aspect_ratio=args.aspect_ratio,
+        )
+    except ValueError as exc:
+        _die(str(exc))
+
     payload = {
         "model": _runtime_model_id(args.model),
         "prompt": prompt,
         "n": args.n,
-        "size": args.size,
+        "size": effective_size,
         "quality": args.quality,
         "background": args.background,
         "output_format": args.output_format,
@@ -867,6 +877,16 @@ def _edit(args: argparse.Namespace) -> None:
         emit_metadata(metadata)
         return
 
+    try:
+        _, effective_size, _ = resolve_image_dimensions(
+            spec,
+            resolution=args.resolution,
+            size=args.size,
+            aspect_ratio=args.aspect_ratio,
+        )
+    except ValueError as exc:
+        _die(str(exc))
+
     mask_path = Path(args.mask) if args.mask else None
     if mask_path:
         if not mask_path.exists():
@@ -880,7 +900,7 @@ def _edit(args: argparse.Namespace) -> None:
         "model": _runtime_model_id(args.model),
         "prompt": prompt,
         "n": args.n,
-        "size": args.size,
+        "size": effective_size,
         "quality": args.quality,
         "background": args.background,
         "output_format": args.output_format,
@@ -1003,6 +1023,7 @@ def _add_shared_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--prompt-file")
     parser.add_argument("--n", type=int, default=1)
     parser.add_argument("--size", default=DEFAULT_SIZE)
+    parser.add_argument("--resolution")
     parser.add_argument("--aspect-ratio")
     parser.add_argument("--quality", default=DEFAULT_QUALITY)
     parser.add_argument("--background")

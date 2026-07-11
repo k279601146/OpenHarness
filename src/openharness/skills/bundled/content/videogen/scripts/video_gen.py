@@ -61,6 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--quality")
     parser.add_argument("--mode")
     parser.add_argument("--generate-audio", action="store_true")
+    parser.add_argument("--watermark", action="store_true")
     parser.add_argument("--n", type=int, default=1)
     parser.add_argument("--out", default=DEFAULT_OUTPUT_PATH)
     parser.add_argument("--out-dir")

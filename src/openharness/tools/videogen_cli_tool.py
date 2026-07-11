@@ -45,6 +45,7 @@ class VideogenCliInput(BaseModel):
     quality: str | None = Field(default=None)
     mode: str | None = Field(default=None)
     generate_audio: bool = False
+    watermark: bool = False
     n: int = Field(default=1, ge=1, le=4)
     num_videos: int | None = Field(default=None, ge=1, le=4, description="Alias for n.")
     out: str = Field(default="output/videogen/output.mp4", description="Output video file path.")
@@ -310,6 +311,8 @@ def _build_argv(script: Path, arguments: VideogenCliInput, cwd: Path) -> list[st
         _add_value(argv, "--reference-file", _as_cli_path(ref, cwd))
     if arguments.generate_audio:
         argv.append("--generate-audio")
+    if arguments.watermark:
+        argv.append("--watermark")
     if arguments.force:
         argv.append("--force")
     if arguments.dry_run:

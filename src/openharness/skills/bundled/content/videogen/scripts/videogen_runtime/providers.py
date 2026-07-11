@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from .registry import VideoModelSpec, get_model_spec
+from .registry import VideoModelSpec, get_model_spec, supported_durations_for_resolution
 
 
 VIDEOGEN_METADATA_PREFIX = "VIDEOGEN_METADATA:"
@@ -39,6 +39,7 @@ def _emit_submission_event(spec: VideoModelSpec, operation_id: str) -> None:
 
 def run_video(args: Any, outputs: list[Path], prompt: str) -> dict[str, Any]:
     spec = _runtime_spec(get_model_spec(getattr(args, "model", None)))
+    _validate_requested_capabilities(spec, args, len(outputs))
     api_key = _credential("OPENHARNESS_MEDIA_GATEWAY_API_KEY")
     if not api_key and getattr(args, "dry_run", False):
         api_key = "dry-run"
@@ -87,16 +88,18 @@ def provider_metadata(
     provider_usage: dict[str, Any] | None,
 ) -> dict[str, Any]:
     output_count = len(outputs)
-    duration = _duration(args, spec)
     resolution = _resolution(args, spec)
+    duration = _duration(args, spec, resolution)
     mode = _mode(args, spec)
+    aspect_ratio = getattr(args, "aspect_ratio", None) or spec.default_aspect_ratio
+    generate_audio = bool(getattr(args, "generate_audio", False))
     try:
         pricing = estimate_video_pricing(
             model_id=spec.model_id,
             duration_seconds=duration,
             resolution=resolution,
             mode=mode,
-            generate_audio=bool(getattr(args, "generate_audio", False)),
+            generate_audio=generate_audio,
             command=getattr(args, "command", None),
             output_count=output_count,
             provider_usage=provider_usage,
@@ -110,8 +113,10 @@ def provider_metadata(
         "api_model": spec.api_model,
         "billing_scheme": spec.billing_scheme,
         "duration_seconds": duration,
+        "aspect_ratio": aspect_ratio,
         "resolution": resolution,
         "mode": mode,
+        "generate_audio": generate_audio,
         "output_count": output_count,
         "provider_usage": provider_usage or {},
         **pricing.to_metadata(),
@@ -131,11 +136,12 @@ def _runtime_spec(spec: VideoModelSpec) -> VideoModelSpec:
 def _build_payload(spec: VideoModelSpec, args: Any, prompt: str) -> dict[str, Any]:
     command = str(getattr(args, "command", "generate") or "generate")
     media = _media_inputs(args)
-    duration = _duration(args, spec)
     aspect_ratio = getattr(args, "aspect_ratio", None) or spec.default_aspect_ratio
     resolution = _resolution(args, spec)
+    duration = _duration(args, spec, resolution)
     mode = _mode(args, spec)
     generate_audio = bool(getattr(args, "generate_audio", False))
+    watermark = bool(getattr(args, "watermark", False))
 
     if spec.provider == "veo":
         instance: dict[str, Any] = {"prompt": prompt}
@@ -150,6 +156,8 @@ def _build_payload(spec: VideoModelSpec, args: Any, prompt: str) -> dict[str, An
             parameters["mode"] = mode
         if generate_audio:
             parameters["generateAudio"] = True
+        if watermark:
+            parameters["watermark"] = True
         return {
             "model": spec.api_model,
             "instances": [instance],
@@ -173,6 +181,7 @@ def _build_payload(spec: VideoModelSpec, args: Any, prompt: str) -> dict[str, An
             "resolution": resolution,
             "mode": mode,
             "generate_audio": generate_audio,
+            **({"watermark": True} if watermark else {}),
             "command": command,
         }
 
@@ -184,6 +193,7 @@ def _build_payload(spec: VideoModelSpec, args: Any, prompt: str) -> dict[str, An
         "resolution": resolution,
         "mode": mode,
         "generate_audio": generate_audio,
+        **({"watermark": True} if watermark else {}),
         "command": command,
     }
     if media.get("first_frame"):
@@ -395,19 +405,70 @@ def _strip_version(base_url: str) -> str:
     return base
 
 
-def _duration(args: Any, spec: VideoModelSpec) -> int:
+def _duration(args: Any, spec: VideoModelSpec, resolution: str | None = None) -> int:
     raw = getattr(args, "duration_seconds", None)
     if raw is None:
         raw = getattr(args, "duration", None)
     try:
         return max(int(raw), 1)
     except (TypeError, ValueError):
-        return spec.default_duration_seconds
+        supported = supported_durations_for_resolution(spec, resolution or _resolution(args, spec))
+        if spec.default_duration_seconds in supported:
+            return spec.default_duration_seconds
+        return supported[0] if supported else spec.default_duration_seconds
 
 
 def _resolution(args: Any, spec: VideoModelSpec) -> str:
-    return str(getattr(args, "resolution", None) or spec.default_resolution)
+    raw = getattr(args, "resolution", None)
+    value = str(raw if raw is not None else spec.default_resolution).strip().lower()
+    aliases = {
+        "480": "480p",
+        "480p": "480p",
+        "720": "720p",
+        "720p": "720p",
+        "1080": "1080p",
+        "1080p": "1080p",
+        "2k": "2k",
+        "4k": "4k",
+    }
+    return aliases.get(value, value)
 
 
 def _mode(args: Any, spec: VideoModelSpec) -> str:
-    return str(getattr(args, "mode", None) or getattr(args, "quality", None) or spec.default_mode)
+    mode = str(getattr(args, "mode", None) or "").strip().lower()
+    if mode:
+        return mode
+    legacy_quality = str(getattr(args, "quality", None) or "").strip().lower()
+    if legacy_quality in {"fast", "standard", "pro", "lite", "omni"}:
+        return legacy_quality
+    return spec.default_mode
+
+
+def _validate_requested_capabilities(spec: VideoModelSpec, args: Any, output_count: int) -> None:
+    command = str(getattr(args, "command", "generate") or "generate")
+    if command == "image-to-video" and not spec.supports_image_to_video:
+        raise VideogenProviderError(f"{spec.model_id} does not support image-to-video.")
+    if command == "first-last-frame" and not spec.supports_first_last_frame:
+        raise VideogenProviderError(f"{spec.model_id} does not support first-last-frame generation.")
+    if command == "reference-to-video" and not spec.supports_reference:
+        raise VideogenProviderError(f"{spec.model_id} does not support reference-to-video generation.")
+
+    resolution = _resolution(args, spec)
+    duration = _duration(args, spec, resolution)
+    checks = (
+        ("resolution", resolution, spec.supported_resolutions),
+        ("duration_seconds", duration, supported_durations_for_resolution(spec, resolution)),
+        ("aspect_ratio", str(getattr(args, "aspect_ratio", None) or spec.default_aspect_ratio), spec.supported_aspect_ratios),
+        ("mode", _mode(args, spec), spec.supported_modes),
+    )
+    for parameter, value, supported in checks:
+        if value not in supported:
+            raise VideogenProviderError(
+                f"Unsupported {parameter}={value!r} for {spec.model_id}. Supported values: {', '.join(map(str, supported))}"
+            )
+    if bool(getattr(args, "generate_audio", False)) and not spec.supports_audio:
+        raise VideogenProviderError(f"{spec.model_id} does not support audio generation.")
+    if bool(getattr(args, "watermark", False)) and not spec.supports_watermark:
+        raise VideogenProviderError(f"{spec.model_id} does not support watermark generation.")
+    if output_count > max(int(spec.max_outputs or 1), 1):
+        raise VideogenProviderError(f"{spec.model_id} supports at most {spec.max_outputs} outputs.")

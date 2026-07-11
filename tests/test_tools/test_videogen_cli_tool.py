@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from openharness.tools import create_default_tool_registry
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.media_gateway_runtime import MediaSubprocessResult
-from openharness.tools.videogen_cli_tool import VideogenCliInput, VideogenCliTool, _build_output_paths
+from openharness.tools.videogen_cli_tool import VideogenCliInput, VideogenCliTool, _build_argv, _build_output_paths
+from openharness.skills.bundled.content.videogen.scripts.videogen_runtime.providers import _build_payload
+from openharness.skills.bundled.content.videogen.scripts.videogen_runtime.registry import get_model_spec
 
 
 class FakeE2BProcess:
@@ -73,6 +77,27 @@ async def test_videogen_cli_dry_run_routes_keling_alias(tmp_path: Path, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_videogen_cli_kling_3_accepts_fifteen_seconds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-key")
+
+    result = await VideogenCliTool().execute(
+        VideogenCliInput(
+            command="generate",
+            prompt="a longer cinematic product shot",
+            model="kling-3.0",
+            duration_seconds=15,
+            resolution="1080p",
+            dry_run=True,
+        ),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert not result.is_error
+    assert result.metadata["video_model_id"] == "kling-3.0"
+    assert result.metadata["duration_seconds"] == 15
+
+
+@pytest.mark.asyncio
 async def test_videogen_cli_uses_ui_preferred_video_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-key")
 
@@ -110,6 +135,7 @@ async def test_videogen_cli_veo_fast_uses_resolution_second_billing(
             prompt="a fast cinematic shot",
             model="video3.1-fast",
             duration_seconds=8,
+            aspect_ratio="9:16",
             resolution="720p",
             generate_audio=True,
             dry_run=True,
@@ -120,7 +146,108 @@ async def test_videogen_cli_veo_fast_uses_resolution_second_billing(
     assert not result.is_error
     assert result.metadata["video_model_id"] == "veo-3.1-fast"
     assert result.metadata["billing_scheme"] == "google_veo_model_resolution_seconds"
+    assert result.metadata["aspect_ratio"] == "9:16"
+    assert result.metadata["generate_audio"] is True
     assert result.metadata["billing_units"] == 20.0
+
+
+@pytest.mark.asyncio
+async def test_videogen_cli_veo_accepts_4k_eight_seconds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-key")
+
+    result = await VideogenCliTool().execute(
+        VideogenCliInput(
+            command="generate",
+            prompt="a cinematic 4k shot",
+            model="veo-3.1",
+            resolution="4k",
+            duration_seconds=8,
+            dry_run=True,
+        ),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert not result.is_error
+    assert result.metadata["video_model_id"] == "veo-3.1"
+    assert result.metadata["resolution"] == "4k"
+    assert result.metadata["duration_seconds"] == 8
+
+
+@pytest.mark.asyncio
+async def test_videogen_cli_veo_720p_duration_matrix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-key")
+    tool = VideogenCliTool()
+
+    for duration in (4, 6, 8):
+        result = await tool.execute(
+            VideogenCliInput(
+                command="generate",
+                prompt=f"a {duration}s 720p shot",
+                model="veo-3.1",
+                resolution="720p",
+                duration_seconds=duration,
+                dry_run=True,
+            ),
+            ToolExecutionContext(cwd=tmp_path),
+        )
+        assert not result.is_error
+        assert result.metadata["duration_seconds"] == duration
+
+    rejected = await tool.execute(
+        VideogenCliInput(
+            command="generate",
+            prompt="a 5s 720p shot",
+            model="veo-3.1",
+            resolution="720p",
+            duration_seconds=5,
+            dry_run=True,
+        ),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+    assert rejected.is_error
+    assert "Unsupported duration_seconds=5" in rejected.output
+    assert "Supported values: 4, 6, 8" in rejected.output
+
+
+@pytest.mark.asyncio
+async def test_videogen_cli_veo_rejects_4k_four_seconds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-key")
+
+    result = await VideogenCliTool().execute(
+        VideogenCliInput(
+            command="generate",
+            prompt="a short 4k shot",
+            model="veo-3.1",
+            resolution="4k",
+            duration_seconds=4,
+            dry_run=True,
+        ),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert result.is_error
+    assert "Unsupported duration_seconds=4" in result.output
+    assert "Supported values: 8" in result.output
+
+
+@pytest.mark.asyncio
+async def test_videogen_cli_veo_resolution_specific_default_duration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-key")
+
+    result = await VideogenCliTool().execute(
+        VideogenCliInput(
+            command="generate",
+            prompt="a 1080p shot",
+            model="veo-3.1-fast",
+            resolution="1080p",
+            dry_run=True,
+        ),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert not result.is_error
+    assert result.metadata["resolution"] == "1080p"
+    assert result.metadata["duration_seconds"] == 8
 
 
 @pytest.mark.asyncio
@@ -155,8 +282,66 @@ async def test_videogen_cli_seedance_first_last_billing_dimensions(
     assert result.metadata["provider"] == "seedance"
     assert result.metadata["billing_scheme"] == "seedance_official_dimensions"
     assert result.metadata["duration_seconds"] == 6
+    assert result.metadata["aspect_ratio"] == "16:9"
     assert result.metadata["mode"] == "pro"
+    assert result.metadata["generate_audio"] is True
     assert result.metadata["billing_units"] > 0
+
+
+@pytest.mark.asyncio
+async def test_videogen_cli_rejects_unsupported_watermark(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-key")
+
+    result = await VideogenCliTool().execute(
+        VideogenCliInput(
+            command="generate",
+            prompt="a watermarked clip",
+            model="veo-3.1",
+            watermark=True,
+            dry_run=True,
+        ),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert result.is_error
+    assert "does not support watermark generation" in result.output
+
+
+def test_videogen_cli_and_provider_adapters_forward_supported_watermark(tmp_path: Path) -> None:
+    argv = _build_argv(
+        Path("video_gen.py"),
+        VideogenCliInput(command="generate", prompt="clip", watermark=True),
+        tmp_path,
+    )
+    assert "--watermark" in argv
+
+    common_args = {
+        "command": "generate",
+        "duration_seconds": None,
+        "duration": None,
+        "aspect_ratio": None,
+        "resolution": None,
+        "mode": None,
+        "quality": None,
+        "generate_audio": False,
+        "watermark": True,
+        "image": [],
+        "images": [],
+        "reference_files": [],
+        "first_frame": None,
+        "last_frame": None,
+    }
+    veo = _build_payload(replace(get_model_spec("veo-3.1"), supports_watermark=True), SimpleNamespace(**common_args), "clip")
+    seedance = _build_payload(
+        replace(get_model_spec("doubao-seedance-2-0-260128"), supports_watermark=True),
+        SimpleNamespace(**common_args),
+        "clip",
+    )
+    kling = _build_payload(replace(get_model_spec("kling-3.0"), supports_watermark=True), SimpleNamespace(**common_args), "clip")
+
+    assert veo["parameters"]["watermark"] is True
+    assert seedance["watermark"] is True
+    assert kling["watermark"] is True
 
 
 def test_build_video_output_paths_multiple(tmp_path: Path) -> None:

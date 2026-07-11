@@ -31,6 +31,7 @@ GPT_IMAGE_2_MODEL = "gpt-image-2"
 @dataclass(frozen=True)
 class ImagegenCliCapabilities:
     n: bool = True
+    resolution: bool = True
     size: bool = True
     aspect_ratio: bool = False
     quality: bool = False
@@ -61,6 +62,7 @@ class ImagegenCliInput(BaseModel):
     n: int = Field(default=1, ge=1, le=10)
     num_images: int | None = Field(default=None, ge=1, le=10, description="Alias for n.")
     size: str = Field(default="auto")
+    resolution: str | None = Field(default=None, description="Image resolution tier such as 0.5K, 1K, 2K, or 4K.")
     aspect_ratio: str | None = Field(default=None, description="Aspect ratio such as 1:1, 16:9, 9:16, 4:3, or 3:4.")
     quality: str = Field(default="medium")
     background: Literal["transparent", "opaque", "auto"] | None = Field(
@@ -357,6 +359,8 @@ def _build_argv(script: Path, arguments: ImagegenCliInput, cwd: Path) -> list[st
         _add_value(argv, "--n", str(arguments.num_images or arguments.n))
     if capabilities.size:
         _add_value(argv, "--size", arguments.size)
+    if capabilities.resolution:
+        _add_value(argv, "--resolution", arguments.resolution)
     if capabilities.aspect_ratio:
         _add_value(argv, "--aspect-ratio", arguments.aspect_ratio)
     if capabilities.quality:

@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from .registry import ImageModelSpec, get_model_spec
+from .registry import ImageModelSpec, get_model_spec, resolve_image_dimensions
 
 
 IMAGEGEN_METADATA_PREFIX = "IMAGEGEN_METADATA:"
@@ -18,18 +18,7 @@ CONTENT_DIR = Path(__file__).resolve().parents[3]
 if str(CONTENT_DIR) not in sys.path:
     sys.path.insert(0, str(CONTENT_DIR))
 from media_pricing_runtime import estimate_image_pricing  # noqa: E402
-from media_safe_http import safe_download_bytes, validate_public_http_url  # noqa: E402
-
-ASPECT_TO_OPENAI_SIZE = {"1:1": "1024x1024", "16:9": "1792x1024", "9:16": "1024x1792"}
-ASPECT_TO_DOUBAO_SIZE = {
-    "1:1": "2048x2048",
-    "4:3": "2304x1728",
-    "3:4": "1728x2304",
-    "16:9": "2848x1600",
-    "9:16": "1600x2848",
-}
-VALID_GEMINI_ASPECTS = {"1:1", "16:9", "9:16", "4:3", "3:4"}
-
+from media_safe_http import safe_download_image, validate_public_http_url  # noqa: E402
 
 class ImagegenProviderError(RuntimeError):
     pass
@@ -42,13 +31,20 @@ def emit_metadata(metadata: dict[str, Any]) -> None:
 def provider_metadata(spec: ImageModelSpec, outputs: list[Path], args: Any | None = None, prompt: str = "") -> dict[str, Any]:
     count = len(outputs)
     reference_count = len(list(getattr(args, "image", []) or [])) if args is not None else 0
+    resolution, metadata_size, metadata_aspect_ratio = resolve_image_dimensions(
+        spec,
+        resolution=getattr(args, "resolution", None) if args is not None else None,
+        size=getattr(args, "size", None) if args is not None else None,
+        aspect_ratio=getattr(args, "aspect_ratio", None) if args is not None else None,
+    )
     try:
         pricing = estimate_image_pricing(
             model_id=spec.model_id,
             prompt=prompt,
-            size=getattr(args, "size", None) if args is not None else spec.default_size,
+            resolution=resolution,
+            size=metadata_size,
             quality=getattr(args, "quality", None) if args is not None else spec.default_quality,
-            aspect_ratio=getattr(args, "aspect_ratio", None) if args is not None else None,
+            aspect_ratio=metadata_aspect_ratio,
             output_count=count,
             reference_count=reference_count,
         )
@@ -58,6 +54,10 @@ def provider_metadata(spec: ImageModelSpec, outputs: list[Path], args: Any | Non
         "model_id": spec.model_id,
         "provider": spec.provider,
         "api_model": spec.api_model,
+        "size": metadata_size,
+        "resolution": resolution,
+        "quality": getattr(args, "quality", None) if args is not None else spec.default_quality,
+        "aspect_ratio": metadata_aspect_ratio,
         "output_count": count,
         **pricing.to_metadata(),
         "artifact_paths": [str(path) for path in outputs],
@@ -116,7 +116,12 @@ def _runtime_spec(spec: ImageModelSpec) -> ImageModelSpec:
 
 def _build_payload(spec: ImageModelSpec, args: Any, prompt: str) -> dict[str, Any]:
     images = list(getattr(args, "image", []) or [])
-    aspect_ratio = getattr(args, "aspect_ratio", None) or _aspect_from_size(getattr(args, "size", None))
+    resolution, effective_size, aspect_ratio = resolve_image_dimensions(
+        spec,
+        resolution=getattr(args, "resolution", None),
+        size=getattr(args, "size", None),
+        aspect_ratio=getattr(args, "aspect_ratio", None),
+    )
     n = int(getattr(args, "n", 1) or 1)
     if spec.provider == "gemini":
         parts: list[dict[str, Any]] = [{"text": prompt}]
@@ -128,8 +133,8 @@ def _build_payload(spec: ImageModelSpec, args: Any, prompt: str) -> dict[str, An
             "generationConfig": {
                 "responseModalities": ["IMAGE"],
                 "imageConfig": {
-                    "aspectRatio": aspect_ratio if aspect_ratio in VALID_GEMINI_ASPECTS else "1:1",
-                    "imageSize": "2K",
+                    "aspectRatio": aspect_ratio,
+                    "imageSize": resolution,
                 },
             },
         }
@@ -138,7 +143,7 @@ def _build_payload(spec: ImageModelSpec, args: Any, prompt: str) -> dict[str, An
             "provider": spec.provider,
             "model": spec.api_model,
             "prompt": prompt,
-            "size": _doubao_size(getattr(args, "size", None), aspect_ratio),
+            "size": effective_size,
             "stream": True,
             "response_format": "b64_json",
             "sequential_image_generation": "auto" if n > 1 else "disabled",
@@ -151,7 +156,7 @@ def _build_payload(spec: ImageModelSpec, args: Any, prompt: str) -> dict[str, An
         "provider": spec.provider,
         "model": spec.api_model,
         "prompt": prompt,
-        "size": _openai_compatible_size(getattr(args, "size", None), aspect_ratio),
+        "size": effective_size,
         "n": n,
         "response_format": "b64_json",
     }
@@ -249,10 +254,9 @@ def _run_openai_compatible(
         if b64:
             _write_b64(outputs[index], b64)
         elif url:
-            content = safe_download_bytes(
+            content = safe_download_image(
                 str(url),
                 max_bytes=15 * 1024 * 1024,
-                allowed_content_types=("image/",),
                 timeout_seconds=180.0,
             )
             _write_bytes(outputs[index], content)
@@ -302,36 +306,3 @@ def _strip_version(base_url: str) -> str:
         if marker in base:
             return base.split(marker)[0]
     return base
-
-
-def _aspect_from_size(size: str | None) -> str | None:
-    if not size or "x" not in size:
-        return None
-    try:
-        width_raw, height_raw = size.lower().split("x", 1)
-        width = int(width_raw)
-        height = int(height_raw)
-    except ValueError:
-        return None
-    if width == height:
-        return "1:1"
-    ratio = width / height
-    if ratio > 1.6:
-        return "16:9"
-    if ratio < 0.7:
-        return "9:16"
-    if ratio > 1:
-        return "4:3"
-    return "3:4"
-
-
-def _doubao_size(size: str | None, aspect_ratio: str | None) -> str:
-    if size and size != "auto":
-        return size
-    return ASPECT_TO_DOUBAO_SIZE.get(aspect_ratio or "", "2048x2048")
-
-
-def _openai_compatible_size(size: str | None, aspect_ratio: str | None) -> str:
-    if size and size != "auto":
-        return size
-    return ASPECT_TO_OPENAI_SIZE.get(aspect_ratio or "", "1024x1024")

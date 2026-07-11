@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +18,8 @@ from openharness.tools.imagegen_cli_tool import (
     _normalize_openai_sdk_base_url,
 )
 from openharness.tools.media_gateway_runtime import MediaSubprocessResult
+from openharness.skills.bundled.content.imagegen.scripts.imagegen_runtime.providers import _build_payload
+from openharness.skills.bundled.content.imagegen.scripts.imagegen_runtime.registry import get_model_spec
 
 
 class FakeE2BProcess:
@@ -61,6 +66,7 @@ async def test_imagegen_cli_dry_run_routes_nano_banana(tmp_path: Path, monkeypat
             prompt="a cat",
             model="nano-banana-pro",
             aspect_ratio="16:9",
+            size="4K",
             out="output/imagegen/cat.png",
             dry_run=True,
         ),
@@ -70,9 +76,36 @@ async def test_imagegen_cli_dry_run_routes_nano_banana(tmp_path: Path, monkeypat
     assert not result.is_error
     assert result.metadata["model_id"] == "nano-banana-pro"
     assert result.metadata["provider"] == "gemini"
-    assert result.metadata["official_cost"] == 0.134
+    assert result.metadata["size"] == "4K"
+    assert result.metadata["aspect_ratio"] == "16:9"
+    assert result.metadata["official_cost"] == 0.24
     assert result.metadata["pricing_multiplier"] == 1.0
-    assert result.metadata["billing_units"] == 3.35
+    assert result.metadata["billing_units"] == 6.0
+
+
+@pytest.mark.asyncio
+async def test_imagegen_cli_doubao_aspect_ratio_overrides_default_square_size(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-key")
+
+    result = await ImagegenCliTool().execute(
+        ImagegenCliInput(
+            command="generate",
+            prompt="a vertical poster",
+            model="doubao-seedream-5-0-260128",
+            aspect_ratio="9:16",
+            out="output/imagegen/poster.png",
+            dry_run=True,
+        ),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert not result.is_error
+    assert result.metadata["resolution"] == "2K"
+    assert result.metadata["size"] == "1600x2848"
+    assert result.metadata["aspect_ratio"] == "9:16"
 
 
 @pytest.mark.asyncio
@@ -98,6 +131,8 @@ async def test_imagegen_cli_dry_run_routes_doubao_and_multiple_outputs(
     assert not result.is_error
     assert result.metadata["model_id"] == "doubao-seedream-5-0-260128"
     assert result.metadata["provider"] == "doubao"
+    assert result.metadata["size"] == "2048x2048"
+    assert result.metadata["quality"] == "medium"
     assert result.metadata["output_count"] == 2
     assert result.metadata["official_currency"] == "CNY"
     assert result.metadata["billing_units"] == 1.4
@@ -148,6 +183,43 @@ def test_build_argv_keeps_gpt_image_2_supported_parameters(tmp_path: Path) -> No
     }.items():
         assert flag in argv
         assert argv[argv.index(flag) + 1] == value
+
+
+def test_gpt_image_2_dry_run_payload_uses_resolution_aspect_size() -> None:
+    script = Path(__file__).resolve().parents[2] / "src/openharness/skills/bundled/content/imagegen/scripts/image_gen.py"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "generate",
+            "--prompt",
+            "a vertical poster",
+            "--model",
+            "gpt-image-2",
+            "--resolution",
+            "2K",
+            "--aspect-ratio",
+            "9:16",
+            "--dry-run",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert '"size": "1152x2048"' in result.stdout
+
+
+def test_gemini_payload_forwards_resolution_and_aspect_ratio() -> None:
+    payload = _build_payload(
+        get_model_spec("nano-banana-pro"),
+        SimpleNamespace(resolution="4K", size=None, aspect_ratio="16:9", image=[], n=1),
+        "a wide cinematic image",
+    )
+
+    image_config = payload["generationConfig"]["imageConfig"]
+    assert image_config["imageSize"] == "4K"
+    assert image_config["aspectRatio"] == "16:9"
 
 
 def test_build_argv_omits_gpt_image_2_opaque_background_default(tmp_path: Path) -> None:

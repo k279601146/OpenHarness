@@ -71,6 +71,18 @@ def safe_download_bytes(
     raise UnsafeMediaURL("Media URL redirected too many times")
 
 
+def safe_download_image(raw_url: str, *, max_bytes: int = 15 * 1024 * 1024, timeout_seconds: float = 180.0) -> bytes:
+    content = safe_download_bytes(
+        raw_url,
+        max_bytes=max_bytes,
+        allowed_content_types=("image/", "application/octet-stream", "binary/octet-stream"),
+        timeout_seconds=timeout_seconds,
+    )
+    if not _looks_like_image(content):
+        raise UnsafeMediaURL("Downloaded media is not a supported image file")
+    return content
+
+
 def safe_download_video(raw_url: str, output: Path, *, max_bytes: int = 500 * 1024 * 1024) -> None:
     content = safe_download_bytes(
         raw_url,
@@ -82,6 +94,18 @@ def safe_download_video(raw_url: str, output: Path, *, max_bytes: int = 500 * 10
         raise UnsafeMediaURL("Downloaded media is not a supported video container")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(content)
+
+
+def _looks_like_image(content: bytes) -> bool:
+    if len(content) < 12:
+        return False
+    return (
+        content.startswith(b"\x89PNG\r\n\x1a\n")
+        or content.startswith(b"\xff\xd8\xff")
+        or content.startswith((b"GIF87a", b"GIF89a"))
+        or (content.startswith(b"RIFF") and content[8:12] == b"WEBP")
+        or content.startswith(b"BM")
+    )
 
 
 def _looks_like_video(content: bytes) -> bool:

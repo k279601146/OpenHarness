@@ -51,6 +51,21 @@ def _retryable_failure(output: str, *, kind: str) -> tuple[bool, str]:
     return False, status_code or "provider_error"
 
 
+def _gateway_exception_failure(exc: Exception, *, submitted: bool) -> tuple[bool, str, str]:
+    exc_type = type(exc).__name__
+    if submitted:
+        return False, "remote_state_unknown", "Video operation state is unknown after remote submission."
+    if exc_type in {"UnsafeURL", "UnsafeMediaURL"}:
+        detail = str(exc).strip()
+        summary = f"unsafe_url: {detail}" if detail else "unsafe_url"
+        return True, "unsafe_url", summary
+    if isinstance(exc, KeyError):
+        missing = str(exc).strip().strip("'\"")[:128]
+        summary = f"missing_runtime_field: {missing}" if missing else "missing_runtime_field"
+        return False, "missing_runtime_field", summary
+    return True, exc_type, exc_type
+
+
 async def run_media_subprocess(
     *,
     argv: list[str],
@@ -161,8 +176,7 @@ async def run_media_subprocess(
                 return last_result
         except Exception as exc:
             latency_ms = int((time.monotonic() - started) * 1000)
-            error_code = "remote_state_unknown" if submission.submitted else type(exc).__name__
-            retryable = not submission.submitted
+            retryable, error_code, summary = _gateway_exception_failure(exc, submitted=submission.submitted)
             if hasattr(hook, "record_media_gateway_attempt"):
                 hook.record_media_gateway_attempt(
                     reservation,
@@ -170,15 +184,13 @@ async def run_media_subprocess(
                     success=False,
                     retryable=retryable,
                     error_code=error_code,
-                    summary=error_code,
+                    summary=summary,
                     latency_ms=latency_ms,
                 )
             attempts.append({**dict(candidate.get("metadata") or {}), "error_code": error_code, "retryable": retryable})
             last_result = MediaSubprocessResult(
                 1,
-                "Video operation state is unknown after remote submission."
-                if submission.submitted
-                else f"Media gateway attempt failed: {error_code}",
+                summary if submission.submitted else f"Media gateway attempt failed: {summary}",
                 {"retry_count": sequence - 1, "gateway_attempt_count": sequence, "gateway_attempts": attempts},
             )
             if not retryable:
