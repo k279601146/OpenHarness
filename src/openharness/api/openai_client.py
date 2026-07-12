@@ -11,7 +11,7 @@ import os
 import re
 import uuid
 from typing import Any, AsyncIterator
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from openai import APIConnectionError, APITimeoutError, AsyncOpenAI
 
@@ -61,6 +61,21 @@ _DISABLE_PROMPT_CACHE_ENV = "OPENHARNESS_OPENAI_DISABLE_PROMPT_CACHE"
 _PROMPT_CACHE_KEY_ENV = "OPENHARNESS_OPENAI_PROMPT_CACHE_KEY"
 _PROMPT_CACHE_RETENTION_ENV = "OPENHARNESS_OPENAI_PROMPT_CACHE_RETENTION"
 _SERVICE_TIER_ENV = "OPENHARNESS_OPENAI_SERVICE_TIER"
+_WEB_SEARCH_METADATA_INCLUDE = ("web_search_call.action.sources", "web_search_call.results")
+_WEB_SEARCH_CONTEXT_SIZES = {"low", "medium", "high", "unlimited"}
+_WEB_SEARCH_CONTENT_TYPES = {"text", "image"}
+_SENSITIVE_URL_QUERY_MARKERS = (
+    "token",
+    "key",
+    "secret",
+    "password",
+    "passwd",
+    "auth",
+    "authorization",
+    "cookie",
+    "session",
+    "jwt",
+)
 
 _HOSTED_RESPONSE_ITEM_TO_TOOL = {
     "web_search_call": "web_search",
@@ -248,6 +263,10 @@ def _strip_prompt_cache_params(params: dict[str, Any]) -> bool:
     return removed
 
 
+def _strip_responses_include_param(params: dict[str, Any]) -> bool:
+    return params.pop("include", None) is not None
+
+
 def _looks_like_prompt_cache_unsupported(exc: Exception) -> bool:
     text = " ".join(
         str(part)
@@ -379,11 +398,12 @@ def _convert_tools_to_responses(
     tools: list[dict[str, Any]],
     *,
     include_hosted_web_search: bool = True,
+    openai_web_search: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     result = []
     use_hosted_web_search = include_hosted_web_search and _should_register_hosted_web_search(tools)
     if use_hosted_web_search:
-        result.append({"type": "web_search"})
+        result.append(_web_search_tool_config(openai_web_search))
     for tool in tools:
         if use_hosted_web_search and tool.get("name") == "web_search":
             continue
@@ -418,6 +438,156 @@ def _convert_tools_to_responses_local_web_search_fallback(
     if not tools:
         return tools
     return _convert_tools_to_responses(tools, include_hosted_web_search=False)
+
+
+def _safe_domain_token(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    text = re.sub(r"^https?://", "", text)
+    text = text.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0].strip(".")
+    if not text or len(text) > 253 or "@" in text or ":" in text:
+        return ""
+    if not re.fullmatch(r"[a-z0-9.-]+", text):
+        return ""
+    return text
+
+
+def _safe_domain_from_url(value: Any) -> str:
+    try:
+        parts = urlsplit(str(value or "").strip())
+    except ValueError:
+        return ""
+    return (parts.hostname or "").lower()[:253]
+
+
+def _safe_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return None
+
+
+def _safe_int(value: Any, *, minimum: int, maximum: int) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed < minimum or parsed > maximum:
+        return None
+    return parsed
+
+
+def _normalize_web_search_config(config: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(config, dict):
+        return {}
+    result: dict[str, Any] = {}
+
+    context_size = str(config.get("search_context_size") or "").strip().lower()
+    if context_size in _WEB_SEARCH_CONTEXT_SIZES:
+        result["search_context_size"] = context_size
+
+    raw_types = config.get("search_content_types")
+    if isinstance(raw_types, list):
+        content_types = []
+        for value in raw_types:
+            normalized = str(value or "").strip().lower()
+            if normalized in _WEB_SEARCH_CONTENT_TYPES and normalized not in content_types:
+                content_types.append(normalized)
+        if content_types:
+            result["search_content_types"] = content_types
+
+    raw_filters = config.get("filters")
+    if isinstance(raw_filters, dict):
+        filters: dict[str, list[str]] = {}
+        for key in ("allowed_domains", "blocked_domains"):
+            raw_domains = raw_filters.get(key)
+            if not isinstance(raw_domains, list):
+                continue
+            domains: list[str] = []
+            for domain in raw_domains:
+                normalized = _safe_domain_token(domain)
+                if normalized and normalized not in domains:
+                    domains.append(normalized)
+                if len(domains) >= 100:
+                    break
+            if domains:
+                filters[key] = domains
+        if filters:
+            result["filters"] = filters
+
+    raw_image_settings = config.get("image_settings")
+    if isinstance(raw_image_settings, dict):
+        image_settings: dict[str, Any] = {}
+        max_results = _safe_int(raw_image_settings.get("max_results"), minimum=1, maximum=20)
+        if max_results is not None:
+            image_settings["max_results"] = max_results
+        caption = _safe_bool(raw_image_settings.get("caption"))
+        if caption is not None:
+            image_settings["caption"] = caption
+        if image_settings:
+            result["image_settings"] = image_settings
+
+    raw_location = config.get("user_location")
+    if isinstance(raw_location, dict):
+        location: dict[str, str] = {"type": "approximate"}
+        country = str(raw_location.get("country") or "").strip().upper()
+        if re.fullmatch(r"[A-Z]{2}", country):
+            location["country"] = country
+        for key in ("city", "region", "timezone"):
+            value = _short_safe_text(raw_location.get(key), 100)
+            if value:
+                location[key] = value
+        if len(location) > 1:
+            result["user_location"] = location
+
+    external_web_access = _safe_bool(config.get("external_web_access"))
+    if external_web_access is not None:
+        result["external_web_access"] = external_web_access
+
+    if _safe_bool(config.get("long_research_enabled")) is True:
+        result["long_research_enabled"] = True
+        result["search_context_size"] = "unlimited"
+
+    return result
+
+
+def _web_search_tool_config(config: dict[str, Any] | None) -> dict[str, Any]:
+    normalized = _normalize_web_search_config(config)
+    tool: dict[str, Any] = {"type": "web_search"}
+    for key in (
+        "search_context_size",
+        "filters",
+        "search_content_types",
+        "image_settings",
+        "user_location",
+        "external_web_access",
+    ):
+        if key in normalized:
+            tool[key] = normalized[key]
+    return tool
+
+
+def _web_search_request_metadata(config: dict[str, Any] | None) -> dict[str, Any]:
+    normalized = _normalize_web_search_config(config)
+    if not normalized:
+        return {}
+    return {"requested_config": normalized}
+
+
+def _web_search_long_research_enabled(config: dict[str, Any] | None) -> bool:
+    return _normalize_web_search_config(config).get("long_research_enabled") is True
+
+
+def _responses_include_for_tools(tools: list[dict[str, Any]] | None) -> list[str] | None:
+    if not _has_hosted_web_search(tools):
+        return None
+    return list(_WEB_SEARCH_METADATA_INCLUDE)
 
 
 def _looks_like_hosted_web_search_unsupported(exc: Exception) -> bool:
@@ -489,6 +659,27 @@ def _looks_like_stream_options_unsupported(exc: Exception) -> bool:
     )
 
 
+def _looks_like_responses_include_unsupported(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code not in {400, 422}:
+        return False
+    body = getattr(exc, "body", None)
+    text = f"{body or ''} {exc}".lower()
+    if "include" not in text:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "unsupported",
+            "not supported",
+            "unknown",
+            "unrecognized",
+            "invalid",
+            "extra_forbidden",
+        )
+    )
+
+
 def _convert_messages_to_openai(
     messages: list[ConversationMessage],
     system_prompt: Any,
@@ -501,8 +692,6 @@ def _convert_messages_to_openai(
     - Anthropic: tool_use / tool_result are content blocks
     - OpenAI: tool_calls on assistant message, tool results are separate messages
     """
-    openai_messages: list[dict[str, Any]] = []
-
     # Merge consecutive messages with the same role to satisfy strict provider requirements
     merged_messages: list[dict[str, Any]] = []
     if system_prompt:
@@ -881,24 +1070,109 @@ def _safe_url(value: Any, limit: int = 500) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
-    return text[:limit]
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return ""
+    if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
+        return ""
+    query_pairs = []
+    for key, raw_value in parse_qsl(parts.query, keep_blank_values=True):
+        lowered = key.lower()
+        if any(marker in lowered for marker in _SENSITIVE_URL_QUERY_MARKERS):
+            query_pairs.append((key, "[redacted]"))
+        else:
+            query_pairs.append((key, raw_value))
+    safe = urlunsplit((
+        parts.scheme.lower(),
+        parts.netloc,
+        parts.path,
+        urlencode(query_pairs, doseq=True),
+        "",
+    ))
+    return safe[:limit]
 
 
-def _safe_result_list(raw_items: Any, *, limit: int = 10) -> list[dict[str, str]]:
+def _safe_result_list(raw_items: Any, *, limit: int = 10) -> list[dict[str, Any]]:
     if not isinstance(raw_items, list):
         return []
-    results: list[dict[str, str]] = []
+    results: list[dict[str, Any]] = []
     for item in raw_items[:limit]:
+        item_type = str(_usage_attr(item, "type") or "").strip()
+        if item_type == "image_result":
+            entry: dict[str, Any] = {"type": "image_result"}
+            for source_key, output_key in (
+                ("image_url", "image_url"),
+                ("thumbnail_url", "thumbnail_url"),
+                ("source_website_url", "source_website_url"),
+            ):
+                url = _safe_url(_usage_attr(item, source_key))
+                if url:
+                    entry[output_key] = url
+            caption = _short_safe_text(_usage_attr(item, "caption"), 240)
+            if caption:
+                entry["caption"] = caption
+            domain = _safe_domain_from_url(entry.get("source_website_url") or entry.get("image_url"))
+            if domain:
+                entry["domain"] = domain
+            if len(entry) > 1:
+                results.append(entry)
+            continue
+
         title = _short_safe_text(_usage_attr(item, "title") or _usage_attr(item, "name"))
         url = _safe_url(_usage_attr(item, "url") or _usage_attr(item, "uri"))
         if title or url:
-            entry: dict[str, str] = {}
+            entry: dict[str, Any] = {}
+            if item_type:
+                entry["type"] = item_type
             if title:
                 entry["title"] = title
             if url:
                 entry["url"] = url
+                domain = _safe_domain_from_url(url)
+                if domain:
+                    entry["domain"] = domain
             results.append(entry)
     return results
+
+
+def _safe_annotation(annotation: Any, *, annotation_index: Any = None) -> dict[str, Any]:
+    if not annotation:
+        return {}
+    entry: dict[str, Any] = {
+        "type": _usage_attr(annotation, "type") or "",
+        "title": _short_safe_text(_usage_attr(annotation, "title")),
+        "url": _safe_url(_usage_attr(annotation, "url")),
+    }
+    if entry["url"]:
+        domain = _safe_domain_from_url(entry["url"])
+        if domain:
+            entry["domain"] = domain
+    for key in ("start_index", "end_index"):
+        value = _usage_attr(annotation, key)
+        if isinstance(value, int):
+            entry[key] = value
+    if annotation_index is not None:
+        entry["citation_index"] = annotation_index
+    return {key: value for key, value in entry.items() if value not in (None, "", {})}
+
+
+def _safe_message_annotations(item: Any, *, limit: int = 20) -> list[dict[str, Any]]:
+    annotations: list[dict[str, Any]] = []
+    raw_content = _response_item_attr(item, "content", [])
+    if not isinstance(raw_content, list):
+        return annotations
+    for block in raw_content:
+        raw_annotations = _usage_attr(block, "annotations")
+        if not isinstance(raw_annotations, list):
+            continue
+        for index, annotation in enumerate(raw_annotations):
+            safe = _safe_annotation(annotation, annotation_index=index)
+            if safe:
+                annotations.append(safe)
+            if len(annotations) >= limit:
+                return annotations
+    return annotations
 
 
 def _response_event_ref_metadata(event: Any, item: Any | None = None) -> dict[str, Any]:
@@ -939,13 +1213,22 @@ def _hosted_tool_use_id(event: Any, tool_name: str, item: Any | None = None) -> 
 def _hosted_tool_input(event: Any, item: Any | None = None) -> dict[str, Any]:
     action = _response_item_attr(item, "action") if item is not None else _response_event_attr(event, "action")
     query = _usage_attr(action, "query")
+    queries = _usage_attr(action, "queries")
     if not query and item is not None:
         query = _response_item_attr(item, "query")
     if not query:
         query = _response_event_attr(event, "query")
+    if not queries:
+        queries = _response_event_attr(event, "queries")
+    result: dict[str, Any] = {}
     if isinstance(query, str) and query.strip():
-        return {"query": query.strip()}
-    return {}
+        result["query"] = query.strip()
+    if isinstance(queries, list):
+        safe_queries = [_short_safe_text(value, 240) for value in queries if str(value or "").strip()]
+        if safe_queries:
+            result["queries"] = safe_queries[:10]
+            result.setdefault("query", safe_queries[0])
+    return result
 
 
 def _hosted_tool_metadata(event: Any, item: Any | None = None) -> dict[str, Any]:
@@ -956,11 +1239,12 @@ def _hosted_tool_metadata(event: Any, item: Any | None = None) -> dict[str, Any]
 
     annotation = _response_event_attr(event, "annotation")
     if annotation:
-        metadata["annotation"] = {
-            "type": _usage_attr(annotation, "type") or "",
-            "title": _short_safe_text(_usage_attr(annotation, "title")),
-            "url": _safe_url(_usage_attr(annotation, "url")),
-        }
+        safe_annotation = _safe_annotation(
+            annotation,
+            annotation_index=_response_event_attr(event, "annotation_index"),
+        )
+        if safe_annotation:
+            metadata["annotation"] = safe_annotation
 
     partial_image_index = _response_event_attr(event, "partial_image_index")
     if partial_image_index is not None:
@@ -984,6 +1268,17 @@ def _hosted_tool_metadata(event: Any, item: Any | None = None) -> dict[str, Any]
     if isinstance(code, str):
         metadata["code_chars"] = len(code)
 
+    tool_input = _hosted_tool_input(event, item)
+    if tool_input.get("query"):
+        metadata["query"] = tool_input["query"]
+    if tool_input.get("queries"):
+        metadata["queries"] = tool_input["queries"]
+
+    action = _response_item_attr(item, "action") if item is not None else _response_event_attr(event, "action")
+    action_type = _usage_attr(action, "type")
+    if action_type:
+        metadata["action_type"] = str(action_type)
+
     raw_results = _response_item_attr(item, "results") if item is not None else _response_event_attr(event, "results")
     safe_results = _safe_result_list(raw_results)
     if raw_results is not None:
@@ -991,7 +1286,6 @@ def _hosted_tool_metadata(event: Any, item: Any | None = None) -> dict[str, Any]
     if safe_results:
         metadata["results"] = safe_results
 
-    action = _response_item_attr(item, "action") if item is not None else _response_event_attr(event, "action")
     sources = _usage_attr(action, "sources")
     safe_sources = _safe_result_list(sources)
     if sources is not None:
@@ -999,7 +1293,101 @@ def _hosted_tool_metadata(event: Any, item: Any | None = None) -> dict[str, Any]
     if safe_sources:
         metadata["sources"] = safe_sources
 
+    if item is not None and _response_item_attr(item, "type") == "message":
+        annotations = _safe_message_annotations(item)
+        if annotations:
+            metadata["annotations"] = annotations
+            metadata["annotation_count"] = len(annotations)
+
     return {key: value for key, value in metadata.items() if value not in (None, "", {})}
+
+
+def _metadata_with_web_search_request(
+    tool_name: str,
+    metadata: dict[str, Any],
+    web_search_config: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if tool_name != "web_search":
+        return metadata
+    request_metadata = _web_search_request_metadata(web_search_config)
+    if not request_metadata:
+        return metadata
+    merged = dict(metadata)
+    merged.update(request_metadata)
+    return merged
+
+
+def _hosted_tool_events_from_response(
+    response: Any,
+    *,
+    hosted_tool_started: set[str],
+    hosted_tool_completed: set[str],
+    web_search_config: dict[str, Any] | None,
+) -> list[ApiStreamEvent]:
+    events: list[ApiStreamEvent] = []
+    for item in _usage_attr(response, "output", []) or []:
+        item_type = _response_item_attr(item, "type")
+        if item_type == "message":
+            metadata = _hosted_tool_metadata({"type": "response.message.annotations"}, item)
+            if metadata.get("annotations"):
+                events.append(
+                    ApiToolCallProgressEvent(
+                        tool_name="web_search",
+                        tool_use_id="web_search_annotations",
+                        status="metadata",
+                        message="鍙戠幇寮曠敤鏉ユ簮",
+                        metadata=_metadata_with_web_search_request("web_search", metadata, web_search_config),
+                    )
+                )
+            continue
+        tool_name = _HOSTED_RESPONSE_ITEM_TO_TOOL.get(str(item_type or ""))
+        if not tool_name:
+            continue
+        event = {"type": f"response.{item_type}.completed", "item": item}
+        tool_use_id = _hosted_tool_use_id(event, tool_name, item)
+        metadata = _metadata_with_web_search_request(
+            tool_name,
+            _hosted_tool_metadata(event, item),
+            web_search_config,
+        )
+        tool_input = _hosted_tool_input(event, item)
+        if tool_use_id not in hosted_tool_started:
+            hosted_tool_started.add(tool_use_id)
+            events.append(
+                ApiToolCallStartedEvent(
+                    tool_name=tool_name,
+                    tool_use_id=tool_use_id,
+                    tool_input=tool_input,
+                    message=_hosted_tool_progress_message(tool_name, str(event["type"])),
+                    metadata=metadata,
+                )
+            )
+        item_status = str(_response_item_attr(item, "status") or "").lower()
+        is_terminal = item_status not in {"in_progress", "searching", "queued"}
+        if is_terminal and tool_use_id not in hosted_tool_completed:
+            hosted_tool_completed.add(tool_use_id)
+            events.append(
+                ApiToolCallCompletedEvent(
+                    tool_name=tool_name,
+                    tool_use_id=tool_use_id,
+                    tool_input=tool_input,
+                    status="error" if item_status == "failed" else "success",
+                    message=_hosted_tool_progress_message(tool_name, str(event["type"])),
+                    metadata=metadata,
+                )
+            )
+        elif metadata:
+            events.append(
+                ApiToolCallProgressEvent(
+                    tool_name=tool_name,
+                    tool_use_id=tool_use_id,
+                    tool_input=tool_input,
+                    status="metadata",
+                    message=_hosted_tool_progress_message(tool_name, str(event["type"])),
+                    metadata=metadata,
+                )
+            )
+    return events
 
 
 def _hosted_tool_progress_message(tool_name: str, event_type: str) -> str:
@@ -1176,7 +1564,12 @@ class OpenAICompatibleClient:
     async def _stream_once(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
         """Single attempt: stream an OpenAI Responses API request."""
         responses_input = _convert_messages_to_responses_input(request.messages)
-        responses_tools = _convert_tools_to_responses(request.tools) if request.tools else None
+        web_search_config = request.openai_web_search if isinstance(request.openai_web_search, dict) else None
+        responses_tools = (
+            _convert_tools_to_responses(request.tools, openai_web_search=web_search_config)
+            if request.tools
+            else None
+        )
         request_id = f"oh-{uuid.uuid4().hex[:10]}"
 
         params: dict[str, Any] = {
@@ -1184,17 +1577,26 @@ class OpenAICompatibleClient:
             "input": responses_input,
             "stream": True,
         }
+        if _web_search_long_research_enabled(web_search_config):
+            params["stream"] = False
+            params["background"] = True
         instructions = _system_prompt_to_responses_instructions(request.system_prompt)
         if instructions:
             params["instructions"] = instructions
         if _openai_streaming_disabled():
             params["stream"] = False
         params.update(_responses_token_limit_param(request.max_tokens))
-        params.update(_responses_reasoning_param_for_model(request.model, request.effort))
+        effective_effort = request.effort
+        if _web_search_long_research_enabled(web_search_config) and not effective_effort:
+            effective_effort = "high"
+        params.update(_responses_reasoning_param_for_model(request.model, effective_effort))
         if responses_tools:
             params["tools"] = responses_tools
             params["tool_choice"] = "auto"
             params["parallel_tool_calls"] = True
+            include = _responses_include_for_tools(responses_tools)
+            if include:
+                params["include"] = include
         prompt_cache_params = _prompt_cache_params_for_request(
             model=request.model,
             instructions=instructions,
@@ -1217,6 +1619,12 @@ class OpenAICompatibleClient:
                 if _looks_like_service_tier_unsupported(exc) and _strip_service_tier_param(create_params):
                     log.warning(
                         "[OpenAICompat:%s] service_tier unsupported by upstream; retrying without it",
+                        request_id,
+                    )
+                    return await self._client.responses.create(**create_params)
+                if _looks_like_responses_include_unsupported(exc) and _strip_responses_include_param(create_params):
+                    log.warning(
+                        "[OpenAICompat:%s] responses include unsupported by upstream; retrying without metadata include",
                         request_id,
                     )
                     return await self._client.responses.create(**create_params)
@@ -1285,6 +1693,8 @@ class OpenAICompatibleClient:
                     fallback_tools = _convert_tools_to_responses_local_web_search_fallback(request.tools)
                     if fallback_tools:
                         params["tools"] = fallback_tools
+                        params.pop("include", None)
+                        params.pop("background", None)
                         log.warning(
                             "[OpenAICompat:%s] hosted web_search unsupported; retrying non-stream with local web_search function fallback",
                             request_id,
@@ -1332,6 +1742,43 @@ class OpenAICompatibleClient:
                 )
                 return
 
+            if params.get("background"):
+                background_id = _usage_attr(response, "id")
+                background_status = str(_usage_attr(response, "status") or "").lower()
+                poll_count = 0
+                while background_id and background_status in {"queued", "in_progress"}:
+                    poll_count += 1
+                    yield ApiToolCallProgressEvent(
+                        tool_name="web_search",
+                        tool_use_id=str(background_id),
+                        status="running",
+                        message="闀挎椂缃戦〉鐮旂┒姝ｅ湪鍚庡彴杩愯...",
+                        metadata={
+                            "background": True,
+                            "response_id": str(background_id),
+                            "poll_count": poll_count,
+                            **_web_search_request_metadata(web_search_config),
+                        },
+                    )
+                    if poll_count >= 180:
+                        raise RequestFailure("Background web research timed out before completion")
+                    await asyncio.sleep(2.0)
+                    response = await self._client.responses.retrieve(str(background_id))
+                    background_status = str(_usage_attr(response, "status") or "").lower()
+                if background_status in {"failed", "incomplete", "cancelled"}:
+                    error = _usage_attr(response, "error")
+                    raise RequestFailure(str(error or f"Background web research ended with status {background_status}"))
+
+            hosted_started: set[str] = set()
+            hosted_completed: set[str] = set()
+            for hosted_event in _hosted_tool_events_from_response(
+                response,
+                hosted_tool_started=hosted_started,
+                hosted_tool_completed=hosted_completed,
+                web_search_config=web_search_config,
+            ):
+                yield hosted_event
+
             message = _message_from_responses_response(response)
             if message.text:
                 yield ApiTextDeltaEvent(text=message.text)
@@ -1378,6 +1825,8 @@ class OpenAICompatibleClient:
                 fallback_tools = _convert_tools_to_responses_local_web_search_fallback(request.tools)
                 if fallback_tools:
                     params["tools"] = fallback_tools
+                    params.pop("include", None)
+                    params.pop("background", None)
                     chat_params["tools"] = _convert_tools_to_openai(request.tools)
                     log.warning(
                         "[OpenAICompat:%s] hosted web_search unsupported; retrying with local web_search function fallback",
@@ -1497,7 +1946,11 @@ class OpenAICompatibleClient:
                                 tool_use_id=tool_use_id,
                                 tool_input=_hosted_tool_input(event, item),
                                 message=_hosted_tool_progress_message(tool_name, event_type),
-                                metadata=_hosted_tool_metadata(event, item),
+                                metadata=_metadata_with_web_search_request(
+                                    tool_name,
+                                    _hosted_tool_metadata(event, item),
+                                    web_search_config,
+                                ),
                             )
                     continue
 
@@ -1514,7 +1967,11 @@ class OpenAICompatibleClient:
                         tool_name = _HOSTED_RESPONSE_ITEM_TO_TOOL[str(item_type)]
                         hosted_tool_events_seen = True
                         tool_use_id = _hosted_tool_use_id(event, tool_name, item)
-                        metadata = _hosted_tool_metadata(event, item)
+                        metadata = _metadata_with_web_search_request(
+                            tool_name,
+                            _hosted_tool_metadata(event, item),
+                            web_search_config,
+                        )
                         if tool_use_id not in hosted_tool_started:
                             hosted_tool_started.add(tool_use_id)
                             yield ApiToolCallStartedEvent(
@@ -1585,7 +2042,11 @@ class OpenAICompatibleClient:
                     tool_name = _HOSTED_RESPONSE_EVENT_TO_TOOL[event_type]
                     hosted_tool_events_seen = True
                     tool_use_id = _hosted_tool_use_id(event, tool_name)
-                    metadata = _hosted_tool_metadata(event)
+                    metadata = _metadata_with_web_search_request(
+                        tool_name,
+                        _hosted_tool_metadata(event),
+                        web_search_config,
+                    )
                     if tool_use_id not in hosted_tool_started:
                         hosted_tool_started.add(tool_use_id)
                         yield ApiToolCallStartedEvent(
@@ -1626,7 +2087,7 @@ class OpenAICompatibleClient:
                         tool_use_id=str(_response_event_attr(event, "item_id") or "web_search_annotations"),
                         status="info",
                         message="发现引用来源",
-                        metadata=_hosted_tool_metadata(event),
+                        metadata=_metadata_with_web_search_request("web_search", _hosted_tool_metadata(event), web_search_config),
                     )
                     continue
 
@@ -1635,6 +2096,14 @@ class OpenAICompatibleClient:
                     if response_payload:
                         usage = _usage_snapshot_from_responses_response(response_payload)
                         finish_reason = _usage_attr(response_payload, "status") or "completed"
+                        for hosted_event in _hosted_tool_events_from_response(
+                            response_payload,
+                            hosted_tool_started=hosted_tool_started,
+                            hosted_tool_completed=hosted_tool_completed,
+                            web_search_config=web_search_config,
+                        ):
+                            hosted_tool_events_seen = True
+                            yield hosted_event
                     continue
 
                 if event_type in {"response.failed", "response.incomplete"}:

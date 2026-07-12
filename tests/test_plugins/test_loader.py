@@ -9,6 +9,7 @@ from pathlib import Path
 from openharness.config.settings import Settings
 from openharness.hooks.loader import load_hook_registry
 from openharness.plugins import load_plugins
+from openharness.plugins.bundled import get_bundled_plugin_roots
 from openharness.plugins.loader import get_user_plugins_dir
 from openharness.skills import load_skill_registry
 
@@ -219,3 +220,44 @@ def test_disabled_plugin_tools_are_not_imported(tmp_path: Path, monkeypatch):
     assert plugin.enabled is False
     assert plugin.tools == []
     assert not marker.exists()
+
+
+def test_bundled_skillhub_workflow_plugin_loads_skills_and_tools(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    project = tmp_path / "repo"
+    project.mkdir()
+
+    plugins = load_plugins(
+        Settings(),
+        project,
+        extra_roots=get_bundled_plugin_roots(),
+        include_default_roots=False,
+    )
+
+    plugin = next(item for item in plugins if item.manifest.name == "skillhub-workflow-orchestrator")
+    assert plugin.enabled is True
+    assert {skill.command_name for skill in plugin.skills} >= {"workflow-composer", "find-skill"}
+    assert {tool.name for tool in plugin.tools} >= {
+        "skillhub_search_capabilities",
+        "skillhub_prepare_install",
+        "skillhub_install_confirmed",
+    }
+
+
+def test_bundled_skillhub_workflow_plugin_skills_are_registered(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    project = tmp_path / "repo"
+    project.mkdir()
+
+    registry = load_skill_registry(
+        project,
+        extra_plugin_roots=get_bundled_plugin_roots(),
+        settings=Settings(),
+        include_default_user_skills=False,
+        include_default_plugin_roots=False,
+    )
+
+    workflow = registry.get("workflow-composer")
+    assert workflow is not None
+    assert workflow.source == "plugin"
+    assert "默认执行并交付结果" in workflow.description

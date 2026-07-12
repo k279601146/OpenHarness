@@ -808,6 +808,7 @@ async def run_query(
                             max_tokens=effective_max_tokens,
                             tools=_tool_schemas_for_context(context),
                             effort=context.effort,
+                            openai_web_search=(context.tool_metadata or {}).get("openai_web_search") if isinstance((context.tool_metadata or {}).get("openai_web_search"), dict) else None,
                         )
                     ):
                         await model_queue.put(stream_event)

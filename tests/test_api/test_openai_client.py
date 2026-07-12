@@ -33,6 +33,7 @@ from openharness.api.openai_client import (
     _service_tier_param,
     _strip_service_tier_param,
     _strip_prompt_cache_params,
+    _strip_responses_include_param,
     _usage_snapshot_from_openai_usage,
     _strip_think_blocks,
     _token_limit_param_for_model,
@@ -99,6 +100,37 @@ class TestConvertToolsToOpenai:
                 "name": "read_file",
                 "description": "Read a file",
                 "parameters": {"type": "object", "properties": {}},
+            }
+        ]
+
+    def test_responses_hosted_web_search_tool_config(self):
+        result = _convert_tools_to_responses(
+            [{"name": "web_search", "description": "Search", "input_schema": {"type": "object"}}],
+            openai_web_search={
+                "search_context_size": "high",
+                "filters": {
+                    "allowed_domains": ["https://OpenAI.com/docs", "example.com"],
+                    "blocked_domains": ["reddit.com"],
+                },
+                "search_content_types": ["image", "text", "unknown"],
+                "image_settings": {"max_results": 3, "caption": True},
+                "user_location": {"type": "approximate", "country": "us", "city": "San Francisco"},
+                "external_web_access": False,
+            },
+        )
+
+        assert result == [
+            {
+                "type": "web_search",
+                "search_context_size": "high",
+                "filters": {
+                    "allowed_domains": ["openai.com", "example.com"],
+                    "blocked_domains": ["reddit.com"],
+                },
+                "search_content_types": ["image", "text"],
+                "image_settings": {"max_results": 3, "caption": True},
+                "user_location": {"type": "approximate", "country": "US", "city": "San Francisco"},
+                "external_web_access": False,
             }
         ]
 
@@ -427,6 +459,12 @@ class TestOpenAIServiceTier:
         exc = ValueError("Unknown parameter: service_tier")
 
         assert _looks_like_service_tier_unsupported(exc)
+
+    def test_strip_responses_include_param(self):
+        params = {"model": "gpt-5.5", "include": ["web_search_call.results"]}
+
+        assert _strip_responses_include_param(params) is True
+        assert params == {"model": "gpt-5.5"}
 
 
 class _FakeResponses:
@@ -893,6 +931,10 @@ class TestStreamMessageTokenParams:
         complete = events[-1]
         assert complete.message.tool_uses[0].input == {"query": "today AI news"}
         assert fake_sdk.responses.last_kwargs["tools"] == [{"type": "web_search"}]
+        assert fake_sdk.responses.last_kwargs["include"] == [
+            "web_search_call.action.sources",
+            "web_search_call.results",
+        ]
 
     @pytest.mark.asyncio
     async def test_hosted_web_search_create_failure_falls_back_to_local_function(self):
@@ -955,7 +997,12 @@ class TestStreamMessageTokenParams:
         complete = events[-1]
         assert complete.message.tool_uses[0].input == {"query": "fallback"}
         assert fake_sdk.responses.calls[0]["tools"][0] == {"type": "web_search"}
+        assert fake_sdk.responses.calls[0]["include"] == [
+            "web_search_call.action.sources",
+            "web_search_call.results",
+        ]
         assert all(tool.get("type") != "web_search" for tool in fake_sdk.responses.calls[1]["tools"])
+        assert "include" not in fake_sdk.responses.calls[1]
         assert fake_sdk.responses.calls[1]["tools"][0]["name"] == "web_search"
 
     @pytest.mark.asyncio
@@ -1010,11 +1057,174 @@ class TestStreamMessageTokenParams:
         assert completes[0].status == "success"
         assert completes[0].metadata["result_count"] == 2
         assert completes[0].metadata["results"] == [
-            {"title": "AI News", "url": "https://example.com/news"},
-            {"title": "OpenAI", "url": "https://example.com/openai"},
+            {"title": "AI News", "url": "https://example.com/news", "domain": "example.com"},
+            {"title": "OpenAI", "url": "https://example.com/openai", "domain": "example.com"},
         ]
         assert "snippet" not in json.dumps(completes[0].metadata)
         assert events[-1].message.tool_uses == []
+
+    @pytest.mark.asyncio
+    async def test_stream_extracts_late_hosted_web_search_metadata_from_completed_response(self):
+        client = OpenAICompatibleClient(api_key="test-key", base_url="http://localhost:3000/v1")
+        fake_sdk = _FakeOpenAIClient([
+            {
+                "type": "response.completed",
+                "response": {
+                    "status": "completed",
+                    "usage": {"input_tokens": 5, "output_tokens": 3},
+                    "output": [
+                        {
+                            "id": "ws_late",
+                            "type": "web_search_call",
+                            "status": "completed",
+                            "action": {
+                                "type": "search",
+                                "queries": ["today AI news"],
+                                "sources": [
+                                    {"title": "Source", "url": "https://example.com/a?token=secret&ok=1"},
+                                ],
+                            },
+                            "results": [
+                                {
+                                    "type": "image_result",
+                                    "image_url": "https://cdn.example/image.jpg?api_key=secret",
+                                    "thumbnail_url": "https://cdn.example/thumb.jpg",
+                                    "source_website_url": "https://example.com/source",
+                                    "caption": "Example image",
+                                    "snippet": "not persisted",
+                                }
+                            ],
+                        },
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "done",
+                                    "annotations": [
+                                        {
+                                            "type": "url_citation",
+                                            "title": "Citation",
+                                            "url": "https://example.com/citation?session=secret",
+                                            "start_index": 0,
+                                            "end_index": 4,
+                                        }
+                                    ],
+                                }
+                            ],
+                        },
+                    ],
+                },
+            },
+        ])
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="gpt-5.5",
+            messages=[ConversationMessage.from_user_text("Search")],
+            tools=[{"name": "web_search", "description": "Search", "input_schema": {"type": "object"}}],
+        )
+
+        events = [event async for event in client.stream_message(request)]
+
+        complete = next(event for event in events if isinstance(event, ApiToolCallCompletedEvent))
+        assert complete.tool_use_id == "ws_late"
+        assert complete.tool_input == {"query": "today AI news", "queries": ["today AI news"]}
+        assert complete.metadata["action_type"] == "search"
+        assert complete.metadata["result_count"] == 1
+        assert complete.metadata["source_count"] == 1
+        assert complete.metadata["results"][0]["type"] == "image_result"
+        assert complete.metadata["results"][0]["domain"] == "example.com"
+        dumped = json.dumps(complete.metadata)
+        assert "snippet" not in dumped
+        assert "secret" not in dumped
+        assert "%5Bredacted%5D" in dumped
+
+        annotation_progress = [
+            event for event in events
+            if isinstance(event, ApiToolCallProgressEvent) and event.tool_use_id == "web_search_annotations"
+        ]
+        assert annotation_progress
+        assert annotation_progress[0].metadata["annotations"][0]["domain"] == "example.com"
+
+    @pytest.mark.asyncio
+    async def test_responses_include_unsupported_retries_without_include(self):
+        class _IncludeUnsupportedError(Exception):
+            status_code = 400
+            body = {"error": {"message": "Unknown parameter: include"}}
+
+        class _IncludeFallbackResponses:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            async def create(self, **kwargs):
+                self.calls.append(dict(kwargs))
+                if len(self.calls) == 1:
+                    raise _IncludeUnsupportedError("Unknown parameter: include")
+
+                async def _stream():
+                    yield {
+                        "type": "response.completed",
+                        "response": {"status": "completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+                    }
+
+                return _stream()
+
+        class _IncludeFallbackClient:
+            def __init__(self) -> None:
+                self.responses = _IncludeFallbackResponses()
+
+        client = OpenAICompatibleClient(api_key="test-key", base_url="http://localhost:3000/v1")
+        fake_sdk = _IncludeFallbackClient()
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="gpt-5.5",
+            messages=[ConversationMessage.from_user_text("Search")],
+            tools=[{"name": "web_search", "description": "Search", "input_schema": {"type": "object"}}],
+        )
+
+        events = [event async for event in client.stream_message(request)]
+
+        assert events
+        assert "include" in fake_sdk.responses.calls[0]
+        assert "include" not in fake_sdk.responses.calls[1]
+        assert fake_sdk.responses.calls[1]["tools"] == [{"type": "web_search"}]
+
+    @pytest.mark.asyncio
+    async def test_restrictive_web_search_config_error_does_not_downgrade(self):
+        class _FiltersUnsupportedError(Exception):
+            status_code = 400
+            body = {"error": {"message": "Unsupported parameter: filters"}}
+
+        class _RejectingResponses:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            async def create(self, **kwargs):
+                self.calls.append(dict(kwargs))
+                raise _FiltersUnsupportedError("Unsupported parameter: filters")
+
+        class _RejectingClient:
+            def __init__(self) -> None:
+                self.responses = _RejectingResponses()
+
+        client = OpenAICompatibleClient(api_key="test-key", base_url="http://localhost:3000/v1")
+        fake_sdk = _RejectingClient()
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="gpt-5.5",
+            messages=[ConversationMessage.from_user_text("Search")],
+            tools=[{"name": "web_search", "description": "Search", "input_schema": {"type": "object"}}],
+            openai_web_search={"filters": {"allowed_domains": ["openai.com"]}},
+        )
+
+        with pytest.raises(RequestFailure):
+            [event async for event in client.stream_message(request)]
+
+        assert len(fake_sdk.responses.calls) == 1
+        assert fake_sdk.responses.calls[0]["tools"][0]["filters"] == {"allowed_domains": ["openai.com"]}
 
     @pytest.mark.asyncio
     async def test_stream_translates_hosted_non_function_tools_without_local_tool_calls(self):

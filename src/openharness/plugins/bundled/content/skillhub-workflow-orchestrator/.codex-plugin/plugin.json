@@ -1,0 +1,8 @@
+{
+  "name": "skillhub-workflow-orchestrator",
+  "version": "1.0.0",
+  "description": "复杂目标工作流编排、SkillHub 能力发现和安全安装。",
+  "enabled_by_default": true,
+  "skills": "./skills",
+  "tools_dir": "tools"
+}

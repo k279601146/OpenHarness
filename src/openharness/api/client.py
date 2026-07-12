@@ -52,6 +52,7 @@ class ApiMessageRequest:
     max_tokens: int = 4096
     tools: list[dict[str, Any]] = field(default_factory=list)
     effort: str | None = None
+    openai_web_search: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
