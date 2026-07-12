@@ -26,6 +26,8 @@ from openharness.tools.sandbox_workspace import get_e2b_task_session, to_sandbox
 
 
 GPT_IMAGE_2_MODEL = "gpt-image-2"
+IMAGEGEN_METADATA_PREFIX = "IMAGEGEN_METADATA:"
+IMAGEGEN_METADATA_PATH_ENV = "OPENHARNESS_IMAGEGEN_METADATA_PATH"
 
 
 @dataclass(frozen=True)
@@ -132,26 +134,35 @@ class ImagegenCliTool(BaseTool):
         env = os.environ.copy()
         env.update(_build_provider_tool_env(context) or {})
 
-        completed = await run_media_subprocess(
-            argv=argv,
-            cwd=str(cwd),
-            env=env,
-            timeout_seconds=arguments.timeout_seconds,
-            context=context,
-            kind="image",
-        )
+        with tempfile.TemporaryDirectory(prefix="openharness-imagegen-metadata-") as tmpdir:
+            metadata_path = Path(tmpdir) / "metadata.json"
+            env[IMAGEGEN_METADATA_PATH_ENV] = str(metadata_path)
+            completed = await run_media_subprocess(
+                argv=argv,
+                cwd=str(cwd),
+                env=env,
+                timeout_seconds=arguments.timeout_seconds,
+                context=context,
+                kind="image",
+            )
+            file_metadata = _read_cli_metadata_file(metadata_path)
         output = completed.output.strip()
         if completed.returncode != 0:
-            return await _media_billing_error_result(context, output or f"imagegen CLI failed with code {completed.returncode}", completed.metadata)
+            sanitized_error = _sanitize_cli_output(output, IMAGEGEN_METADATA_PREFIX, {})
+            return await _media_billing_error_result(
+                context,
+                sanitized_error or f"imagegen CLI failed with code {completed.returncode}",
+                {**file_metadata, **completed.metadata},
+            )
 
-        parsed_metadata = {**_parse_cli_metadata(output), **completed.metadata}
+        parsed_metadata = {**_parse_cli_metadata(output), **file_metadata, **completed.metadata}
         artifacts = [] if arguments.dry_run else _expected_artifacts(arguments, cwd, parsed_metadata)
         missing = [path for path in artifacts if not path.is_file()]
         if missing:
             missing_text = "\n".join(f"- {path}" for path in missing)
             return await _media_billing_error_result(
                 context,
-                f"imagegen CLI completed, but expected output file(s) were missing:\n{missing_text}\n\n{output}",
+                f"imagegen CLI completed, but expected output file(s) were missing:\n{missing_text}\n\n{_sanitize_cli_output(output, IMAGEGEN_METADATA_PREFIX, {})}",
                 parsed_metadata,
             )
 
@@ -180,6 +191,7 @@ class ImagegenCliTool(BaseTool):
                     },
                 )
 
+        sanitized_output = _sanitize_cli_output(output, IMAGEGEN_METADATA_PREFIX, {})
         lines = [
             "imagegen CLI completed successfully and published artifact(s) to the UI.",
             "Delivery status: published; delivery_required=false. Do not call deliver_artifact for these image artifact(s) as standalone files; include them as members when the user requested a zip bundle.",
@@ -187,8 +199,8 @@ class ImagegenCliTool(BaseTool):
         if artifacts:
             lines.append("Published artifact paths:")
             lines.extend(f"- {path}" for path in artifacts)
-        if output:
-            lines.extend(["", "CLI output:", output])
+        if sanitized_output:
+            lines.extend(["", "CLI output:", sanitized_output])
         return ToolResult(
             output="\n".join(lines),
             metadata={
@@ -250,6 +262,8 @@ async def _execute_e2b_imagegen(
         argv = _build_argv(script, local_arguments, local_cwd)
         env = os.environ.copy()
         env.update(_build_provider_tool_env(context) or {})
+        metadata_path = local_cwd / "metadata.json"
+        env[IMAGEGEN_METADATA_PATH_ENV] = str(metadata_path)
 
         completed = await run_media_subprocess(
             argv=argv,
@@ -260,10 +274,16 @@ async def _execute_e2b_imagegen(
             kind="image",
         )
         output = completed.output.strip()
+        file_metadata = _read_cli_metadata_file(metadata_path)
         if completed.returncode != 0:
-            return await _media_billing_error_result(context, output or f"imagegen CLI failed with code {completed.returncode}", completed.metadata)
+            sanitized_error = _sanitize_cli_output(output, IMAGEGEN_METADATA_PREFIX, {})
+            return await _media_billing_error_result(
+                context,
+                sanitized_error or f"imagegen CLI failed with code {completed.returncode}",
+                {**file_metadata, **completed.metadata},
+            )
 
-        parsed_metadata = {**_parse_cli_metadata(output), **completed.metadata}
+        parsed_metadata = {**_parse_cli_metadata(output), **file_metadata, **completed.metadata}
         local_artifacts = [] if arguments.dry_run else _expected_artifacts(local_arguments, local_cwd, parsed_metadata)
         missing = [path for path in local_artifacts if not path.is_file()]
         if missing:
@@ -313,7 +333,7 @@ async def _execute_e2b_imagegen(
                 }
             )
 
-        sanitized_output = _sanitize_cli_output(output, "IMAGEGEN_METADATA:", {})
+        sanitized_output = _sanitize_cli_output(output, IMAGEGEN_METADATA_PREFIX, {})
         lines = [
             "imagegen CLI completed successfully and published artifact(s) to the UI.",
             "Delivery status: published; delivery_required=false.",
@@ -729,13 +749,6 @@ def _sanitize_cli_output(output: str, metadata_prefix: str, path_map: dict[Path,
     lines: list[str] = []
     for line in output.splitlines():
         if line.startswith(metadata_prefix):
-            try:
-                parsed = json.loads(line[len(metadata_prefix):])
-            except json.JSONDecodeError:
-                continue
-            if isinstance(parsed, dict):
-                parsed["artifact_paths"] = list(path_map.values())
-                lines.append(f"{metadata_prefix}{json.dumps(parsed, ensure_ascii=False, sort_keys=True)}")
             continue
         sanitized = line
         for host_path, sandbox_path in replacements.items():
@@ -757,7 +770,7 @@ def _ensure_bytes(content) -> bytes:
 
 
 def _parse_cli_metadata(output: str) -> dict[str, object]:
-    prefix = "IMAGEGEN_METADATA:"
+    prefix = IMAGEGEN_METADATA_PREFIX
     for line in reversed((output or "").splitlines()):
         if not line.startswith(prefix):
             continue
@@ -767,6 +780,18 @@ def _parse_cli_metadata(output: str) -> dict[str, object]:
             return {}
         return parsed if isinstance(parsed, dict) else {}
     return {}
+
+
+def _read_cli_metadata_file(path: Path) -> dict[str, object]:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _context_tool_use_id(context: ToolExecutionContext) -> str | None:

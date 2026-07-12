@@ -306,6 +306,16 @@ def resolve_image_dimensions(
         raw_aspect = None
     if raw_aspect and raw_size.lower() == str(spec.default_size).lower():
         raw_size = ""
+    raw_resolution = _coerce_single_supported_resolution(spec, raw_resolution)
+
+    if raw_size and spec.supports_flexible_size and _is_valid_flexible_image_size(raw_size):
+        effective_resolution = raw_resolution or _resolution_from_size(raw_size) or spec.default_resolution
+        _ensure_member("resolution", effective_resolution, spec.supported_resolutions)
+        size_aspect = _aspect_from_size(raw_size)
+        if raw_aspect and size_aspect and not _same_aspect_ratio(raw_aspect, size_aspect):
+            raise ValueError("Image size conflicts with aspect_ratio")
+        effective_aspect = raw_aspect or size_aspect
+        return effective_resolution, raw_size, effective_aspect
 
     preset_by_size = next((item for item in spec.size_presets if item[2].lower() == raw_size.lower()), None)
     if preset_by_size:
@@ -316,14 +326,6 @@ def resolve_image_dimensions(
         raw_resolution = preset_by_size[0].upper()
         raw_aspect = preset_by_size[1].lower()
 
-    if raw_size and not preset_by_size and spec.supports_flexible_size and _is_valid_flexible_image_size(raw_size):
-        effective_resolution = raw_resolution or _resolution_from_size(raw_size) or spec.default_resolution
-        size_aspect = _aspect_from_size(raw_size)
-        if raw_aspect and size_aspect and not _same_aspect_ratio(raw_aspect, size_aspect):
-            raise ValueError("Image size conflicts with aspect_ratio")
-        effective_aspect = raw_aspect or size_aspect
-        return effective_resolution, raw_size, effective_aspect
-
     if spec.dimension_mode == "resolution_aspect":
         effective_resolution = raw_resolution or _resolution_from_size(raw_size) or spec.default_resolution
         effective_aspect = raw_aspect or _aspect_from_size(raw_size) or spec.default_aspect_ratio
@@ -332,13 +334,16 @@ def resolve_image_dimensions(
         return effective_resolution, str(effective_resolution), effective_aspect
 
     if raw_size:
+        effective_resolution = raw_resolution or spec.default_resolution
+        _ensure_member("resolution", effective_resolution, spec.supported_resolutions)
         if raw_aspect and not spec.supports_flexible_size:
             _ensure_member("aspect_ratio", raw_aspect, spec.supported_aspect_ratios)
         _ensure_member("size", raw_size, spec.supported_sizes)
-        return raw_resolution or spec.default_resolution, raw_size, raw_aspect or _aspect_from_size(raw_size)
+        return effective_resolution, raw_size, raw_aspect or _aspect_from_size(raw_size)
 
     effective_resolution = raw_resolution or spec.default_resolution
     effective_aspect = raw_aspect or spec.default_aspect_ratio
+    _ensure_member("resolution", effective_resolution, spec.supported_resolutions)
     preset = next(
         (
             item
@@ -370,6 +375,24 @@ def _ensure_member(parameter: str, value: str | None, supported: tuple[str, ...]
         return
     if not any(str(item).lower() == str(value).lower() for item in supported):
         raise ValueError(f"Unsupported image {parameter}: {value}")
+
+
+def _coerce_single_supported_resolution(spec: ImageModelSpec, value: str | None) -> str | None:
+    if value is None or not spec.supported_resolutions:
+        return value
+    if any(str(item).lower() == str(value).lower() for item in spec.supported_resolutions):
+        return value
+    unique = []
+    seen = set()
+    for item in spec.supported_resolutions:
+        key = str(item).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(str(item))
+    if len(unique) == 1:
+        return unique[0].upper()
+    return value
 
 
 def _resolution_from_size(size: str) -> str | None:

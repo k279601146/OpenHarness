@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -18,7 +19,7 @@ from openharness.tools.imagegen_cli_tool import (
     _normalize_openai_sdk_base_url,
 )
 from openharness.tools.media_gateway_runtime import MediaSubprocessResult
-from openharness.skills.bundled.content.imagegen.scripts.imagegen_runtime.providers import _build_payload
+from openharness.skills.bundled.content.imagegen.scripts.imagegen_runtime.providers import _build_payload, emit_metadata
 from openharness.skills.bundled.content.imagegen.scripts.imagegen_runtime.registry import get_model_spec
 
 
@@ -55,6 +56,21 @@ class FakeArtifactHook:
         self.calls.append({"file_path": file_path, **kwargs})
 
 
+def test_imagegen_cli_metadata_file_does_not_write_stdout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    metadata_path = tmp_path / "metadata.json"
+    monkeypatch.setenv("OPENHARNESS_IMAGEGEN_METADATA_PATH", str(metadata_path))
+
+    emit_metadata({"artifact_paths": ["image.png"], "billing_units": 6.0})
+
+    captured = capsys.readouterr()
+    assert "IMAGEGEN_METADATA:" not in captured.out
+    assert json.loads(metadata_path.read_text(encoding="utf-8"))["billing_units"] == 6.0
+
+
 @pytest.mark.asyncio
 async def test_imagegen_cli_dry_run_routes_nano_banana(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-key")
@@ -78,9 +94,9 @@ async def test_imagegen_cli_dry_run_routes_nano_banana(tmp_path: Path, monkeypat
     assert result.metadata["provider"] == "gemini"
     assert result.metadata["size"] == "4K"
     assert result.metadata["aspect_ratio"] == "16:9"
-    assert result.metadata["official_cost"] == 0.24
-    assert result.metadata["pricing_multiplier"] == 1.0
-    assert result.metadata["billing_units"] == 6.0
+    assert "official_cost" not in result.metadata
+    assert "pricing_multiplier" not in result.metadata
+    assert "billing_units" not in result.metadata
 
 
 @pytest.mark.asyncio
@@ -134,8 +150,38 @@ async def test_imagegen_cli_dry_run_routes_doubao_and_multiple_outputs(
     assert result.metadata["size"] == "2048x2048"
     assert result.metadata["quality"] == "medium"
     assert result.metadata["output_count"] == 2
-    assert result.metadata["official_currency"] == "CNY"
-    assert result.metadata["billing_units"] == 1.4
+    assert "official_currency" not in result.metadata
+    assert "billing_units" not in result.metadata
+
+
+@pytest.mark.asyncio
+async def test_imagegen_cli_coerces_kolors_stale_resolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-key")
+
+    result = await ImagegenCliTool().execute(
+        ImagegenCliInput(
+            command="generate",
+            prompt="小红书美女封面图",
+            model="kolors",
+            resolution="2K",
+            aspect_ratio="9:16",
+            n=2,
+            out="output/imagegen/xhs.png",
+            dry_run=True,
+        ),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert not result.is_error
+    assert result.metadata["model_id"] == "kolors"
+    assert result.metadata["resolution"] == "1K"
+    assert result.metadata["size"] == "1024x1792"
+    assert result.metadata["aspect_ratio"] == "9:16"
+    assert result.metadata["output_count"] == 2
+    assert "IMAGEGEN_METADATA:" not in result.output
 
 
 def test_build_argv_filters_gpt_image_2_unsupported_parameters(tmp_path: Path) -> None:
@@ -393,7 +439,8 @@ async def test_imagegen_cli_text_generation_skips_e2b_workspace(
             "provider": "openai_compatible",
         }
 
-        output = f"Wrote {local_path}\nIMAGEGEN_METADATA:{__import__('json').dumps(metadata)}"
+        Path(env["OPENHARNESS_IMAGEGEN_METADATA_PATH"]).write_text(json.dumps(metadata), encoding="utf-8")
+        output = f"Wrote {local_path}"
         return MediaSubprocessResult(0, output, {})
 
     monkeypatch.setattr("openharness.tools.imagegen_cli_tool.get_e2b_task_session", fake_get_session)
@@ -428,8 +475,10 @@ async def test_imagegen_cli_text_generation_skips_e2b_workspace(
     assert result.metadata["delivery_required"] is False
     assert result.metadata["do_not_deliver_artifact"] is True
     assert "D:\\home\\user" not in result.output
+    assert "IMAGEGEN_METADATA:" not in result.output
     assert "Published artifact paths:" in result.output
     assert seen_env["OPENHARNESS_MEDIA_GATEWAY_API_KEY"] == "test-image-key"
+    assert "OPENHARNESS_IMAGEGEN_METADATA_PATH" in seen_env
     assert hook.calls == [
         {
             "file_path": hook.calls[0]["file_path"],

@@ -1,18 +1,36 @@
 # Doubao Seedream Provider Notes
 
-Doubao Seedream model ids route through the Doubao streaming image API adapter:
+Doubao Seedream 系列通过豆包流式图片 API 适配器执行：
 
 - `doubao-seedream-5-0-260128`
 - `doubao-seedream-5-0-lite-260128`
 - `doubao-seedream-4-5-251128`
 - `doubao-seedream-4-0-250828`
 
-Use these models when the user explicitly asks for Doubao, Seedream, Volcengine image generation, or Chinese-market image generation. They support text-to-image and image-conditioned generation/editing through `imagegen_cli command="generate"` or `command="edit"` with `images=[...]`.
+## 何时选择
 
-Aspect ratio hints map to Doubao-friendly sizes:
+- 用户明确要求豆包、Seedream、火山引擎或中文市场图片生成。
+- 适合中文电商图、小红书/短视频封面、商品场景图、中文审美风格图。
+- 需要多张连续产出时，可设置 `n`，但不同提示词仍应分多次调用。
 
-- `1:1` -> `2048x2048`
-- `4:3` -> `2304x1728`
-- `3:4` -> `1728x2304`
-- `16:9` -> `2848x1600`
-- `9:16` -> `1600x2848`
+## 参数选择
+
+- Seedream 更适合使用固定尺寸或常见比例。
+- 常用映射：
+  - `1:1` -> `2048x2048`
+  - `4:3` -> `2304x1728`
+  - `3:4` -> `1728x2304`
+  - `16:9` -> `2848x1600`
+  - `9:16` -> `1600x2848`
+- 如果用户要求 2K，可优先使用以上尺寸；如果要求 4K，先尝试 `resolution="4K"` 或在 prompt 中说明高清需求，由 CLI/provider 判断是否支持。
+
+## 编辑与参考图
+
+- 文生图使用 `command="generate"`。
+- 图生图、参考图或局部风格延展使用 `command="edit"` 并传 `images=[...]`。
+- 电商图应在 prompt 中明确主体、背景、材质、光线、构图和禁用项。
+
+## 失败处理
+
+- 如果上游对某个尺寸拒绝，换成上述邻近尺寸后重试。
+- 不要把上游尝试次数转化为用户额外扣费；同一工具调用应共享服务端 reservation。

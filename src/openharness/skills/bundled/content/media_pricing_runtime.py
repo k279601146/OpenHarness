@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 PRICING_RULES_ENV = "OPENHARNESS_MEDIA_MODEL_PRICING_RULES"
 DEFAULT_CREDITS_PER_USD = 25.0
-SUPPORTED_IMAGE_SCHEMES = {"image_token_pricing", "image_unit_pricing"}
+SUPPORTED_IMAGE_SCHEMES = {"image_size_tier_pricing", "image_token_pricing", "image_unit_pricing"}
 SUPPORTED_VIDEO_SCHEMES = {"video_seconds_pricing", "video_unit_pricing"}
 
 
@@ -25,143 +25,140 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "enabled": True,
             "currency": "USD",
             "multiplier": 1.0,
-            "scheme": "image_unit_pricing",
+            "scheme": "image_size_tier_pricing",
             "pricing_basis": "manual_contract",
             "contract_reference": "kolors-provider-contract",
             "source_url": "https://huggingface.co/Kwai-Kolors/Kolors",
             "source_checked_at": "2026-07-05",
-            "unit_cost": 0.02,
-            "covers_all_supported_parameters": True,
-            "default_size": "1024x1024",
-            "default_quality": "medium",
+            "default_billing_size_tier": "1K",
+            "price_by_size_tier": {"1k": 1.0, "2k": 3.0, "4k": 5.0},
+            "tier_aliases": {"1024x1024": "1k", "1792x1024": "1k", "1024x1792": "1k"},
+            "max_output_count": 4,
         },
         "gpt-image-2": {
             "enabled": True,
             "currency": "USD",
             "multiplier": 1.0,
-            "scheme": "image_token_pricing",
+            "scheme": "image_size_tier_pricing",
             "pricing_basis": "official_public",
             "official_model_id": "gpt-image-2",
             "allowed_upstream_model_ids": ["gpt-image-2"],
             "source_url": "https://platform.openai.com/docs/pricing",
             "source_checked_at": "2026-07-11",
-            "input_text_per_1m": 5.0,
-            "input_image_per_1m": 8.0,
-            "cached_input_image_per_1m": 2.0,
-            "output_image_per_1m": 30.0,
-            "default_input_image_tokens": 1290,
-            "default_size": "1024x1024",
-            "default_quality": "medium",
-            "billing_quality_aliases": {"auto": "high"},
-            "output_token_formula": {
-                "type": "gpt_image_grid_v1",
-                "quality_grid": {"low": 16, "medium": 48, "high": 96},
-                "base_pixels": 2000000,
-                "divisor": 4000000,
+            "default_billing_size_tier": "1K",
+            "price_by_size_tier": {"1k": 1.0, "2k": 3.0, "4k": 5.0},
+            "tier_aliases": {
+                "1024x1024": "1k",
+                "1536x1024": "1k",
+                "1024x1536": "1k",
+                "1792x1024": "1k",
+                "1024x1792": "1k",
+                "2048x2048": "2k",
+                "2048x1152": "2k",
+                "1152x2048": "2k",
+                "3840x2160": "4k",
+                "2160x3840": "4k",
             },
+            "max_output_count": 10,
         },
         "nano-banana": {
             "enabled": True,
             "currency": "USD",
             "multiplier": 1.0,
-            "scheme": "image_unit_pricing",
+            "scheme": "image_size_tier_pricing",
             "pricing_basis": "official_public",
             "official_model_id": "gemini-2.5-flash-image",
             "allowed_upstream_model_ids": ["gemini-2.5-flash-image", "nano-banana"],
             "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
             "source_checked_at": "2026-07-09",
-            "unit_cost": 0.039,
-            "covers_all_supported_parameters": True,
-            "cost_by_resolution": {"1k": 0.039},
-            "default_resolution": "1K",
-            "default_size": "1K",
-            "default_quality": "medium",
+            "default_billing_size_tier": "1K",
+            "price_by_size_tier": {"1k": 1.0, "2k": 3.0, "4k": 5.0},
+            "max_output_count": 1,
         },
         "nano-banana-2": {
             "enabled": True,
             "currency": "USD",
             "multiplier": 1.0,
-            "scheme": "image_unit_pricing",
+            "scheme": "image_size_tier_pricing",
             "pricing_basis": "official_public",
             "official_model_id": "gemini-3.1-flash-image",
             "allowed_upstream_model_ids": ["gemini-3.1-flash-image", "gemini-3.1-flash-image-preview", "nano-banana-2"],
             "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
             "source_checked_at": "2026-07-09",
-            "cost_by_resolution": {"0.5k": 0.045, "1k": 0.067, "2k": 0.101, "4k": 0.151},
-            "default_resolution": "1K",
-            "default_size": "1K",
-            "default_quality": "medium",
+            "default_billing_size_tier": "1K",
+            "price_by_size_tier": {"1k": 1.0, "2k": 3.0, "4k": 5.0},
+            "tier_aliases": {"0.5k": "1k"},
+            "max_output_count": 1,
         },
         "nano-banana-pro": {
             "enabled": True,
             "currency": "USD",
             "multiplier": 1.0,
-            "scheme": "image_unit_pricing",
+            "scheme": "image_size_tier_pricing",
             "pricing_basis": "official_public",
             "official_model_id": "gemini-3-pro-image",
             "allowed_upstream_model_ids": ["gemini-3-pro-image", "gemini-3.0-pro-image-preview", "nano-banana-pro"],
             "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
             "source_checked_at": "2026-07-09",
-            "cost_by_resolution": {"1k": 0.134, "2k": 0.134, "4k": 0.24},
-            "default_resolution": "1K",
-            "default_size": "1K",
-            "default_quality": "medium",
+            "default_billing_size_tier": "1K",
+            "price_by_size_tier": {"1k": 1.0, "2k": 3.0, "4k": 5.0},
+            "max_output_count": 1,
         },
         "doubao-seedream-5-0-260128": {
             "enabled": True,
-            "currency": "CNY",
+            "currency": "USD",
             "multiplier": 1.0,
-            "scheme": "image_unit_pricing",
+            "scheme": "image_size_tier_pricing",
             "pricing_basis": "manual_contract",
             "contract_reference": "volcengine-media-contract",
             "source_url": "https://www.volcengine.com/docs",
             "source_checked_at": "2026-07-05",
-            "cost_by_size": {"2048x2048": 0.2, "2848x1600": 0.2, "1600x2848": 0.2, "2304x1728": 0.2, "1728x2304": 0.2},
-            "unit_cost": 0.2,
-            "default_size": "2048x2048",
-            "default_quality": "medium",
+            "default_billing_size_tier": "2K",
+            "price_by_size_tier": {"1k": 1.0, "2k": 3.0, "4k": 5.0},
+            "tier_aliases": {"2048x2048": "2k", "2848x1600": "2k", "1600x2848": "2k", "2304x1728": "2k", "1728x2304": "2k"},
+            "max_output_count": 4,
         },
         "doubao-seedream-5-0-lite-260128": {
             "enabled": True,
-            "currency": "CNY",
+            "currency": "USD",
             "multiplier": 1.0,
-            "scheme": "image_unit_pricing",
+            "scheme": "image_size_tier_pricing",
             "pricing_basis": "manual_contract",
             "contract_reference": "volcengine-media-contract",
             "source_url": "https://www.volcengine.com/docs",
             "source_checked_at": "2026-07-05",
-            "unit_cost": 0.1,
-            "covers_all_supported_parameters": True,
-            "default_size": "2048x2048",
-            "default_quality": "medium",
+            "default_billing_size_tier": "2K",
+            "price_by_size_tier": {"1k": 1.0, "2k": 3.0, "4k": 5.0},
+            "tier_aliases": {"2048x2048": "2k", "2848x1600": "2k", "1600x2848": "2k", "2304x1728": "2k", "1728x2304": "2k"},
+            "max_output_count": 4,
         },
         "doubao-seedream-4-5-251128": {
             "enabled": True,
-            "currency": "CNY",
+            "currency": "USD",
             "multiplier": 1.0,
-            "scheme": "image_unit_pricing",
+            "scheme": "image_size_tier_pricing",
             "pricing_basis": "manual_contract",
             "contract_reference": "volcengine-media-contract",
             "source_url": "https://www.volcengine.com/docs",
             "source_checked_at": "2026-07-05",
-            "unit_cost": 0.2,
-            "covers_all_supported_parameters": True,
-            "default_size": "2048x2048",
-            "default_quality": "medium",
+            "default_billing_size_tier": "2K",
+            "price_by_size_tier": {"1k": 1.0, "2k": 3.0, "4k": 5.0},
+            "tier_aliases": {"2048x2048": "2k", "2848x1600": "2k", "1600x2848": "2k", "2304x1728": "2k", "1728x2304": "2k"},
+            "max_output_count": 4,
         },
         "doubao-seedream-4-0-250828": {
             "enabled": True,
-            "currency": "CNY",
+            "currency": "USD",
             "multiplier": 1.0,
-            "scheme": "image_unit_pricing",
+            "scheme": "image_size_tier_pricing",
             "pricing_basis": "manual_contract",
             "contract_reference": "volcengine-media-contract",
             "source_url": "https://www.volcengine.com/docs",
             "source_checked_at": "2026-07-05",
-            "unit_cost": 0.2,
-            "covers_all_supported_parameters": True,
-            "default_size": "2048x2048",
-            "default_quality": "medium",
+            "default_billing_size_tier": "2K",
+            "price_by_size_tier": {"1k": 1.0, "2k": 3.0, "4k": 5.0},
+            "tier_aliases": {"2048x2048": "2k", "2848x1600": "2k", "1600x2848": "2k", "2304x1728": "2k", "1728x2304": "2k"},
+            "max_output_count": 4,
         },
     },
     "video": {
@@ -397,6 +394,7 @@ def estimate_image_pricing(
     *,
     model_id: str,
     prompt: str = "",
+    billing_size_tier: str | None = None,
     resolution: str | None = None,
     size: str | None = None,
     quality: str | None = None,
@@ -411,6 +409,9 @@ def estimate_image_pricing(
         raise ValueError(f"Image model pricing is not configured for {model_id}")
 
     output_count = max(int(output_count or 1), 1)
+    max_output_count = int(rule.get("max_output_count", 0) or 0)
+    if max_output_count > 0 and output_count > max_output_count:
+        raise ValueError(f"Image output_count {output_count} exceeds max_output_count {max_output_count} for {model_id}")
     reference_count = max(int(reference_count or 0), 0)
     resolved_quality = _normalize_key(quality or rule.get("default_quality") or "medium")
     billing_quality = _normalize_key((rule.get("billing_quality_aliases") or {}).get(resolved_quality) or resolved_quality)
@@ -418,7 +419,26 @@ def estimate_image_pricing(
     resolved_resolution = _normalize_key(resolution or rule.get("default_resolution") or _resolution_from_size(resolved_size))
     scheme = str(rule["scheme"])
 
-    if scheme == "image_token_pricing":
+    if scheme == "image_size_tier_pricing":
+        resolved_tier = _resolve_image_billing_size_tier(
+            rule,
+            billing_size_tier=billing_size_tier,
+            resolution=resolution,
+            size=size,
+        )
+        unit_credits = _lookup_number(rule.get("price_by_size_tier"), resolved_tier, default=None)
+        if unit_credits is None:
+            raise ValueError(f"Image pricing does not include billing_size_tier {resolved_tier} for {model_id}")
+        billing_units = unit_credits * output_count
+        official_cost = _credits_to_official_cost(loaded, rule, billing_units)
+        breakdown = {
+            "scheme": scheme,
+            "unit_credits": unit_credits,
+            "billing_size_tier": resolved_tier.upper(),
+            "output_count": output_count,
+            "price_unit": "credits",
+        }
+    elif scheme == "image_token_pricing":
         text_tokens = _estimate_text_tokens(prompt)
         output_tokens = _lookup_image_output_tokens(rule, billing_quality, resolved_size)
         input_image_tokens = reference_count * _lookup_number(
@@ -576,7 +596,31 @@ def _validate_model_rule(kind: str, model_id: str, raw: Any, schemes: set[str], 
 
 
 def _validate_image_scheme(model_id: str, rule: dict[str, Any]) -> None:
-    if rule["scheme"] == "image_token_pricing":
+    if rule["scheme"] == "image_size_tier_pricing":
+        prices = rule.get("price_by_size_tier")
+        if not isinstance(prices, dict) or not prices:
+            raise ValueError(f"image.{model_id}.price_by_size_tier must be a non-empty object")
+        normalized_prices: dict[str, float] = {}
+        for tier, price in prices.items():
+            normalized_tier = _normalize_billing_size_tier(tier)
+            if normalized_tier not in {"1k", "2k", "4k"}:
+                raise ValueError(f"image.{model_id}.price_by_size_tier contains unsupported tier {tier}")
+            normalized_prices[normalized_tier] = _positive_float(price, f"image.{model_id}.price_by_size_tier.{normalized_tier}", allow_zero=False)
+        rule["price_by_size_tier"] = normalized_prices
+        default_tier = _resolve_configured_billing_size_tier(rule.get("default_billing_size_tier"))
+        if default_tier not in normalized_prices:
+            raise ValueError(f"image.{model_id}.default_billing_size_tier must exist in price_by_size_tier")
+        rule["default_billing_size_tier"] = default_tier.upper()
+        rule["max_output_count"] = int(_positive_float(rule.get("max_output_count", 1), f"image.{model_id}.max_output_count", allow_zero=False))
+        aliases = rule.get("tier_aliases")
+        if aliases is not None:
+            if not isinstance(aliases, dict):
+                raise ValueError(f"image.{model_id}.tier_aliases must be an object")
+            rule["tier_aliases"] = {
+                _normalize_alias_key(alias): _resolve_configured_billing_size_tier(tier)
+                for alias, tier in aliases.items()
+            }
+    elif rule["scheme"] == "image_token_pricing":
         for key in ("input_text_per_1m", "input_image_per_1m", "output_image_per_1m"):
             _positive_float(rule.get(key, 0), f"image.{model_id}.{key}", allow_zero=True)
         tokens = rule.get("output_tokens_by_quality_size")
@@ -657,6 +701,97 @@ def _lookup_image_unit_cost(rule: dict[str, Any], quality: str, resolution: str,
     if value is not None:
         return value
     return _lookup_unit_cost(rule, quality, size)
+
+
+def _resolve_image_billing_size_tier(
+    rule: dict[str, Any],
+    *,
+    billing_size_tier: str | None,
+    resolution: str | None,
+    size: str | None,
+) -> str:
+    configured_tiers = {_normalize_billing_size_tier(tier) for tier in (rule.get("price_by_size_tier") or {})}
+    explicit_tier = _billing_size_tier_from_value(rule, billing_size_tier)
+    if explicit_tier:
+        if explicit_tier not in configured_tiers:
+            raise ValueError(f"Image pricing tier {explicit_tier} is not configured for {rule['model_id']}")
+        return explicit_tier
+    inferred_tiers = [
+        tier
+        for tier in (
+            _billing_size_tier_from_value(rule, resolution),
+            _billing_size_tier_from_value(rule, size),
+        )
+        if tier
+    ]
+    if inferred_tiers:
+        resolved = max(inferred_tiers, key=_billing_size_tier_rank)
+        if resolved not in configured_tiers:
+            raise ValueError(f"Image pricing tier {resolved} is not configured for {rule['model_id']}")
+        return resolved
+    default_tier = _resolve_configured_billing_size_tier(rule.get("default_billing_size_tier"))
+    if default_tier not in configured_tiers:
+        raise ValueError(f"Image default billing_size_tier {default_tier} is not configured for {rule['model_id']}")
+    return default_tier
+
+
+def _billing_size_tier_rank(tier: str) -> int:
+    return {"1k": 1, "2k": 2, "4k": 4}.get(_normalize_billing_size_tier(tier), 0)
+
+
+def _billing_size_tier_from_value(rule: dict[str, Any], value: str | None) -> str | None:
+    text = str(value or "").strip()
+    if not text or text.lower() in {"auto", "adaptive", "default"}:
+        return None
+    alias_key = _normalize_alias_key(text)
+    aliases = rule.get("tier_aliases")
+    if isinstance(aliases, dict) and alias_key in aliases:
+        return _normalize_billing_size_tier(aliases[alias_key])
+    direct = _normalize_billing_size_tier(text)
+    if direct in {"1k", "2k", "4k"}:
+        return direct
+    parsed = _parse_pixel_size(alias_key)
+    if parsed:
+        longest = max(parsed)
+        if longest >= 3000:
+            return "4k"
+        if longest >= 2000:
+            return "2k"
+        return "1k"
+    raise ValueError(f"Cannot determine image billing_size_tier from {value!r} for {rule['model_id']}")
+
+
+def _resolve_configured_billing_size_tier(value: Any) -> str:
+    tier = _normalize_billing_size_tier(value)
+    if tier not in {"1k", "2k", "4k"}:
+        raise ValueError(f"billing_size_tier must be one of 1K, 2K, or 4K")
+    return tier
+
+
+def _normalize_billing_size_tier(value: Any) -> str:
+    text = str(value or "").strip().lower().replace(" ", "")
+    if text in {"1", "1k"}:
+        return "1k"
+    if text in {"2", "2k"}:
+        return "2k"
+    if text in {"4", "4k"}:
+        return "4k"
+    return text
+
+
+def _normalize_alias_key(value: Any) -> str:
+    return str(value or "").strip().lower().replace(" ", "")
+
+
+def _credits_to_official_cost(loaded: dict[str, Any], rule: dict[str, Any], billing_units: float) -> float:
+    currency = str(rule.get("currency") or "USD").upper()
+    currency_rate = float(loaded.get("currency_rates", {}).get(currency, 0) or 0)
+    credits_per_usd = float(loaded.get("credits_per_usd") or DEFAULT_CREDITS_PER_USD)
+    multiplier = float(rule.get("multiplier", 1) or 1)
+    divisor = currency_rate * credits_per_usd * multiplier
+    if divisor <= 0:
+        raise ValueError(f"Invalid credit conversion for {rule['model_id']}")
+    return float(billing_units) / divisor
 
 
 def _parse_pixel_size(size: str) -> tuple[int, int] | None:

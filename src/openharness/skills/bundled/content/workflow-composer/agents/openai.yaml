@@ -1,4 +1,0 @@
-interface:
-  display_name: "Workflow Composer"
-  short_description: "根据复杂场景自动组合技能并生成透明可执行工作流方案"
-  default_prompt: "Use $workflow-composer to turn this complex goal into a transparent workflow plan."

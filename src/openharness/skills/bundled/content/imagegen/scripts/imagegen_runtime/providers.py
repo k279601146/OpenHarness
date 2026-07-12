@@ -14,10 +14,10 @@ from .registry import ImageModelSpec, get_model_spec, resolve_image_dimensions
 
 
 IMAGEGEN_METADATA_PREFIX = "IMAGEGEN_METADATA:"
+IMAGEGEN_METADATA_PATH_ENV = "OPENHARNESS_IMAGEGEN_METADATA_PATH"
 CONTENT_DIR = Path(__file__).resolve().parents[3]
 if str(CONTENT_DIR) not in sys.path:
     sys.path.insert(0, str(CONTENT_DIR))
-from media_pricing_runtime import estimate_image_pricing  # noqa: E402
 from media_safe_http import safe_download_image, validate_public_http_url  # noqa: E402
 
 class ImagegenProviderError(RuntimeError):
@@ -25,31 +25,23 @@ class ImagegenProviderError(RuntimeError):
 
 
 def emit_metadata(metadata: dict[str, Any]) -> None:
-    print(f"{IMAGEGEN_METADATA_PREFIX}{json.dumps(metadata, ensure_ascii=False, sort_keys=True)}")
+    metadata_path = os.getenv(IMAGEGEN_METADATA_PATH_ENV, "").strip()
+    if not metadata_path:
+        return
+    path = Path(metadata_path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(metadata, ensure_ascii=False, sort_keys=True), encoding="utf-8")
 
 
 def provider_metadata(spec: ImageModelSpec, outputs: list[Path], args: Any | None = None, prompt: str = "") -> dict[str, Any]:
     count = len(outputs)
-    reference_count = len(list(getattr(args, "image", []) or [])) if args is not None else 0
+    _ = prompt
     resolution, metadata_size, metadata_aspect_ratio = resolve_image_dimensions(
         spec,
         resolution=getattr(args, "resolution", None) if args is not None else None,
         size=getattr(args, "size", None) if args is not None else None,
         aspect_ratio=getattr(args, "aspect_ratio", None) if args is not None else None,
     )
-    try:
-        pricing = estimate_image_pricing(
-            model_id=spec.model_id,
-            prompt=prompt,
-            resolution=resolution,
-            size=metadata_size,
-            quality=getattr(args, "quality", None) if args is not None else spec.default_quality,
-            aspect_ratio=metadata_aspect_ratio,
-            output_count=count,
-            reference_count=reference_count,
-        )
-    except ValueError as exc:
-        raise ImagegenProviderError(str(exc)) from exc
     return {
         "model_id": spec.model_id,
         "provider": spec.provider,
@@ -59,7 +51,6 @@ def provider_metadata(spec: ImageModelSpec, outputs: list[Path], args: Any | Non
         "quality": getattr(args, "quality", None) if args is not None else spec.default_quality,
         "aspect_ratio": metadata_aspect_ratio,
         "output_count": count,
-        **pricing.to_metadata(),
         "artifact_paths": [str(path) for path in outputs],
     }
 
