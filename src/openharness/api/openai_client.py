@@ -22,6 +22,9 @@ from openharness.api.client import (
     ApiRetryEvent,
     ApiStreamEvent,
     ApiTextDeltaEvent,
+    ApiToolCallCompletedEvent,
+    ApiToolCallProgressEvent,
+    ApiToolCallStartedEvent,
 )
 from openharness.api.errors import (
     AuthenticationFailure,
@@ -58,6 +61,63 @@ _DISABLE_PROMPT_CACHE_ENV = "OPENHARNESS_OPENAI_DISABLE_PROMPT_CACHE"
 _PROMPT_CACHE_KEY_ENV = "OPENHARNESS_OPENAI_PROMPT_CACHE_KEY"
 _PROMPT_CACHE_RETENTION_ENV = "OPENHARNESS_OPENAI_PROMPT_CACHE_RETENTION"
 _SERVICE_TIER_ENV = "OPENHARNESS_OPENAI_SERVICE_TIER"
+
+_HOSTED_RESPONSE_ITEM_TO_TOOL = {
+    "web_search_call": "web_search",
+    "file_search_call": "file_search",
+    "image_generation_call": "image_generation",
+    "code_interpreter_call": "code_interpreter",
+    "mcp_call": "mcp_call",
+    "mcp_list_tools": "mcp_list_tools",
+}
+
+_HOSTED_RESPONSE_EVENT_TO_TOOL = {
+    "response.web_search_call.in_progress": "web_search",
+    "response.web_search_call.searching": "web_search",
+    "response.web_search_call.completed": "web_search",
+    "response.file_search_call.in_progress": "file_search",
+    "response.file_search_call.searching": "file_search",
+    "response.file_search_call.completed": "file_search",
+    "response.image_generation_call.in_progress": "image_generation",
+    "response.image_generation_call.generating": "image_generation",
+    "response.image_generation_call.partial_image": "image_generation",
+    "response.image_generation_call.completed": "image_generation",
+    "response.code_interpreter_call.in_progress": "code_interpreter",
+    "response.code_interpreter_call.interpreting": "code_interpreter",
+    "response.code_interpreter_call.completed": "code_interpreter",
+    "response.code_interpreter_call_code.delta": "code_interpreter",
+    "response.code_interpreter_call_code.done": "code_interpreter",
+    "response.mcp_call.in_progress": "mcp_call",
+    "response.mcp_call.completed": "mcp_call",
+    "response.mcp_call.failed": "mcp_call",
+    "response.mcp_call_arguments.delta": "mcp_call",
+    "response.mcp_call_arguments.done": "mcp_call",
+    "response.mcp_list_tools.in_progress": "mcp_list_tools",
+    "response.mcp_list_tools.completed": "mcp_list_tools",
+    "response.mcp_list_tools.failed": "mcp_list_tools",
+}
+
+_OBSERVED_RESPONSE_EVENTS = {
+    "response.created",
+    "response.queued",
+    "response.in_progress",
+    "response.content_part.added",
+    "response.content_part.done",
+    "response.output_text.done",
+    "response.reasoning_summary_part.added",
+    "response.reasoning_summary_part.done",
+    "response.reasoning_summary_text.delta",
+    "response.reasoning_summary_text.done",
+    "response.reasoning_text.done",
+    "response.refusal.delta",
+    "response.refusal.done",
+    "response.custom_tool_call_input.delta",
+    "response.custom_tool_call_input.done",
+    "response.audio.delta",
+    "response.audio.done",
+    "response.audio.transcript.delta",
+    "response.audio.transcript.done",
+}
 
 
 def _token_limit_param_for_model(model: str, max_tokens: int) -> dict[str, int]:
@@ -810,6 +870,202 @@ def _function_argument_for_item(item: Any, arguments_by_key: dict[str, str]) -> 
     return None
 
 
+def _short_safe_text(value: Any, limit: int = 240) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "..."
+
+
+def _safe_url(value: Any, limit: int = 500) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return text[:limit]
+
+
+def _safe_result_list(raw_items: Any, *, limit: int = 10) -> list[dict[str, str]]:
+    if not isinstance(raw_items, list):
+        return []
+    results: list[dict[str, str]] = []
+    for item in raw_items[:limit]:
+        title = _short_safe_text(_usage_attr(item, "title") or _usage_attr(item, "name"))
+        url = _safe_url(_usage_attr(item, "url") or _usage_attr(item, "uri"))
+        if title or url:
+            entry: dict[str, str] = {}
+            if title:
+                entry["title"] = title
+            if url:
+                entry["url"] = url
+            results.append(entry)
+    return results
+
+
+def _response_event_ref_metadata(event: Any, item: Any | None = None) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for key in ("item_id", "call_id", "output_index", "sequence_number", "content_index", "annotation_index"):
+        value = _response_event_attr(event, key)
+        if value is not None:
+            metadata[key] = value
+    if item is not None:
+        item_type = _response_item_attr(item, "type")
+        item_id = _response_item_attr(item, "id")
+        status = _response_item_attr(item, "status")
+        if item_type:
+            metadata["item_type"] = item_type
+        if item_id:
+            metadata["item_id"] = item_id
+        if status:
+            metadata["status"] = status
+    return metadata
+
+
+def _hosted_tool_use_id(event: Any, tool_name: str, item: Any | None = None) -> str:
+    for value in (
+        _response_event_attr(event, "item_id"),
+        _response_event_attr(event, "call_id"),
+        _response_event_attr(event, "id"),
+        _response_item_attr(item, "id") if item is not None else None,
+        _response_item_attr(item, "call_id") if item is not None else None,
+    ):
+        if value:
+            return str(value)
+    output_index = _response_event_attr(event, "output_index")
+    if output_index is not None:
+        return f"hosted_{tool_name}_{output_index}"
+    return f"hosted_{tool_name}"
+
+
+def _hosted_tool_input(event: Any, item: Any | None = None) -> dict[str, Any]:
+    action = _response_item_attr(item, "action") if item is not None else _response_event_attr(event, "action")
+    query = _usage_attr(action, "query")
+    if not query and item is not None:
+        query = _response_item_attr(item, "query")
+    if not query:
+        query = _response_event_attr(event, "query")
+    if isinstance(query, str) and query.strip():
+        return {"query": query.strip()}
+    return {}
+
+
+def _hosted_tool_metadata(event: Any, item: Any | None = None) -> dict[str, Any]:
+    metadata = _response_event_ref_metadata(event, item)
+    event_type = _response_event_type(event)
+    if event_type:
+        metadata["provider_event_type"] = event_type
+
+    annotation = _response_event_attr(event, "annotation")
+    if annotation:
+        metadata["annotation"] = {
+            "type": _usage_attr(annotation, "type") or "",
+            "title": _short_safe_text(_usage_attr(annotation, "title")),
+            "url": _safe_url(_usage_attr(annotation, "url")),
+        }
+
+    partial_image_index = _response_event_attr(event, "partial_image_index")
+    if partial_image_index is not None:
+        metadata["partial_image_index"] = partial_image_index
+    for key in ("size", "quality", "format"):
+        value = _response_event_attr(event, key)
+        if value is not None:
+            metadata[key] = value
+
+    delta = _response_event_attr(event, "delta")
+    if isinstance(delta, str) and event_type and (
+        event_type.endswith("_arguments.delta")
+        or event_type.endswith("_call_code.delta")
+        or event_type == "response.custom_tool_call_input.delta"
+    ):
+        metadata["delta_chars"] = len(delta)
+    arguments = _response_event_attr(event, "arguments")
+    if isinstance(arguments, str):
+        metadata["arguments_chars"] = len(arguments)
+    code = _response_event_attr(event, "code")
+    if isinstance(code, str):
+        metadata["code_chars"] = len(code)
+
+    raw_results = _response_item_attr(item, "results") if item is not None else _response_event_attr(event, "results")
+    safe_results = _safe_result_list(raw_results)
+    if raw_results is not None:
+        metadata["result_count"] = len(raw_results) if isinstance(raw_results, list) else 0
+    if safe_results:
+        metadata["results"] = safe_results
+
+    action = _response_item_attr(item, "action") if item is not None else _response_event_attr(event, "action")
+    sources = _usage_attr(action, "sources")
+    safe_sources = _safe_result_list(sources)
+    if sources is not None:
+        metadata["source_count"] = len(sources) if isinstance(sources, list) else 0
+    if safe_sources:
+        metadata["sources"] = safe_sources
+
+    return {key: value for key, value in metadata.items() if value not in (None, "", {})}
+
+
+def _hosted_tool_progress_message(tool_name: str, event_type: str) -> str:
+    if tool_name == "web_search":
+        if event_type.endswith(".searching"):
+            return "正在搜索网页..."
+        if event_type.endswith(".completed"):
+            return "网页搜索完成"
+        return "正在准备网页搜索..."
+    if tool_name == "file_search":
+        if event_type.endswith(".searching"):
+            return "正在搜索文件..."
+        if event_type.endswith(".completed"):
+            return "文件搜索完成"
+        return "正在准备文件搜索..."
+    if tool_name == "image_generation":
+        if event_type.endswith(".partial_image"):
+            return "图片生成已有部分结果..."
+        if event_type.endswith(".generating"):
+            return "正在生成图片..."
+        if event_type.endswith(".completed"):
+            return "图片生成完成"
+        return "正在准备图片生成..."
+    if tool_name == "code_interpreter":
+        if event_type.endswith("_call_code.delta") or event_type.endswith("_call_code.done"):
+            return "代码解释器正在接收代码..."
+        if event_type.endswith(".interpreting"):
+            return "代码解释器正在运行..."
+        if event_type.endswith(".completed"):
+            return "代码解释器执行完成"
+        return "正在启动代码解释器..."
+    if tool_name == "mcp_list_tools":
+        if event_type.endswith(".completed"):
+            return "MCP 工具列表加载完成"
+        if event_type.endswith(".failed"):
+            return "MCP 工具列表加载失败"
+        return "正在加载 MCP 工具列表..."
+    if tool_name == "mcp_call":
+        if event_type.endswith(".completed"):
+            return "MCP 工具执行完成"
+        if event_type.endswith(".failed"):
+            return "MCP 工具执行失败"
+        if "_arguments." in event_type:
+            return "正在接收 MCP 工具参数..."
+        return "正在执行 MCP 工具..."
+    return f"正在执行 {tool_name}..."
+
+
+def _log_unhandled_response_event(
+    request_id: str,
+    event_type: str | None,
+    event: Any,
+    counts: dict[str, int],
+) -> None:
+    normalized = event_type or "<missing>"
+    counts[normalized] = counts.get(normalized, 0) + 1
+    if counts[normalized] > 3:
+        return
+    log.info(
+        "[OpenAICompat:%s] observed unhandled responses event type=%s refs=%s",
+        request_id,
+        normalized,
+        _response_event_ref_metadata(event),
+    )
+
+
 def _normalize_openai_base_url(base_url: str | None) -> str | None:
     """Normalize custom OpenAI-compatible base URLs without dropping API path segments."""
     if not base_url:
@@ -1104,6 +1360,10 @@ class OpenAICompatibleClient:
 
         request_started_at = asyncio.get_event_loop().time()
         response_protocol = "responses"
+        hosted_tool_started: set[str] = set()
+        hosted_tool_completed: set[str] = set()
+        hosted_tool_events_seen = False
+        unhandled_response_event_counts: dict[str, int] = {}
         try:
             response_protocol, response_stream = await _create_response_or_chat(params, chat_params)
             stream_opened_at = asyncio.get_event_loop().time()
@@ -1223,6 +1483,24 @@ class OpenAICompatibleClient:
                         yield ApiReasoningDeltaEvent(text=reasoning_piece)
                     continue
 
+                if event_type == "response.output_item.added":
+                    item = _response_event_attr(event, "item")
+                    item_type = _response_item_attr(item, "type")
+                    tool_name = _HOSTED_RESPONSE_ITEM_TO_TOOL.get(str(item_type or ""))
+                    if tool_name:
+                        hosted_tool_events_seen = True
+                        tool_use_id = _hosted_tool_use_id(event, tool_name, item)
+                        if tool_use_id not in hosted_tool_started:
+                            hosted_tool_started.add(tool_use_id)
+                            yield ApiToolCallStartedEvent(
+                                tool_name=tool_name,
+                                tool_use_id=tool_use_id,
+                                tool_input=_hosted_tool_input(event, item),
+                                message=_hosted_tool_progress_message(tool_name, event_type),
+                                metadata=_hosted_tool_metadata(event, item),
+                            )
+                    continue
+
                 if event_type == "response.output_item.done":
                     item = _response_event_attr(event, "item")
                     if not item:
@@ -1232,6 +1510,40 @@ class OpenAICompatibleClient:
                         text = _text_from_response_message_item(item)
                         if text and not collected_content:
                             collected_content = text
+                    elif str(item_type or "") in _HOSTED_RESPONSE_ITEM_TO_TOOL:
+                        tool_name = _HOSTED_RESPONSE_ITEM_TO_TOOL[str(item_type)]
+                        hosted_tool_events_seen = True
+                        tool_use_id = _hosted_tool_use_id(event, tool_name, item)
+                        metadata = _hosted_tool_metadata(event, item)
+                        if tool_use_id not in hosted_tool_started:
+                            hosted_tool_started.add(tool_use_id)
+                            yield ApiToolCallStartedEvent(
+                                tool_name=tool_name,
+                                tool_use_id=tool_use_id,
+                                tool_input=_hosted_tool_input(event, item),
+                                message=_hosted_tool_progress_message(tool_name, event_type),
+                                metadata=metadata,
+                            )
+                        if tool_use_id not in hosted_tool_completed:
+                            hosted_tool_completed.add(tool_use_id)
+                            status = "error" if str(_response_item_attr(item, "status") or "").lower() == "failed" else "success"
+                            yield ApiToolCallCompletedEvent(
+                                tool_name=tool_name,
+                                tool_use_id=tool_use_id,
+                                tool_input=_hosted_tool_input(event, item),
+                                status=status,
+                                message=_hosted_tool_progress_message(tool_name, f"response.{item_type}.completed"),
+                                metadata=metadata,
+                            )
+                        elif metadata:
+                            yield ApiToolCallProgressEvent(
+                                tool_name=tool_name,
+                                tool_use_id=tool_use_id,
+                                tool_input=_hosted_tool_input(event, item),
+                                status="info",
+                                message=_hosted_tool_progress_message(tool_name, f"response.{item_type}.completed"),
+                                metadata=metadata,
+                            )
                     else:
                         output_index = _response_event_attr(event, "output_index")
                         if output_index is not None and isinstance(item, dict):
@@ -1269,6 +1581,55 @@ class OpenAICompatibleClient:
                             function_call_arguments[key] = arguments
                     continue
 
+                if event_type in _HOSTED_RESPONSE_EVENT_TO_TOOL:
+                    tool_name = _HOSTED_RESPONSE_EVENT_TO_TOOL[event_type]
+                    hosted_tool_events_seen = True
+                    tool_use_id = _hosted_tool_use_id(event, tool_name)
+                    metadata = _hosted_tool_metadata(event)
+                    if tool_use_id not in hosted_tool_started:
+                        hosted_tool_started.add(tool_use_id)
+                        yield ApiToolCallStartedEvent(
+                            tool_name=tool_name,
+                            tool_use_id=tool_use_id,
+                            tool_input=_hosted_tool_input(event),
+                            message=_hosted_tool_progress_message(tool_name, event_type),
+                            metadata=metadata,
+                        )
+                        if event_type.endswith(".in_progress"):
+                            continue
+                    if event_type.endswith(".completed") or event_type.endswith(".failed"):
+                        if tool_use_id not in hosted_tool_completed:
+                            hosted_tool_completed.add(tool_use_id)
+                            yield ApiToolCallCompletedEvent(
+                                tool_name=tool_name,
+                                tool_use_id=tool_use_id,
+                                tool_input=_hosted_tool_input(event),
+                                status="error" if event_type.endswith(".failed") else "success",
+                                message=_hosted_tool_progress_message(tool_name, event_type),
+                                metadata=metadata,
+                            )
+                    else:
+                        yield ApiToolCallProgressEvent(
+                            tool_name=tool_name,
+                            tool_use_id=tool_use_id,
+                            tool_input=_hosted_tool_input(event),
+                            status="info" if event_type.endswith(".partial_image") else "running",
+                            message=_hosted_tool_progress_message(tool_name, event_type),
+                            metadata=metadata,
+                        )
+                    continue
+
+                if event_type == "response.output_text.annotation.added":
+                    hosted_tool_events_seen = True
+                    yield ApiToolCallProgressEvent(
+                        tool_name="web_search",
+                        tool_use_id=str(_response_event_attr(event, "item_id") or "web_search_annotations"),
+                        status="info",
+                        message="发现引用来源",
+                        metadata=_hosted_tool_metadata(event),
+                    )
+                    continue
+
                 if event_type == "response.completed":
                     response_payload = _response_event_attr(event, "response", {})
                     if response_payload:
@@ -1294,6 +1655,8 @@ class OpenAICompatibleClient:
                 if event_usage:
                     usage = _usage_snapshot_from_openai_usage(event_usage)
                 if not choices:
+                    if event_type in _OBSERVED_RESPONSE_EVENTS or (event_type and str(event_type).startswith("response.")):
+                        _log_unhandled_response_event(request_id, event_type, event, unhandled_response_event_counts)
                     continue
                 choice = choices[0]
                 chunk_finish = _usage_attr(choice, "finish_reason")
@@ -1374,6 +1737,7 @@ class OpenAICompatibleClient:
             and not collected_reasoning
             and not function_call_items
             and not chat_tool_calls
+            and not hosted_tool_events_seen
             and finish_reason is None
         ):
             log.warning(
@@ -1438,11 +1802,13 @@ class OpenAICompatibleClient:
 
         log.info(
             "[OpenAICompat:%s] responses complete content_chars=%d reasoning_chars=%d tools=%d "
-            "finish_reason=%s usage=%s",
+            "hosted_tool_events=%s unhandled_event_types=%s finish_reason=%s usage=%s",
             request_id,
             len(collected_content),
             len(collected_reasoning),
             len(collected_tool_calls),
+            hosted_tool_events_seen,
+            sorted(unhandled_response_event_counts),
             finish_reason,
             usage.model_dump(),
         )

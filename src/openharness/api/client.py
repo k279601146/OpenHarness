@@ -87,7 +87,51 @@ class ApiRetryEvent:
     delay_seconds: float
 
 
-ApiStreamEvent = ApiTextDeltaEvent | ApiReasoningDeltaEvent | ApiMessageCompleteEvent | ApiRetryEvent
+@dataclass(frozen=True)
+class ApiToolCallStartedEvent:
+    """A provider-hosted tool call has started."""
+
+    tool_name: str
+    tool_use_id: str | None = None
+    tool_input: dict[str, Any] = field(default_factory=dict)
+    status: str = "running"
+    message: str = ""
+    metadata: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ApiToolCallProgressEvent:
+    """Progress from a provider-hosted tool call."""
+
+    tool_name: str
+    tool_use_id: str | None = None
+    tool_input: dict[str, Any] = field(default_factory=dict)
+    status: str = "running"
+    message: str = ""
+    metadata: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ApiToolCallCompletedEvent:
+    """A provider-hosted tool call has completed."""
+
+    tool_name: str
+    tool_use_id: str | None = None
+    tool_input: dict[str, Any] = field(default_factory=dict)
+    status: str = "success"
+    message: str = ""
+    metadata: dict[str, Any] | None = None
+
+
+ApiStreamEvent = (
+    ApiTextDeltaEvent
+    | ApiReasoningDeltaEvent
+    | ApiMessageCompleteEvent
+    | ApiRetryEvent
+    | ApiToolCallStartedEvent
+    | ApiToolCallProgressEvent
+    | ApiToolCallCompletedEvent
+)
 
 
 class SupportsStreamingMessages(Protocol):

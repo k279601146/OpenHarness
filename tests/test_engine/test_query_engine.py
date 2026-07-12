@@ -8,7 +8,14 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
-from openharness.api.client import ApiMessageCompleteEvent, ApiRetryEvent, ApiTextDeltaEvent
+from openharness.api.client import (
+    ApiMessageCompleteEvent,
+    ApiRetryEvent,
+    ApiTextDeltaEvent,
+    ApiToolCallCompletedEvent,
+    ApiToolCallProgressEvent,
+    ApiToolCallStartedEvent,
+)
 from openharness.api.errors import RequestFailure
 from openharness.api.usage import UsageSnapshot
 from openharness.config.settings import PermissionSettings, Settings
@@ -16,6 +23,7 @@ from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlo
 from openharness.engine.query_engine import QueryEngine
 from openharness.prompts.context import build_runtime_system_prompt
 from openharness.engine.stream_events import (
+    AgentProgressEvent,
     AssistantTextDelta,
     AssistantTurnComplete,
     CompactProgressEvent,
@@ -90,6 +98,35 @@ class RetryThenSuccessApiClient:
         yield ApiRetryEvent(message="rate limited", attempt=1, max_attempts=4, delay_seconds=1.5)
         yield ApiMessageCompleteEvent(
             message=ConversationMessage(role="assistant", content=[TextBlock(text="after retry")]),
+            usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            stop_reason=None,
+        )
+
+
+class HostedToolThenSuccessApiClient:
+    async def stream_message(self, request):
+        del request
+        yield ApiToolCallStartedEvent(
+            tool_name="web_search",
+            tool_use_id="ws_1",
+            tool_input={"query": "today AI news"},
+            message="正在准备网页搜索...",
+            metadata={"provider_event_type": "response.web_search_call.in_progress"},
+        )
+        yield ApiToolCallProgressEvent(
+            tool_name="web_search",
+            tool_use_id="ws_1",
+            message="正在搜索网页...",
+            metadata={"provider_event_type": "response.web_search_call.searching"},
+        )
+        yield ApiToolCallCompletedEvent(
+            tool_name="web_search",
+            tool_use_id="ws_1",
+            message="网页搜索完成",
+            metadata={"result_count": 2},
+        )
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text="done")]),
             usage=UsageSnapshot(input_tokens=1, output_tokens=1),
             stop_reason=None,
         )
@@ -243,12 +280,40 @@ async def test_query_engine_plain_text_reply(tmp_path: Path, monkeypatch):
 
     events = [event async for event in engine.submit_message("hello")]
 
-    assert isinstance(events[0], AssistantTextDelta)
-    assert events[0].text == "Hello from the model."
+    text_event = next(event for event in events if isinstance(event, AssistantTextDelta))
+    assert text_event.text == "Hello from the model."
     assert isinstance(events[-1], AssistantTurnComplete)
     assert engine.total_usage.input_tokens == 10
     assert engine.total_usage.output_tokens == 5
     assert len(engine.messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_query_engine_maps_provider_hosted_tool_events(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    engine = QueryEngine(
+        api_client=HostedToolThenSuccessApiClient(),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="gpt-5.5",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("search")]
+
+    started = next(event for event in events if isinstance(event, ToolExecutionStarted) and event.tool_name == "web_search")
+    progress = [event for event in events if isinstance(event, AgentProgressEvent) and event.tool_name == "web_search"]
+    completed = next(event for event in events if isinstance(event, ToolExecutionCompleted) and event.tool_name == "web_search")
+
+    assert started.tool_use_id == "ws_1"
+    assert started.tool_input == {"query": "today AI news"}
+    assert any(event.message == "正在搜索网页..." for event in progress)
+    assert completed.tool_use_id == "ws_1"
+    assert completed.output == "网页搜索完成"
+    assert completed.metadata == {"result_count": 2}
+    assert isinstance(events[-1], AssistantTurnComplete)
+    assert events[-1].message.text == "done"
 
 
 @pytest.mark.asyncio

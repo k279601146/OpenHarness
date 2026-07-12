@@ -10,7 +10,13 @@ import pytest
 from openai import APITimeoutError
 
 import openharness.api.openai_client as openai_client_module
-from openharness.api.client import ApiMessageRequest, ApiRetryEvent
+from openharness.api.client import (
+    ApiMessageRequest,
+    ApiRetryEvent,
+    ApiToolCallCompletedEvent,
+    ApiToolCallProgressEvent,
+    ApiToolCallStartedEvent,
+)
 from openharness.api.openai_client import (
     OpenAICompatibleClient,
     _convert_assistant_message,
@@ -951,6 +957,129 @@ class TestStreamMessageTokenParams:
         assert fake_sdk.responses.calls[0]["tools"][0] == {"type": "web_search"}
         assert all(tool.get("type") != "web_search" for tool in fake_sdk.responses.calls[1]["tools"])
         assert fake_sdk.responses.calls[1]["tools"][0]["name"] == "web_search"
+
+    @pytest.mark.asyncio
+    async def test_stream_translates_hosted_web_search_events(self):
+        client = OpenAICompatibleClient(api_key="test-key", base_url="http://localhost:3000/v1")
+        fake_sdk = _FakeOpenAIClient([
+            {
+                "type": "response.output_item.added",
+                "output_index": 0,
+                "item": {
+                    "id": "ws_1",
+                    "type": "web_search_call",
+                    "status": "in_progress",
+                    "action": {"query": "today AI news"},
+                },
+            },
+            {"type": "response.web_search_call.searching", "item_id": "ws_1"},
+            {
+                "type": "response.web_search_call.completed",
+                "item_id": "ws_1",
+                "results": [
+                    {"title": "AI News", "url": "https://example.com/news", "snippet": "not persisted"},
+                    {"title": "OpenAI", "url": "https://example.com/openai"},
+                ],
+            },
+            {
+                "type": "response.completed",
+                "response": {"status": "completed", "usage": {"input_tokens": 5, "output_tokens": 3}},
+            },
+        ])
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="gpt-5.5",
+            messages=[ConversationMessage.from_user_text("Search")],
+            tools=[{"name": "web_search", "description": "Search", "input_schema": {"type": "object"}}],
+        )
+
+        events = [event async for event in client.stream_message(request)]
+
+        starts = [event for event in events if isinstance(event, ApiToolCallStartedEvent)]
+        progresses = [event for event in events if isinstance(event, ApiToolCallProgressEvent)]
+        completes = [event for event in events if isinstance(event, ApiToolCallCompletedEvent)]
+
+        assert len(starts) == 1
+        assert starts[0].tool_name == "web_search"
+        assert starts[0].tool_use_id == "ws_1"
+        assert starts[0].tool_input == {"query": "today AI news"}
+        assert any(event.message == "正在搜索网页..." for event in progresses)
+        assert len(completes) == 1
+        assert completes[0].tool_name == "web_search"
+        assert completes[0].status == "success"
+        assert completes[0].metadata["result_count"] == 2
+        assert completes[0].metadata["results"] == [
+            {"title": "AI News", "url": "https://example.com/news"},
+            {"title": "OpenAI", "url": "https://example.com/openai"},
+        ]
+        assert "snippet" not in json.dumps(completes[0].metadata)
+        assert events[-1].message.tool_uses == []
+
+    @pytest.mark.asyncio
+    async def test_stream_translates_hosted_non_function_tools_without_local_tool_calls(self):
+        client = OpenAICompatibleClient(api_key="test-key", base_url="http://localhost:3000/v1")
+        fake_sdk = _FakeOpenAIClient([
+            {"type": "response.file_search_call.searching", "item_id": "fs_1"},
+            {
+                "type": "response.output_item.done",
+                "item": {"id": "fs_1", "type": "file_search_call", "status": "completed"},
+            },
+            {"type": "response.code_interpreter_call.in_progress", "item_id": "ci_1"},
+            {"type": "response.code_interpreter_call.interpreting", "item_id": "ci_1"},
+            {"type": "response.mcp_call.in_progress", "item_id": "mcp_1"},
+            {"type": "response.mcp_call.failed", "item_id": "mcp_1"},
+            {
+                "type": "response.completed",
+                "response": {"status": "completed", "usage": {"input_tokens": 5, "output_tokens": 3}},
+            },
+        ])
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="gpt-5.5",
+            messages=[ConversationMessage.from_user_text("Use hosted tools")],
+        )
+
+        events = [event async for event in client.stream_message(request)]
+
+        starts = [event for event in events if isinstance(event, ApiToolCallStartedEvent)]
+        completes = [event for event in events if isinstance(event, ApiToolCallCompletedEvent)]
+
+        assert {event.tool_name for event in starts} == {"file_search", "code_interpreter", "mcp_call"}
+        assert any(event.tool_name == "file_search" and event.status == "success" for event in completes)
+        assert any(event.tool_name == "mcp_call" and event.status == "error" for event in completes)
+        assert events[-1].message.tool_uses == []
+
+    @pytest.mark.asyncio
+    async def test_stream_observes_unknown_response_events_without_payload_leak(self, caplog):
+        client = OpenAICompatibleClient(api_key="test-key", base_url="http://localhost:3000/v1")
+        fake_sdk = _FakeOpenAIClient([
+            {
+                "type": "response.future_tool.secret",
+                "item_id": "future_1",
+                "output_index": 7,
+                "secret_payload": "do-not-log-this",
+            },
+            {
+                "type": "response.completed",
+                "response": {"status": "completed", "usage": {"input_tokens": 5, "output_tokens": 3}},
+            },
+        ])
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="gpt-5.5",
+            messages=[ConversationMessage.from_user_text("Unknown event")],
+        )
+
+        with caplog.at_level("INFO"):
+            events = [event async for event in client.stream_message(request)]
+
+        assert events[-1].message.tool_uses == []
+        assert "response.future_tool.secret" in caplog.text
+        assert "future_1" in caplog.text
+        assert "do-not-log-this" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_responses_endpoint_unsupported_falls_back_to_chat_stream(self):

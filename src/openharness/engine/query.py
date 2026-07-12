@@ -18,6 +18,9 @@ from openharness.api.client import (
     ApiMessageRequest,
     ApiRetryEvent,
     ApiTextDeltaEvent,
+    ApiToolCallCompletedEvent,
+    ApiToolCallProgressEvent,
+    ApiToolCallStartedEvent,
     SupportsStreamingMessages,
 )
 from openharness.api.provider import is_model_multimodal
@@ -847,6 +850,52 @@ async def run_query(
                             max_attempts=event.max_attempts,
                             delay_seconds=event.delay_seconds,
                             detail=event.message,
+                        ), None
+                        continue
+
+                    if isinstance(event, ApiToolCallStartedEvent):
+                        yield ToolExecutionStarted(
+                            tool_name=event.tool_name,
+                            tool_input=event.tool_input,
+                            tool_use_id=event.tool_use_id,
+                        ), None
+                        yield _progress_event(
+                            "hosted_tool_start",
+                            event.message or f"正在执行托管工具 {event.tool_name}...",
+                            status=event.status,
+                            tool_name=event.tool_name,
+                            tool_use_id=event.tool_use_id,
+                            metadata=event.metadata,
+                        ), None
+                        continue
+
+                    if isinstance(event, ApiToolCallProgressEvent):
+                        yield _progress_event(
+                            "hosted_tool_progress",
+                            event.message or f"托管工具 {event.tool_name} 正在执行...",
+                            status=event.status,
+                            tool_name=event.tool_name,
+                            tool_use_id=event.tool_use_id,
+                            metadata=event.metadata,
+                        ), None
+                        continue
+
+                    if isinstance(event, ApiToolCallCompletedEvent):
+                        is_error = event.status == "error"
+                        yield ToolExecutionCompleted(
+                            tool_name=event.tool_name,
+                            output=event.message or f"Hosted tool {event.tool_name} completed.",
+                            is_error=is_error,
+                            metadata=event.metadata,
+                            tool_use_id=event.tool_use_id,
+                        ), None
+                        yield _progress_event(
+                            "hosted_tool_complete",
+                            event.message or f"托管工具 {event.tool_name} 执行{'失败' if is_error else '完成'}",
+                            status="error" if is_error else "success",
+                            tool_name=event.tool_name,
+                            tool_use_id=event.tool_use_id,
+                            metadata=event.metadata,
                         ), None
                         continue
 
