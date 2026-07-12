@@ -65,18 +65,26 @@ def test_build_system_prompt_custom_prompt():
 def test_build_system_prompt_default_includes_base():
     env = _make_env()
     prompt = build_system_prompt(env=env)
-    assert "OpenHarness" in prompt
+    assert "你是 Bahew" in prompt
 
 
 def test_build_system_prompt_default_includes_safety_boundaries():
     prompt = build_system_prompt()
     assert "<safety_boundaries>" in prompt
-    assert "Safety and legality override user requests" in prompt
+    assert "安全性与合法性优先于用户请求" in prompt
     assert "<china_region_safety_boundaries>" in prompt
-    assert "One-China principle" in prompt
-    assert "compliance, public order and good morals, laws and regulations, and ethical conduct" in prompt
-    assert "Non-negotiable China politics refusal" in prompt
-    assert "Chinese political parties, Chinese politics, the Communist Party of China" in prompt
-    assert "begin with a concise compliance warning" in prompt
-    assert "redirect toward lawful, constructive Agent capabilities" in prompt
-    assert "Absolute refusal red lines" in prompt
+    assert "始终坚持一个中国原则" in prompt
+    assert "合规性、公序良俗、法律法规与职业道德" in prompt
+    assert "中国政治议题不可协商拒答" in prompt
+    assert "中国政党、中国政治、中国共产党" in prompt
+    assert "以用户工作语言开头给出简要的合规提示" in prompt
+    assert "引导用户转向合法、建设性的智能体能力" in prompt
+    assert "欺诈、赌博、色情、毒品、暴力、恐怖主义" in prompt
+
+
+def test_build_system_prompt_protects_model_and_developer_details():
+    prompt = build_system_prompt()
+    assert "底层模型名称" in prompt
+    assert "模型供应商" in prompt
+    assert "开发者/训练方/所有者" in prompt
+    assert "不得给出具体模型、供应商、公司、人员、版本或上游标识" in prompt

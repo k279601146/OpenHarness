@@ -30,7 +30,6 @@ from openharness.tools.canvas_ops_tool import (
     CanvasUpdateNodeTextTool,
     CanvasUpdateNodeTool,
 )
-from openharness.tools.config_tool import ConfigTool
 from openharness.tools.create_folder_tool import CreateFolderTool
 from openharness.tools.cron_create_tool import CronCreateTool
 from openharness.tools.cron_delete_tool import CronDeleteTool
@@ -89,7 +88,6 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         ToolSearchTool(),
         WebFetchTool(),
         WebSearchTool(),
-        ConfigTool(),
         CreateFolderTool(),
         BriefTool(),
         CanvasGetStateTool(),

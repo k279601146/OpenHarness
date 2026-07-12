@@ -23,6 +23,7 @@ Use this skill to decide whether a response should include an inline visual mess
 ## Reference Routing
 
 - Read `references/output-contract.md` before emitting any inline visual artifact.
+- Read `references/design.md` before creating HTML or SVG visuals, especially UI wireframes, cards, component breakdowns, architecture diagrams, and custom charts.
 - Read `references/mermaid-diagram.md` for Mermaid flowcharts, sequence diagrams, decision trees, and ER diagrams.
 - Read `references/svg-diagram.md` for hand-authored SVG diagrams or charts.
 - Read `references/html-widget.md` for UI wireframes, visual cards, component layouts, and non-interactive HTML visuals.

@@ -14,7 +14,6 @@ from openharness.tools.brief_tool import BriefTool, BriefToolInput
 from openharness.tools.cron_create_tool import CronCreateTool, CronCreateToolInput
 from openharness.tools.cron_delete_tool import CronDeleteTool, CronDeleteToolInput
 from openharness.tools.cron_list_tool import CronListTool, CronListToolInput
-from openharness.tools.config_tool import ConfigTool, ConfigToolInput
 from openharness.tools.enter_worktree_tool import EnterWorktreeTool, EnterWorktreeToolInput
 from openharness.tools.exit_worktree_tool import ExitWorktreeTool, ExitWorktreeToolInput
 from openharness.tools.file_edit_tool import FileEditTool, FileEditToolInput
@@ -191,6 +190,8 @@ async def test_tool_search_and_brief_tools(tmp_path: Path):
         context,
     )
     assert "read_file" in search_result.output
+    assert registry.get("config") is None
+    assert "config" not in {tool.name for tool in registry.list_tools()}
 
     brief_result = await BriefTool().execute(
         BriefToolInput(text="abcdefghijklmnopqrstuvwxyz", max_chars=20),
@@ -200,7 +201,7 @@ async def test_tool_search_and_brief_tools(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
+async def test_skill_and_todo_tools(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     skills_dir = tmp_path / "config" / "skills"
     skills_dir.mkdir(parents=True)
@@ -220,12 +221,6 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
     )
     assert todo_result.is_error is False
     assert "wire commands" in (tmp_path / "TODO.md").read_text(encoding="utf-8")
-
-    config_result = await ConfigTool().execute(
-        ConfigToolInput(action="set", key="theme", value="solarized"),
-        ToolExecutionContext(cwd=tmp_path),
-    )
-    assert config_result.output == "Updated theme"
 
 
 @pytest.mark.asyncio
