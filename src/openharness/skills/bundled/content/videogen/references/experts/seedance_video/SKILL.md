@@ -12,9 +12,9 @@ metadata:
 
 Seedance 2.0 operating loop for agent-directed video work. Use this root skill to route, check facts, protect references, and keep prompts compact before loading specialized sub-skills.
 
-## OpenHarness Runtime
+## Bahew Runtime
 
-In OpenHarness SaaS, this remains the Seedance expert sub-skill for planning, prompt craft, references, continuity, troubleshooting, and source-gated Seedance guidance. Real video generation must call the unified `videogen_cli` tool with a Seedance model id. Do not call legacy video tools such as `gen_creative_video`, `animate_first_frame`, `video_interpolation`, or `video_with_reference`.
+In Bahew, this remains the Seedance expert sub-skill for planning, prompt craft, references, continuity, troubleshooting, and source-gated Seedance guidance. Real video generation must call the unified `videogen_cli` tool with a Seedance model id. Do not call legacy video tools such as `gen_creative_video`, `animate_first_frame`, `video_interpolation`, or `video_with_reference`.
 
 ## Soul
 

@@ -1,6 +1,6 @@
 # Videogen Provider Capability Matrix
 
-`videogen_cli` is the single OpenHarness video tool. Model ids are routed by `scripts/videogen_runtime/registry.py`.
+`videogen_cli` is the single Bahew video tool. Model ids are routed by `scripts/videogen_runtime/registry.py`.
 
 | Model family | Provider | Model ids and aliases | Generate | Image-to-video | First/last frame | References | Audio | Billing scheme |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

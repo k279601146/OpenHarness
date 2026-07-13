@@ -2,7 +2,7 @@
 
 ## Mode Selection
 
-| User goal | Mode | OpenHarness command |
+| User goal | Mode | Bahew command |
 |---|---|---|
 | New scene from text | Text-to-video | `generate` |
 | Animate a starting image | Image-to-video | `image-to-video` |

@@ -18,4 +18,4 @@ Runtime behavior:
 - Some model tiers expose different resolution, duration, audio, and latency limits. Do not assume one Veo model's limits apply to another.
 - Google surfaces may expose different GA/preview endpoint ids. Verify current docs before changing `api_model` values.
 
-Billing should follow Google official pricing dimensions: model tier, resolution, duration seconds, and provider usage when returned. The local fallback in `registry.py` stores per-second USD prices by resolution for Veo Standard/Fast/Lite style ids and converts them to OpenHarness billing units with `BILLING_CREDITS_PER_USD`; update those values whenever Google's pricing page changes.
+Billing should follow Google official pricing dimensions: model tier, resolution, duration seconds, and provider usage when returned. The local fallback in `registry.py` stores per-second USD prices by resolution for Veo Standard/Fast/Lite style ids and converts them to Bahew billing units with `BILLING_CREDITS_PER_USD`; update those values whenever Google's pricing page changes.

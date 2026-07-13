@@ -28,7 +28,7 @@ Seedream 使用 provider 原生字段，不新增跨 provider 的伪枚举：
 - `sequential_image_generation_options`
 - 参考图/图生图时使用 `image`
 
-OpenHarness runtime 当前使用：
+Bahew runtime 当前使用：
 
 - `size`: 明确像素尺寸或上游接受的尺寸表达
 - `stream=true`

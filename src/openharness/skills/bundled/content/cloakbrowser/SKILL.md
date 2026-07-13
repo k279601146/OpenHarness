@@ -34,7 +34,7 @@ The script prints JSON with `profile_dir`, `fingerprint_seed`, `cache_dir`, `mod
 - Proxy location, timezone, or locale matters: pass proxy credentials only at runtime and set `geoip=True`.
 - Need anti-bot diagnostics: run a fingerprint/stealth/score check and save screenshots or text output for the user.
 
-For complete OpenHarness-safe examples adapted from the official CloakBrowser examples, read `references/examples.md`.
+For complete Bahew-safe examples adapted from the official CloakBrowser examples, read `references/examples.md`.
 
 ## Python Pattern
 

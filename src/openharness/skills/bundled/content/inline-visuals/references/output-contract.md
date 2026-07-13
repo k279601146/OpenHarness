@@ -1,6 +1,6 @@
 # Inline Visual Output Contract
 
-Emit inline visuals as an OpenHarness artifact payload when an artifact/event channel is available. If only normal assistant text is available, emit the fallback fenced `visual_message` JSON block.
+Emit inline visuals as a Bahew artifact payload when an artifact/event channel is available. If only normal assistant text is available, emit the fallback fenced `visual_message` JSON block.
 
 Required fields:
 

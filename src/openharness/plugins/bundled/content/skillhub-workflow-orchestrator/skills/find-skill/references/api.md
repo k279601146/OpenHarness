@@ -59,7 +59,7 @@ curl -s "https://api.skillhub.cn/api/v1/subcategories?parent=<一级key>"
 
 ## 安装边界
 
-在 OpenHarness SaaS 中不得使用 SkillHub CLI、不得执行 `curl | bash`、不得写入开发机全局目录。安装必须由 `workflow-composer` 走平台工具链：
+在 Bahew 中不得使用 SkillHub CLI、不得执行 `curl | bash`、不得写入开发机全局目录。安装必须由 `workflow-composer` 走平台工具链：
 
 1. `skillhub_prepare_install` 生成安装摘要和 `confirmation_id`。
 2. `ask_user_question` 向用户确认安装。

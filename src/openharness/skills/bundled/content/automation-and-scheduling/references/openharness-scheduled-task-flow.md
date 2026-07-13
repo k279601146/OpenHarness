@@ -1,6 +1,6 @@
-# OpenHarness Scheduled Task Flow
+# Bahew Scheduled Task Flow
 
-OpenHarness SaaS stores recurring AI automations in database tables instead of external Manus schedules.
+Bahew stores recurring AI automations in database tables instead of external Manus schedules.
 
 Core flow:
 

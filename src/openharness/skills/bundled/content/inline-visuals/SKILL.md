@@ -1,11 +1,11 @@
 ---
 name: inline-visuals
-description: Create safe inline visual messages for OpenHarness chat responses. Use this skill whenever the user asks for visual or interactive content in the conversation, including diagrams, charts, UI wireframes, component breakdowns, architecture maps, flowcharts, sequence diagrams, ER diagrams, compact visual cards, simulators, or any answer that would be clearer as a structured HTML, SVG, or Mermaid visualization instead of plain text. Prefer this skill for chat-embedded visuals; do not use it for raster image generation, PPT decks, PDF/PNG art objects, or full application pages unless the user explicitly asks for an inline visual preview.
+description: Create safe inline visual messages for Bahew chat responses. Use this skill whenever the user asks for visual or interactive content in the conversation, including diagrams, charts, UI wireframes, component breakdowns, architecture maps, flowcharts, sequence diagrams, ER diagrams, compact visual cards, simulators, or any answer that would be clearer as a structured HTML, SVG, or Mermaid visualization instead of plain text. Prefer this skill for chat-embedded visuals; do not use it for raster image generation, PPT decks, PDF/PNG art objects, or full application pages unless the user explicitly asks for an inline visual preview.
 ---
 
 # Inline Visuals
 
-Use this skill to decide whether a response should include an inline visual message and to emit the OpenHarness `show_widget` / `visual_message` artifact protocol.
+Use this skill to decide whether a response should include an inline visual message and to emit the Bahew `show_widget` / `visual_message` artifact protocol.
 
 ## Decision Flow
 

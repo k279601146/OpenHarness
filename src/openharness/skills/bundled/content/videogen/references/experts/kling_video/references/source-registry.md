@@ -19,4 +19,4 @@ Use these sources before changing runtime behavior, pricing, model ids, or capab
 
 ## Local Runtime Notes
 
-OpenHarness model aliases are resolved in `scripts/videogen_runtime/registry.py`. The expert reference should guide prompt craft and source checks; changing endpoint ids, billing, or adapter payloads belongs in runtime code and tests.
+Bahew model aliases are resolved in `scripts/videogen_runtime/registry.py`. The expert reference should guide prompt craft and source checks; changing endpoint ids, billing, or adapter payloads belongs in runtime code and tests.

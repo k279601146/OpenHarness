@@ -1,6 +1,6 @@
 ---
 name: kling-video
-description: "Use this embedded expert reference when planning, prompting, improving, or troubleshooting Kling / Keling video generation through OpenHarness videogen, including Kling 3.0, Kling 3.0 Omni, Kling 2.6, text-to-video, image-to-video, start/end frames, element references, multi-shot narratives, native audio, multilingual dialogue, product/action motion, model-id caveats, and API/source-status checks. Not for Seedance, Veo/video3, Sora, Runway Gen, or image-only prompting."
+description: "Use this embedded expert reference when planning, prompting, improving, or troubleshooting Kling / Keling video generation through Bahew videogen, including Kling 3.0, Kling 3.0 Omni, Kling 2.6, text-to-video, image-to-video, start/end frames, element references, multi-shot narratives, native audio, multilingual dialogue, product/action motion, model-id caveats, and API/source-status checks. Not for Seedance, Veo/video3, Sora, Runway Gen, or image-only prompting."
 license: MIT
 user-invocable: true
 tags: [kling, keling, video-generation]
@@ -10,11 +10,11 @@ metadata:
 
 # kling-video
 
-Kling/Keling operating guide for OpenHarness video work. Use this root reference to route facts, plan around Kling motion and multi-shot strengths, and keep generation requests compatible with the unified `videogen_cli` runtime.
+Kling/Keling operating guide for Bahew video work. Use this root reference to route facts, plan around Kling motion and multi-shot strengths, and keep generation requests compatible with the unified `videogen_cli` runtime.
 
-## OpenHarness Runtime
+## Bahew Runtime
 
-In OpenHarness SaaS, this is an embedded Kling expert reference inside `videogen`. Real video generation must call the unified `videogen_cli` tool with a Kling/keling model id such as `kling-3.0`, `kling-3.0-omni`, `kling-2.6`, or a `keling-*` alias. Do not call legacy video tools such as `gen_creative_video`, `animate_first_frame`, `video_interpolation`, or `video_with_reference`.
+In Bahew, this is an embedded Kling expert reference inside `videogen`. Real video generation must call the unified `videogen_cli` tool with a Kling/keling model id such as `kling-3.0`, `kling-3.0-omni`, `kling-2.6`, or a `keling-*` alias. Do not call legacy video tools such as `gen_creative_video`, `animate_first_frame`, `video_interpolation`, or `video_with_reference`.
 
 ## Operating Loop
 

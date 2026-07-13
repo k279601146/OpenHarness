@@ -7,12 +7,12 @@ description: "Generate or edit raster images when the task benefits from AI-crea
 
 Generates or edits images for the current project (for example website assets, game assets, UI mockups, product mockups, wireframes, logo design, photorealistic images, or infographics).
 
-## OpenHarness runtime rules
+## Bahew runtime rules
 
-These rules are authoritative in the OpenHarness SaaS agent runtime.
+These rules are authoritative in the Bahew agent runtime.
 
 - Loading this skill is not image generation. After reading these instructions, you must call `imagegen_cli` before claiming that an image was generated.
-- In OpenHarness SaaS, `imagegen_cli` is the only image generation/editing tool. It routes GPT Image, Nano Banana/Gemini, Doubao Seedream, and Kolors models through the bundled provider registry, runs on the host, and publishes artifacts to the UI.
+- In Bahew, `imagegen_cli` is the only image generation/editing tool. It routes GPT Image, Nano Banana/Gemini, Doubao Seedream, and Kolors models through the bundled provider registry, runs on the host, and publishes artifacts to the UI.
 - Do not call legacy media tools such as `gen_creative_image`, `edit_image`, or `image_from_reference`.
 - If the user names a model, pass that exact model id to `imagegen_cli.model` and read the matching provider notes directly.
 - If the UI selected an image model and `is_model_auto_mode=false`, omit `model` and let the runtime use the selected preference, but still read the matching provider notes directly. Do not read `references/providers/capability-matrix.md` first in this case.
@@ -27,17 +27,17 @@ These rules are authoritative in the OpenHarness SaaS agent runtime.
 - For text-to-image requests, call `imagegen_cli` with `command="generate"`, a detailed `prompt`, and an `out` path under `output/imagegen/`.
 - For editing an existing image or using reference images, call `imagegen_cli` with `command="edit"`, `images=[...]`, a detailed `prompt`, and an `out` path under `output/imagegen/`.
 - Only set `imagegen_cli.background` to `transparent`, `opaque`, or `auto`. Do not put visual scene/background descriptions there; put them in `prompt` or `scene`.
-- Do not use `bash` to run `scripts/image_gen.py` in OpenHarness SaaS; `bash` runs in E2B and may not have the host Python dependencies.
+- Do not use `bash` to run `scripts/image_gen.py` in Bahew; `bash` runs in E2B and may not have the host Python dependencies.
 - Do not claim success unless `imagegen_cli` reports success and returns artifact path(s). If the script, dependencies, API key, or output file is missing, tell the user the exact failure instead.
-- After `imagegen_cli` succeeds, do not add sandbox links, download links, or a separate "generated files" delivery section in the final response. The OpenHarness UI already receives and renders the image through the artifact event.
-- If `imagegen_cli` returns `delivery_required=false` or `do_not_deliver_artifact=true`, do not call `deliver_artifact` for that output path as a standalone file. The OpenHarness UI already receives the published artifact. In SaaS, generated media is not automatically copied into E2B; reuse prior artifacts through the stable artifact reference supplied by the runtime, and only use a sandbox path that the tool/runtime explicitly materialized for the current task. Continue with other tools only when the user request requires additional editing, transformation, packaging, analysis, or project/code changes.
+- After `imagegen_cli` succeeds, do not add sandbox links, download links, or a separate "generated files" delivery section in the final response. The Bahew UI already receives and renders the image through the artifact event.
+- If `imagegen_cli` returns `delivery_required=false` or `do_not_deliver_artifact=true`, do not call `deliver_artifact` for that output path as a standalone file. The Bahew UI already receives the published artifact. In SaaS, generated media is not automatically copied into E2B; reuse prior artifacts through the stable artifact reference supplied by the runtime, and only use a sandbox path that the tool/runtime explicitly materialized for the current task. Continue with other tools only when the user request requires additional editing, transformation, packaging, analysis, or project/code changes.
 
 ## Top-level modes and rules
 
 This skill has two execution contexts:
 
-- **OpenHarness CLI mode (preferred in SaaS):** call `imagegen_cli` for normal image generation and editing. It wraps this skill's bundled `scripts/image_gen.py`, uses host-side dependencies, and receives provider credentials from the configured SaaS media model gateway.
-- **Codex host built-in mode:** use the built-in `image_gen` tool only in Codex host runtimes where that tool is actually available. It is not available in the OpenHarness SaaS agent runtime.
+- **Bahew CLI mode (preferred in SaaS):** call `imagegen_cli` for normal image generation and editing. It wraps this skill's bundled `scripts/image_gen.py`, uses host-side dependencies, and receives provider credentials from the configured SaaS media model gateway.
+- **Codex host built-in mode:** use the built-in `image_gen` tool only in Codex host runtimes where that tool is actually available. It is not available in the Bahew agent runtime.
 
 The CLI exposes three subcommands:
 
@@ -46,7 +46,7 @@ The CLI exposes three subcommands:
 - `generate-batch`
 
 Rules:
-- In OpenHarness SaaS, use `imagegen_cli` by default for normal image generation and editing requests.
+- In Bahew, use `imagegen_cli` by default for normal image generation and editing requests.
 - Do not call legacy media tools as a substitute for this skill.
 - If the user explicitly asks for a transparent image/background, use `imagegen_cli` first with a flat removable chroma-key background, then remove it locally with the installed helper at `$CODEX_HOME/skills/.system/imagegen/scripts/remove_chroma_key.py` only if local post-processing is available.
 - Never silently switch from CLI `gpt-image-2` to CLI `gpt-image-1.5`. Treat this as a model/path downgrade and ask the user before doing it, unless the user has already explicitly requested `gpt-image-1.5`.
@@ -56,7 +56,7 @@ Rules:
 - If the user explicitly asks for CLI/API/model controls, use the bundled `scripts/image_gen.py` workflow. Do not create one-off SDK runners.
 - Never modify `scripts/image_gen.py`. If something is missing, ask the user before doing anything else.
 
-OpenHarness CLI save-path policy:
+Bahew CLI save-path policy:
 - Write generated outputs under `output/imagegen/` unless the user names a destination.
 - After generation, rely on `imagegen_cli` to verify that the file exists and publish it as an artifact event.
 - Do not overwrite an existing asset unless the user explicitly asked for replacement; otherwise create a sibling versioned filename such as `hero-v2.png` or `item-icon-edited.png`.
@@ -96,21 +96,21 @@ Intent:
 - If the user provides images only as references for style, composition, mood, or subject guidance, treat the request as **generate**.
 - If the user provides no images, treat the request as **generate**.
 
-OpenHarness CLI edit semantics:
+Bahew CLI edit semantics:
 - Use `scripts/image_gen.py edit` for image edits.
 - Pass each source image with `--image <path>`.
 - If a source image is missing or inaccessible, report that exact failure.
 - For edits, preserve invariants aggressively and save non-destructively by default.
 
 Execution strategy:
-- In the OpenHarness CLI path, produce many assets or variants by issuing one `imagegen_cli` call per requested asset or variant.
+- In the Bahew CLI path, produce many assets or variants by issuing one `imagegen_cli` call per requested asset or variant.
 - Use the CLI `generate-batch` subcommand only when the user explicitly needs JSONL/API/model controls for many prompts/assets.
 - For many distinct assets, do not use `n` as a substitute for separate prompts. `n` is for variants of one prompt; distinct assets need distinct CLI calls or `generate-batch` jobs.
 
 Assume the user wants a new image unless they clearly ask to change an existing one.
 
 ## Workflow
-1. Decide the top-level mode: OpenHarness CLI by default in SaaS; Codex built-in only in host runtimes where `image_gen` is actually available.
+1. Decide the top-level mode: Bahew CLI by default in SaaS; Codex built-in only in host runtimes where `image_gen` is actually available.
 2. Decide the intent: `generate` or `edit`.
 3. Decide whether the output is preview-only or meant to be consumed by the current project.
 4. Decide the execution strategy: single asset vs repeated CLI `generate` calls vs CLI `generate-batch`.
@@ -124,7 +124,7 @@ Assume the user wants a new image unless they clearly ask to change an existing 
 9. Augment the prompt based on specificity:
    - If the user's prompt is already specific and detailed, normalize it into a clear spec without adding creative requirements.
    - If the user's prompt is generic, add tasteful augmentation only when it materially improves output quality.
-10. Use the OpenHarness CLI path by default.
+10. Use the Bahew CLI path by default.
 11. For transparent-output requests, follow the transparent image guidance below: generate with `imagegen_cli` on a flat chroma-key background, copy the selected output into the workspace or `tmp/imagegen/` if post-processing is needed, run the installed `$CODEX_HOME/skills/.system/imagegen/scripts/remove_chroma_key.py` helper when available, and validate the alpha result before using it. If this path looks unsuitable or fails, ask before switching to CLI `gpt-image-1.5`.
 12. Inspect outputs and validate: subject, style, composition, text accuracy, and invariants/avoid items.
 13. Iterate with a single targeted change, then re-check.
@@ -132,7 +132,7 @@ Assume the user wants a new image unless they clearly ask to change an existing 
 15. For project-bound work, move or copy the selected artifact into the workspace and update any consuming code or references. Never leave a project-referenced asset only at the default `$CODEX_HOME/generated_images/...` path.
 16. For batches or multi-asset requests, persist every requested deliverable final in the workspace unless the user explicitly asked to keep outputs preview-only. Discarded variants do not need to be kept unless requested.
 17. Use the CLI docs for model, quality, size, `input_fidelity`, masks, output format, output paths, and network setup.
-18. Always report the final saved path(s), plus the final prompt or prompt set and whether OpenHarness CLI mode or Codex host built-in mode was used.
+18. Always report the final saved path(s), plus the final prompt or prompt set and whether Bahew CLI mode or Codex host built-in mode was used.
 
 ## Transparent image requests
 
@@ -171,7 +171,7 @@ Do not automatically use CLI `gpt-image-1.5 --background transparent --output-fo
 Use a concise confirmation like:
 
 ```text
-This likely needs true native transparency. The default OpenHarness CLI path uses a chroma-key background plus local removal, but true transparency requires gpt-image-1.5 because gpt-image-2 does not support background=transparent. It also requires an enabled media model gateway for the selected image model. Should I proceed with that model downgrade?
+This likely needs true native transparency. The default Bahew CLI path uses a chroma-key background plus local removal, but true transparency requires gpt-image-1.5 because gpt-image-2 does not support background=transparent. It also requires an enabled media model gateway for the selected image model. Should I proceed with that model downgrade?
 ```
 
 ## Prompt augmentation
@@ -291,7 +291,7 @@ Constraints: change only the background; keep the product and its edges unchange
 - If the prompt is generic, add only the extra detail that will materially help.
 - If the prompt is already detailed, normalize it instead of expanding it.
 - For CLI details, see `references/cli.md` and `references/image-api.md` for model, `quality`, `input_fidelity`, masks, output format, and output-path guidance.
-- For transparent images, use the OpenHarness CLI chroma-key workflow unless the request is complex enough to need true CLI transparency; ask before switching to CLI `gpt-image-1.5`.
+- For transparent images, use the Bahew CLI chroma-key workflow unless the request is complex enough to need true CLI transparency; ask before switching to CLI `gpt-image-1.5`.
 
 More principles shared by both modes: `references/prompting.md`.
 Copy/paste specs shared by both modes: `references/sample-prompts.md`.
@@ -304,7 +304,7 @@ Asset-type templates (website assets, game assets, wireframes, logo) are consoli
 The CLI defaults to `gpt-image-2`.
 
 - Use `gpt-image-2` for new CLI/API workflows unless the request needs true model-native transparent output.
-- If a transparent request may need true transparency, ask before using `gpt-image-1.5` unless the user already explicitly requested `gpt-image-1.5`. Explain that the OpenHarness CLI chroma-key path is the default, but true transparency requires `gpt-image-1.5` because `gpt-image-2` does not support `background=transparent`.
+- If a transparent request may need true transparency, ask before using `gpt-image-1.5` unless the user already explicitly requested `gpt-image-1.5`. Explain that the Bahew CLI chroma-key path is the default, but true transparency requires `gpt-image-1.5` because `gpt-image-2` does not support `background=transparent`.
 - `gpt-image-2` always uses high fidelity for image inputs; do not set `input_fidelity` with this model.
 - `gpt-image-2` supports `quality` values `low`, `medium`, `high`, and `auto`.
 - Use `quality low` for fast drafts, thumbnails, and quick iterations. Use `medium`, `high`, or `auto` for final assets, dense text, diagrams, identity-sensitive edits, or high-resolution outputs.
@@ -326,7 +326,7 @@ Popular `gpt-image-2` sizes:
 ## CLI mode details
 
 ### Temp and output conventions
-These conventions apply to OpenHarness CLI mode.
+These conventions apply to Bahew CLI mode.
 - Use `tmp/imagegen/` for intermediate files (for example JSONL batches); delete them when done.
 - Write final artifacts under `output/imagegen/`.
 - Use `--out` or `--out-dir` to control output paths; keep filenames stable and descriptive.

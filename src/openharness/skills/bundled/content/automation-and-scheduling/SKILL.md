@@ -1,6 +1,6 @@
 ---
 name: automation-and-scheduling
-description: Use when the user asks for scheduled, recurring, automated, background, reminder, monitoring, or time-triggered work in OpenHarness SaaS. Prefer creating a SaaS ScheduledTask for low-frequency AI work, and use durable backend jobs for high-frequency deterministic polling.
+description: Use when the user asks for scheduled, recurring, automated, background, reminder, monitoring, or time-triggered work in Bahew. Prefer creating a SaaS ScheduledTask for low-frequency AI work, and use durable backend jobs for high-frequency deterministic polling.
 category: productivity
 aliases:
   - scheduling
@@ -12,9 +12,9 @@ aliases:
 
 Use this skill before creating automations, recurring tasks, reminders, monitors, or background workflows.
 
-## OpenHarness SaaS Route
+## Bahew Route
 
-For low-frequency tasks that need AI judgment, writing, research, connector-aware work, or workspace context, create an OpenHarness SaaS `ScheduledTask`.
+For low-frequency tasks that need AI judgment, writing, research, connector-aware work, or workspace context, create a Bahew `ScheduledTask`.
 
 - Bind the task to the current `AgentThread` when the user is working inside a conversation.
 - Preserve model, selected skills, selected connectors, media model preferences, and context thread.
@@ -35,7 +35,7 @@ Use a scheduled AI task only when the run genuinely needs agent reasoning or con
 
 ## Chat Creation Behavior
 
-When the user asks in chat to create a scheduled task, the expected OpenHarness SaaS behavior is:
+When the user asks in chat to create a scheduled task, the expected Bahew behavior is:
 
 1. Parse the requested cadence and action.
 2. Use `Asia/Shanghai` as the default timezone when the user gives a local time without specifying a timezone.

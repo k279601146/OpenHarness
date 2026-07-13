@@ -1,6 +1,6 @@
-# CloakBrowser Examples For OpenHarness
+# CloakBrowser Examples For Bahew
 
-These examples adapt official CloakBrowser usage patterns for the OpenHarness SaaS sandbox. Always keep binary cache, browser profile, credentials, and fingerprint seed separate.
+These examples adapt official CloakBrowser usage patterns for the Bahew sandbox. Always keep binary cache, browser profile, credentials, and fingerprint seed separate.
 
 ## 1. One-Off Page Visit
 

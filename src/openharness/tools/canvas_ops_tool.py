@@ -1,7 +1,7 @@
 """Canvas operation tools for the SaaS workspace canvas.
 
 These tools mirror the infinite-canvas canvas-agent tool surface while keeping
-all model calls, billing, uploads, and task state inside OpenHarness.
+all model calls, billing, uploads, and task state inside Bahew.
 """
 
 from __future__ import annotations
@@ -721,7 +721,7 @@ class _CanvasEmitter:
 
 class CanvasGetStateTool(BaseTool):
     name = "canvas_get_state"
-    description = "读取当前 OpenHarness Canvas v2 的节点、连线、选区和视口。"
+    description = "读取当前 Bahew Canvas v2 的节点、连线、选区和视口。"
     input_model = EmptyInput
 
     def is_read_only(self, arguments: BaseModel) -> bool:
@@ -733,7 +733,7 @@ class CanvasGetStateTool(BaseTool):
 
 class CanvasGetSelectionTool(BaseTool):
     name = "canvas_get_selection"
-    description = "读取当前 OpenHarness Canvas v2 选中的节点。"
+    description = "读取当前 Bahew Canvas v2 选中的节点。"
     input_model = EmptyInput
 
     def is_read_only(self, arguments: BaseModel) -> bool:
@@ -916,19 +916,19 @@ class CanvasGenerateTextTool(_CanvasGenerateFlowTool):
 
 class CanvasGenerateImageTool(_CanvasGenerateFlowTool):
     name = "canvas_generate_image"
-    description = "创建图片生成流程并立即触发 OpenHarness 图片生成请求。"
+    description = "创建图片生成流程并立即触发 Bahew 图片生成请求。"
     generation_mode = "image"
 
 
 class CanvasGenerateVideoTool(_CanvasGenerateFlowTool):
     name = "canvas_generate_video"
-    description = "创建视频生成流程并立即触发 OpenHarness 视频生成请求。"
+    description = "创建视频生成流程并立即触发 Bahew 视频生成请求。"
     generation_mode = "video"
 
 
 class CanvasGenerateAudioTool(CanvasCreateGenerationFlowTool):
     name = "canvas_generate_audio"
-    description = "创建音频生成占位流程；当前 OpenHarness 不启用真实音频生成。"
+    description = "创建音频生成占位流程；当前 Bahew 不启用真实音频生成。"
 
     async def execute(self, arguments: GenerationFlowInput, context: ToolExecutionContext) -> ToolResult:
         state = _state_from_context(context)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unified video generation CLI for OpenHarness videogen."""
+"""Unified video generation CLI for Bahew videogen."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def _output_paths(args: argparse.Namespace) -> list[Path]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Unified OpenHarness video generation CLI")
+    parser = argparse.ArgumentParser(description="Unified Bahew video generation CLI")
     parser.add_argument("command", choices=["generate", "image-to-video", "first-last-frame", "reference-to-video"])
     parser.add_argument("--prompt")
     parser.add_argument("--prompt-file")

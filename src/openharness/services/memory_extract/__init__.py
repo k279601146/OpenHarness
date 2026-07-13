@@ -133,7 +133,7 @@ def build_extraction_prompt(cwd: str | Path, messages: list[ConversationMessage]
     )
 
 
-EXTRACTION_SYSTEM_PROMPT = """You maintain OpenHarness durable memory.
+EXTRACTION_SYSTEM_PROMPT = """You maintain Bahew durable memory.
 Save only stable, future-useful facts that are not derivable from current files,
 git history, or documentation. Prefer updating existing memories conceptually
 over duplicating them. Do not save secrets. If nothing is worth saving, return

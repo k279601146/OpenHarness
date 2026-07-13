@@ -283,7 +283,7 @@ class CodexApiClient:
             "model": request.model,
             "store": False,
             "stream": True,
-            "instructions": request.system_prompt or "You are OpenHarness.",
+            "instructions": request.system_prompt or "You are Bahew.",
             "input": _convert_messages_to_codex(request.messages),
             "text": {"verbosity": "medium"},
             "include": ["reasoning.encrypted_content"],

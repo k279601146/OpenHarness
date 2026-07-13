@@ -1,6 +1,6 @@
 ---
 name: veo-video
-description: "Use this embedded expert reference when planning, prompting, improving, or troubleshooting Google Veo / video3 video generation through OpenHarness videogen, including text-to-video, image-to-video, first/last-frame, reference-image direction, extension planning, cinematic realism, native audio, dialogue, prompt structure, model-id caveats, and API/source-status checks. Not for Seedance, Kling/keling, Sora, Runway Gen, or image-only prompting."
+description: "Use this embedded expert reference when planning, prompting, improving, or troubleshooting Google Veo / video3 video generation through Bahew videogen, including text-to-video, image-to-video, first/last-frame, reference-image direction, extension planning, cinematic realism, native audio, dialogue, prompt structure, model-id caveats, and API/source-status checks. Not for Seedance, Kling/keling, Sora, Runway Gen, or image-only prompting."
 license: MIT
 user-invocable: true
 tags: [veo, video3, video-generation]
@@ -10,11 +10,11 @@ metadata:
 
 # veo-video
 
-Veo operating guide for OpenHarness video work. Use this root reference to route facts, design prompts around current Veo strengths, and keep generation requests compatible with the unified `videogen_cli` runtime.
+Veo operating guide for Bahew video work. Use this root reference to route facts, design prompts around current Veo strengths, and keep generation requests compatible with the unified `videogen_cli` runtime.
 
-## OpenHarness Runtime
+## Bahew Runtime
 
-In OpenHarness SaaS, this is an embedded Veo expert reference inside `videogen`. Real video generation must call the unified `videogen_cli` tool with a Veo/video3 model id such as `veo-3.1`, `veo-3.1-fast`, `veo-3.1-lite`, or a `video3*` alias. Do not call legacy video tools such as `gen_creative_video`, `animate_first_frame`, `video_interpolation`, or `video_with_reference`.
+In Bahew, this is an embedded Veo expert reference inside `videogen`. Real video generation must call the unified `videogen_cli` tool with a Veo/video3 model id such as `veo-3.1`, `veo-3.1-fast`, `veo-3.1-lite`, or a `video3*` alias. Do not call legacy video tools such as `gen_creative_video`, `animate_first_frame`, `video_interpolation`, or `video_with_reference`.
 
 ## Operating Loop
 
