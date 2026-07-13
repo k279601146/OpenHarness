@@ -17,7 +17,11 @@ These rules are authoritative in the OpenHarness SaaS agent runtime.
 - If the user names a model, pass that exact model id to `imagegen_cli.model` and read the matching provider notes directly.
 - If the UI selected an image model and `is_model_auto_mode=false`, omit `model` and let the runtime use the selected preference, but still read the matching provider notes directly. Do not read `references/providers/capability-matrix.md` first in this case.
 - Read `references/providers/capability-matrix.md` only when you need to choose a model because the user did not specify one and the UI is in auto mode or has no clear preference.
-- When the provider is known, read only the provider-specific file needed for that model: `gpt-image.md`, `nano-banana.md`, `doubao-seedream.md`, or `kolors.md`. In the OpenHarness SaaS agent runtime, host `read_file` is restricted to the workspace; if this relative reference is not directly readable, first locate the workspace-visible skill copy with `glob` and read that path instead of an absolute installed-skill path.
+- When the provider is known, read only the provider-specific file needed for that model. Prefer the sandbox directory printed by the `skill` tool and read the exact path directly. Only use `glob` if that direct read fails or the sandbox directory was not provided.
+  - `gpt-image-2`, `gpt-image-*`: `<skill-sandbox>/references/providers/gpt-image.md`
+  - `nano-banana`, `nano-banana-pro`, Gemini image models: `<skill-sandbox>/references/providers/nano-banana.md`
+  - `doubao-seedream-*`, Seedream image models: `<skill-sandbox>/references/providers/doubao-seedream.md`
+  - `kolors`, Kwai-Kolors: `<skill-sandbox>/references/providers/kolors.md`
 - Billing is handled by the SaaS server before and after `imagegen_cli` execution using trusted output count and billing size tier rules. Do not reduce creative choices to fit billing preflight; choose parameters from the provider references and let `imagegen_cli`/the provider adapter validate execution compatibility.
 - If the user explicitly asks for an image size or aspect ratio, translate it into the provider-recommended explicit parameter from the provider notes when possible. For example, Kolors 9:16 should use `size="720x1280"` or `aspect_ratio="9:16"` so the runtime derives `image_size="720x1280"`.
 - For text-to-image requests, call `imagegen_cli` with `command="generate"`, a detailed `prompt`, and an `out` path under `output/imagegen/`.
