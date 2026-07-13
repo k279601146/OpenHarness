@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import re
 from decimal import Decimal, ROUND_HALF_UP
@@ -13,7 +12,7 @@ from typing import Any, Literal
 
 PRICING_RULES_ENV = "OPENHARNESS_MEDIA_MODEL_PRICING_RULES"
 DEFAULT_CREDITS_PER_USD = 25.0
-SUPPORTED_IMAGE_SCHEMES = {"image_size_tier_pricing", "image_token_pricing", "image_unit_pricing"}
+SUPPORTED_IMAGE_SCHEMES = {"image_size_tier_pricing"}
 SUPPORTED_VIDEO_SCHEMES = {"video_seconds_pricing", "video_unit_pricing"}
 
 
@@ -403,6 +402,7 @@ def estimate_image_pricing(
     reference_count: int = 0,
     rules: dict[str, Any] | None = None,
 ) -> MediaPricingResult:
+    del prompt, quality, aspect_ratio, reference_count
     loaded = load_pricing_rules(rules)
     rule = model_rule("image", model_id, loaded)
     if rule is None:
@@ -412,70 +412,27 @@ def estimate_image_pricing(
     max_output_count = int(rule.get("max_output_count", 0) or 0)
     if max_output_count > 0 and output_count > max_output_count:
         raise ValueError(f"Image output_count {output_count} exceeds max_output_count {max_output_count} for {model_id}")
-    reference_count = max(int(reference_count or 0), 0)
-    resolved_quality = _normalize_key(quality or rule.get("default_quality") or "medium")
-    billing_quality = _normalize_key((rule.get("billing_quality_aliases") or {}).get(resolved_quality) or resolved_quality)
-    resolved_size = _normalize_size(size, aspect_ratio, rule.get("default_size") or "1024x1024")
-    resolved_resolution = _normalize_key(resolution or rule.get("default_resolution") or _resolution_from_size(resolved_size))
     scheme = str(rule["scheme"])
-
-    if scheme == "image_size_tier_pricing":
-        resolved_tier = _resolve_image_billing_size_tier(
-            rule,
-            billing_size_tier=billing_size_tier,
-            resolution=resolution,
-            size=size,
-        )
-        unit_credits = _lookup_number(rule.get("price_by_size_tier"), resolved_tier, default=None)
-        if unit_credits is None:
-            raise ValueError(f"Image pricing does not include billing_size_tier {resolved_tier} for {model_id}")
-        billing_units = unit_credits * output_count
-        official_cost = _credits_to_official_cost(loaded, rule, billing_units)
-        breakdown = {
-            "scheme": scheme,
-            "unit_credits": unit_credits,
-            "billing_size_tier": resolved_tier.upper(),
-            "output_count": output_count,
-            "price_unit": "credits",
-        }
-    elif scheme == "image_token_pricing":
-        text_tokens = _estimate_text_tokens(prompt)
-        output_tokens = _lookup_image_output_tokens(rule, billing_quality, resolved_size)
-        input_image_tokens = reference_count * _lookup_number(
-            rule.get("input_image_tokens_by_size"),
-            resolved_size,
-            default=float(rule.get("default_input_image_tokens", 0) or 0),
-        )
-        official_cost = (
-            text_tokens * float(rule.get("input_text_per_1m", 0)) / 1_000_000
-            + input_image_tokens * float(rule.get("input_image_per_1m", 0)) / 1_000_000
-            + output_tokens * output_count * float(rule.get("output_image_per_1m", 0)) / 1_000_000
-        )
-        breakdown = {
-            "scheme": scheme,
-            "text_tokens": text_tokens,
-            "input_image_tokens": input_image_tokens,
-            "output_image_tokens": output_tokens,
-            "output_count": output_count,
-            "size": resolved_size,
-            "quality": resolved_quality,
-            "billing_quality": billing_quality,
-            "resolution": resolved_resolution,
-        }
-    elif scheme == "image_unit_pricing":
-        unit_cost = _lookup_image_unit_cost(rule, billing_quality, resolved_resolution, resolved_size)
-        official_cost = unit_cost * output_count
-        breakdown = {
-            "scheme": scheme,
-            "unit_cost": unit_cost,
-            "output_count": output_count,
-            "size": resolved_size,
-            "quality": resolved_quality,
-            "billing_quality": billing_quality,
-            "resolution": resolved_resolution,
-        }
-    else:
+    if scheme != "image_size_tier_pricing":
         raise ValueError(f"Unsupported image pricing scheme: {scheme}")
+    resolved_tier = _resolve_image_billing_size_tier(
+        rule,
+        billing_size_tier=billing_size_tier,
+        resolution=resolution,
+        size=size,
+    )
+    unit_credits = _lookup_number(rule.get("price_by_size_tier"), resolved_tier, default=None)
+    if unit_credits is None:
+        raise ValueError(f"Image pricing does not include billing_size_tier {resolved_tier} for {model_id}")
+    billing_units = unit_credits * output_count
+    official_cost = _credits_to_official_cost(loaded, rule, billing_units)
+    breakdown = {
+        "scheme": scheme,
+        "unit_credits": unit_credits,
+        "billing_size_tier": resolved_tier.upper(),
+        "output_count": output_count,
+        "price_unit": "credits",
+    }
 
     return _pricing_result(loaded, rule, official_cost, breakdown)
 
@@ -596,41 +553,29 @@ def _validate_model_rule(kind: str, model_id: str, raw: Any, schemes: set[str], 
 
 
 def _validate_image_scheme(model_id: str, rule: dict[str, Any]) -> None:
-    if rule["scheme"] == "image_size_tier_pricing":
-        prices = rule.get("price_by_size_tier")
-        if not isinstance(prices, dict) or not prices:
-            raise ValueError(f"image.{model_id}.price_by_size_tier must be a non-empty object")
-        normalized_prices: dict[str, float] = {}
-        for tier, price in prices.items():
-            normalized_tier = _normalize_billing_size_tier(tier)
-            if normalized_tier not in {"1k", "2k", "4k"}:
-                raise ValueError(f"image.{model_id}.price_by_size_tier contains unsupported tier {tier}")
-            normalized_prices[normalized_tier] = _positive_float(price, f"image.{model_id}.price_by_size_tier.{normalized_tier}", allow_zero=False)
-        rule["price_by_size_tier"] = normalized_prices
-        default_tier = _resolve_configured_billing_size_tier(rule.get("default_billing_size_tier"))
-        if default_tier not in normalized_prices:
-            raise ValueError(f"image.{model_id}.default_billing_size_tier must exist in price_by_size_tier")
-        rule["default_billing_size_tier"] = default_tier.upper()
-        rule["max_output_count"] = int(_positive_float(rule.get("max_output_count", 1), f"image.{model_id}.max_output_count", allow_zero=False))
-        aliases = rule.get("tier_aliases")
-        if aliases is not None:
-            if not isinstance(aliases, dict):
-                raise ValueError(f"image.{model_id}.tier_aliases must be an object")
-            rule["tier_aliases"] = {
-                _normalize_alias_key(alias): _resolve_configured_billing_size_tier(tier)
-                for alias, tier in aliases.items()
-            }
-    elif rule["scheme"] == "image_token_pricing":
-        for key in ("input_text_per_1m", "input_image_per_1m", "output_image_per_1m"):
-            _positive_float(rule.get(key, 0), f"image.{model_id}.{key}", allow_zero=True)
-        tokens = rule.get("output_tokens_by_quality_size")
-        formula = rule.get("output_token_formula")
-        if not (isinstance(tokens, dict) and tokens) and not (isinstance(formula, dict) and formula.get("type") == "gpt_image_grid_v1"):
-            raise ValueError(f"image.{model_id} must define output token pricing")
-    elif rule["scheme"] == "image_unit_pricing":
-        maps = ("cost_by_quality_resolution", "cost_by_resolution", "cost_by_quality_size", "cost_by_size")
-        if not any(isinstance(rule.get(key), dict) and rule[key] for key in maps) and "unit_cost" not in rule:
-            raise ValueError(f"image.{model_id} must define unit_cost or a parameter price map")
+    prices = rule.get("price_by_size_tier")
+    if not isinstance(prices, dict) or not prices:
+        raise ValueError(f"image.{model_id}.price_by_size_tier must be a non-empty object")
+    normalized_prices: dict[str, float] = {}
+    for tier, price in prices.items():
+        normalized_tier = _normalize_billing_size_tier(tier)
+        if normalized_tier not in {"1k", "2k", "4k"}:
+            raise ValueError(f"image.{model_id}.price_by_size_tier contains unsupported tier {tier}")
+        normalized_prices[normalized_tier] = _positive_float(price, f"image.{model_id}.price_by_size_tier.{normalized_tier}", allow_zero=False)
+    rule["price_by_size_tier"] = normalized_prices
+    default_tier = _resolve_configured_billing_size_tier(rule.get("default_billing_size_tier"))
+    if default_tier not in normalized_prices:
+        raise ValueError(f"image.{model_id}.default_billing_size_tier must exist in price_by_size_tier")
+    rule["default_billing_size_tier"] = default_tier.upper()
+    rule["max_output_count"] = int(_positive_float(rule.get("max_output_count", 1), f"image.{model_id}.max_output_count", allow_zero=False))
+    aliases = rule.get("tier_aliases")
+    if aliases is not None:
+        if not isinstance(aliases, dict):
+            raise ValueError(f"image.{model_id}.tier_aliases must be an object")
+        rule["tier_aliases"] = {
+            _normalize_alias_key(alias): _resolve_configured_billing_size_tier(tier)
+            for alias, tier in aliases.items()
+        }
 
 
 def _validate_video_scheme(model_id: str, rule: dict[str, Any]) -> None:
@@ -663,44 +608,6 @@ def _pricing_result(loaded: dict[str, Any], rule: dict[str, Any], official_cost:
         source_checked_at=str(rule.get("source_checked_at") or ""),
         pricing_breakdown={**breakdown, "currency_rate_to_usd": currency_rate, "credits_per_usd": credits_per_usd},
     )
-
-
-def _estimate_text_tokens(prompt: str) -> int:
-    return max(int(math.ceil(len(prompt or "") / 4)), 0)
-
-
-def _lookup_image_output_tokens(rule: dict[str, Any], quality: str, size: str) -> float:
-    formula = rule.get("output_token_formula")
-    if isinstance(formula, dict) and formula.get("type") == "gpt_image_grid_v1":
-        parsed = _parse_pixel_size(size)
-        grid = _lookup_number(formula.get("quality_grid"), quality, default=None)
-        if not parsed or grid is None:
-            raise ValueError(f"Image token formula does not support quality {quality} and size {size} for {rule['model_id']}")
-        width, height = parsed
-        longest, shortest = max(width, height), min(width, height)
-        short_grid = math.floor((grid * shortest / longest) + 0.5)
-        base_pixels = float(formula.get("base_pixels", 2_000_000) or 2_000_000)
-        divisor = float(formula.get("divisor", 4_000_000) or 4_000_000)
-        return float(math.ceil(grid * short_grid * (base_pixels + width * height) / divisor))
-    tokens = rule.get("output_tokens_by_quality_size")
-    value = _lookup_nested_number(tokens, quality, size)
-    if value is not None:
-        return value
-    value = _lookup_number(rule.get("output_tokens_by_size"), size, default=None)
-    if value is not None:
-        return value
-    if "default_output_image_tokens" in rule:
-        return float(rule.get("default_output_image_tokens", 0) or 0)
-    raise ValueError(f"Image pricing does not include quality {quality} and size {size} for {rule['model_id']}")
-
-
-def _lookup_image_unit_cost(rule: dict[str, Any], quality: str, resolution: str, size: str) -> float:
-    value = _lookup_nested_number(rule.get("cost_by_quality_resolution"), quality, resolution)
-    if value is None:
-        value = _lookup_number(rule.get("cost_by_resolution"), resolution, default=None)
-    if value is not None:
-        return value
-    return _lookup_unit_cost(rule, quality, size)
 
 
 def _resolve_image_billing_size_tier(
@@ -799,21 +706,6 @@ def _parse_pixel_size(size: str) -> tuple[int, int] | None:
     return (int(match.group(1)), int(match.group(2))) if match else None
 
 
-def _resolution_from_size(size: str) -> str:
-    normalized = _normalize_key(size)
-    if normalized in {"0.5k", "1k", "2k", "4k"}:
-        return normalized
-    parsed = _parse_pixel_size(normalized)
-    if not parsed:
-        return "1k"
-    longest = max(parsed)
-    if longest >= 3000:
-        return "4k"
-    if longest >= 1500:
-        return "2k"
-    return "1k"
-
-
 def _lookup_unit_cost(rule: dict[str, Any], quality_or_mode: str, size_or_resolution: str) -> float:
     value = _lookup_nested_number(rule.get("cost_by_quality_size"), quality_or_mode, size_or_resolution)
     if value is not None:
@@ -862,18 +754,6 @@ def _lookup_number(mapping: Any, key: str, default: float | None) -> float | Non
         return float(value)
     except (TypeError, ValueError):
         return default
-
-
-def _normalize_size(size: str | None, aspect_ratio: str | None, default_size: str) -> str:
-    raw = str(size or "").strip().lower()
-    if raw and raw != "auto":
-        return raw
-    aspect = str(aspect_ratio or "").strip()
-    if aspect == "16:9":
-        return "1792x1024"
-    if aspect == "9:16":
-        return "1024x1792"
-    return str(default_size or "1024x1024").strip().lower()
 
 
 def _normalize_key(value: str | None) -> str:

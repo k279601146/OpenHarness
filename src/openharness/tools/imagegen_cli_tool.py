@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
+import math
 import json
 import os
 import posixpath
@@ -165,6 +166,10 @@ class ImagegenCliTool(BaseTool):
                 f"imagegen CLI completed, but expected output file(s) were missing:\n{missing_text}\n\n{_sanitize_cli_output(output, IMAGEGEN_METADATA_PREFIX, {})}",
                 parsed_metadata,
             )
+        dimension_error, dimension_metadata = _validate_generated_image_dimensions(artifacts, arguments, parsed_metadata)
+        parsed_metadata.update(dimension_metadata)
+        if dimension_error:
+            return await _media_billing_error_result(context, dimension_error, parsed_metadata)
 
         billing_error, billing_metadata, finalized = await _finalize_media_artifacts(context, artifacts, parsed_metadata)
         if billing_error is not None:
@@ -199,6 +204,9 @@ class ImagegenCliTool(BaseTool):
         if artifacts:
             lines.append("Published artifact paths:")
             lines.extend(f"- {path}" for path in artifacts)
+        summary_lines = _imagegen_execution_summary(parsed_metadata)
+        if summary_lines:
+            lines.extend(["", "Generation summary:", *summary_lines])
         if sanitized_output:
             lines.extend(["", "CLI output:", sanitized_output])
         return ToolResult(
@@ -289,6 +297,10 @@ async def _execute_e2b_imagegen(
         if missing:
             missing_text = "\n".join(f"- {path}" for path in missing)
             return await _media_billing_error_result(context, f"imagegen CLI completed, but expected local output file(s) were missing:\n{missing_text}", parsed_metadata)
+        dimension_error, dimension_metadata = _validate_generated_image_dimensions(local_artifacts, local_arguments, parsed_metadata)
+        parsed_metadata.update(dimension_metadata)
+        if dimension_error:
+            return await _media_billing_error_result(context, dimension_error, parsed_metadata)
 
         billing_error, billing_metadata, finalized = await _finalize_media_artifacts(context, local_artifacts, parsed_metadata)
         if billing_error is not None:
@@ -341,6 +353,9 @@ async def _execute_e2b_imagegen(
         if local_artifacts:
             lines.append("Published artifact paths:")
             lines.extend(f"- {path}" for path in local_artifacts)
+        summary_lines = _imagegen_execution_summary(parsed_metadata)
+        if summary_lines:
+            lines.extend(["", "Generation summary:", *summary_lines])
         if sanitized_output:
             lines.extend(["", "CLI output:", sanitized_output])
         return ToolResult(
@@ -792,6 +807,172 @@ def _read_cli_metadata_file(path: Path) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _validate_generated_image_dimensions(
+    artifacts: list[Path],
+    arguments: ImagegenCliInput,
+    metadata: dict[str, object],
+) -> tuple[str | None, dict[str, object]]:
+    if arguments.dry_run or not artifacts:
+        return None, {}
+
+    dimensions: list[dict[str, int]] = []
+    for artifact in artifacts:
+        try:
+            width, height = _read_image_dimensions(artifact)
+        except Exception as exc:
+            return f"Generated image dimension validation failed for {artifact.name}: {type(exc).__name__}: {exc}", {}
+        dimensions.append({"width": width, "height": height})
+
+    first = dimensions[0]
+    result: dict[str, object] = {
+        "actual_width": first["width"],
+        "actual_height": first["height"],
+        "actual_aspect_ratio": _aspect_ratio_from_dimensions(first["width"], first["height"]),
+        "actual_dimensions": dimensions,
+    }
+
+    requested_aspect = _explicit_requested_aspect_ratio(arguments, metadata)
+    if requested_aspect:
+        result["requested_aspect_ratio"] = requested_aspect
+        mismatched = [
+            item for item in dimensions
+            if not _aspect_ratio_matches(item["width"], item["height"], requested_aspect)
+        ]
+        if mismatched:
+            actual = ", ".join(f"{item['width']}x{item['height']}" for item in dimensions)
+            return (
+                f"Generated image dimensions do not match requested aspect ratio {requested_aspect}. "
+                f"Actual dimensions: {actual}.",
+                result,
+            )
+
+    return None, result
+
+
+def _read_image_dimensions(path: Path) -> tuple[int, int]:
+    try:
+        from PIL import Image
+    except Exception as exc:
+        try:
+            return _read_image_dimensions_from_header(path)
+        except Exception as fallback_exc:
+            raise RuntimeError("Pillow or a supported image header is required to validate generated image dimensions.") from fallback_exc
+    with Image.open(path) as image:
+        image.load()
+        return int(image.width), int(image.height)
+
+
+def _read_image_dimensions_from_header(path: Path) -> tuple[int, int]:
+    data = path.read_bytes()
+    if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24:
+        return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    if data.startswith(b"\xff\xd8"):
+        return _jpeg_dimensions(data)
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return _webp_dimensions(data)
+    raise ValueError("unsupported image format")
+
+
+def _jpeg_dimensions(data: bytes) -> tuple[int, int]:
+    index = 2
+    while index + 9 < len(data):
+        if data[index] != 0xFF:
+            index += 1
+            continue
+        marker = data[index + 1]
+        index += 2
+        if marker in {0xD8, 0xD9, 0x01} or 0xD0 <= marker <= 0xD7:
+            continue
+        if index + 2 > len(data):
+            break
+        segment_length = int.from_bytes(data[index:index + 2], "big")
+        if segment_length < 2 or index + segment_length > len(data):
+            break
+        if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
+            height = int.from_bytes(data[index + 3:index + 5], "big")
+            width = int.from_bytes(data[index + 5:index + 7], "big")
+            return width, height
+        index += segment_length
+    raise ValueError("jpeg dimensions not found")
+
+
+def _webp_dimensions(data: bytes) -> tuple[int, int]:
+    chunk = data[12:16]
+    if chunk == b"VP8X" and len(data) >= 30:
+        width = 1 + int.from_bytes(data[24:27], "little")
+        height = 1 + int.from_bytes(data[27:30], "little")
+        return width, height
+    if chunk == b"VP8L" and len(data) >= 25:
+        bits = int.from_bytes(data[21:25], "little")
+        width = (bits & 0x3FFF) + 1
+        height = ((bits >> 14) & 0x3FFF) + 1
+        return width, height
+    if chunk == b"VP8 " and len(data) >= 30:
+        width = int.from_bytes(data[26:28], "little") & 0x3FFF
+        height = int.from_bytes(data[28:30], "little") & 0x3FFF
+        return width, height
+    raise ValueError("webp dimensions not found")
+
+
+def _explicit_requested_aspect_ratio(arguments: ImagegenCliInput, metadata: dict[str, object]) -> str | None:
+    direct = _normalize_aspect_ratio(arguments.aspect_ratio)
+    if direct:
+        return direct
+    requested = metadata.get("requested_aspect_ratio")
+    return _normalize_aspect_ratio(str(requested)) if requested is not None else None
+
+
+def _normalize_aspect_ratio(value: str | None) -> str | None:
+    text = str(value or "").strip().lower().replace(" ", "")
+    if not text or text in {"auto", "adaptive", "default", "none", "null"}:
+        return None
+    if ":" not in text:
+        return None
+    left, right = text.split(":", 1)
+    try:
+        width = int(left)
+        height = int(right)
+    except ValueError:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    divisor = math.gcd(width, height)
+    return f"{width // divisor}:{height // divisor}"
+
+
+def _aspect_ratio_from_dimensions(width: int, height: int) -> str:
+    divisor = math.gcd(width, height)
+    if divisor <= 0:
+        return ""
+    return f"{width // divisor}:{height // divisor}"
+
+
+def _aspect_ratio_matches(width: int, height: int, requested_aspect: str) -> bool:
+    normalized = _normalize_aspect_ratio(requested_aspect)
+    if not normalized:
+        return True
+    left, right = normalized.split(":", 1)
+    requested = int(left) / int(right)
+    actual = width / height
+    return abs(actual - requested) <= 0.01
+
+
+def _imagegen_execution_summary(metadata: dict[str, object]) -> list[str]:
+    fields = [
+        ("Model", metadata.get("model_id")),
+        ("Upstream model", metadata.get("upstream_model_id") or metadata.get("api_model")),
+        ("Provider", metadata.get("provider")),
+        ("Gateway", metadata.get("gateway_name")),
+        ("Effective size", metadata.get("effective_size") or metadata.get("size")),
+        ("Requested aspect ratio", metadata.get("requested_aspect_ratio") or metadata.get("aspect_ratio")),
+    ]
+    actual_width = metadata.get("actual_width")
+    actual_height = metadata.get("actual_height")
+    if actual_width and actual_height:
+        fields.append(("Actual dimensions", f"{actual_width}x{actual_height}"))
+    return [f"{label}: {value}" for label, value in fields if value is not None and str(value).strip() != ""]
 
 
 def _context_tool_use_id(context: ToolExecutionContext) -> str | None:

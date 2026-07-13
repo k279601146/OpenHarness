@@ -56,6 +56,12 @@ class FakeArtifactHook:
         self.calls.append({"file_path": file_path, **kwargs})
 
 
+def _write_test_png(path: Path, size: tuple[int, int] = (32, 32)) -> None:
+    del size
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"test-image-bytes")
+
+
 def test_imagegen_cli_metadata_file_does_not_write_stdout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -100,7 +106,7 @@ async def test_imagegen_cli_dry_run_routes_nano_banana(tmp_path: Path, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_imagegen_cli_doubao_aspect_ratio_overrides_default_square_size(
+async def test_imagegen_cli_doubao_aspect_ratio_is_forwarded_as_execution_parameter(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -120,8 +126,9 @@ async def test_imagegen_cli_doubao_aspect_ratio_overrides_default_square_size(
 
     assert not result.is_error
     assert result.metadata["resolution"] == "2K"
-    assert result.metadata["size"] == "1600x2848"
+    assert result.metadata["size"] == "2048x2048"
     assert result.metadata["aspect_ratio"] == "9:16"
+    assert result.metadata["execution_parameters"]["requested"]["aspect_ratio"] == "9:16"
 
 
 @pytest.mark.asyncio
@@ -155,7 +162,7 @@ async def test_imagegen_cli_dry_run_routes_doubao_and_multiple_outputs(
 
 
 @pytest.mark.asyncio
-async def test_imagegen_cli_coerces_kolors_stale_resolution(
+async def test_imagegen_cli_preserves_kolors_execution_hints(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -177,10 +184,14 @@ async def test_imagegen_cli_coerces_kolors_stale_resolution(
 
     assert not result.is_error
     assert result.metadata["model_id"] == "kolors"
-    assert result.metadata["resolution"] == "1K"
-    assert result.metadata["size"] == "1024x1792"
+    assert result.metadata["resolution"] == "2K"
+    assert result.metadata["size"] == "720x1280"
+    assert result.metadata["effective_size"] == "720x1280"
     assert result.metadata["aspect_ratio"] == "9:16"
+    assert result.metadata["requested_aspect_ratio"] == "9:16"
     assert result.metadata["output_count"] == 2
+    assert result.metadata["execution_parameters"]["requested"]["resolution"] == "2K"
+    assert result.metadata["execution_parameters"]["requested"]["aspect_ratio"] == "9:16"
     assert "IMAGEGEN_METADATA:" not in result.output
 
 
@@ -231,7 +242,7 @@ def test_build_argv_keeps_gpt_image_2_supported_parameters(tmp_path: Path) -> No
         assert argv[argv.index(flag) + 1] == value
 
 
-def test_gpt_image_2_dry_run_payload_uses_resolution_aspect_size() -> None:
+def test_gpt_image_2_dry_run_payload_keeps_auto_size_when_no_size_requested() -> None:
     script = Path(__file__).resolve().parents[2] / "src/openharness/skills/bundled/content/imagegen/scripts/image_gen.py"
     result = subprocess.run(
         [
@@ -253,7 +264,7 @@ def test_gpt_image_2_dry_run_payload_uses_resolution_aspect_size() -> None:
         text=True,
     )
 
-    assert '"size": "1152x2048"' in result.stdout
+    assert '"size": "auto"' in result.stdout
 
 
 def test_gemini_payload_forwards_resolution_and_aspect_ratio() -> None:
@@ -266,6 +277,22 @@ def test_gemini_payload_forwards_resolution_and_aspect_ratio() -> None:
     image_config = payload["generationConfig"]["imageConfig"]
     assert image_config["imageSize"] == "4K"
     assert image_config["aspectRatio"] == "16:9"
+
+
+def test_kolors_payload_uses_siliconflow_fields() -> None:
+    payload = _build_payload(
+        get_model_spec("kolors"),
+        SimpleNamespace(resolution=None, size=None, aspect_ratio="9:16", image=[], n=2, negative="low quality"),
+        "a vertical poster",
+    )
+
+    assert payload["provider"] == "kolors"
+    assert payload["model"] == "Kwai-Kolors/Kolors"
+    assert payload["image_size"] == "720x1280"
+    assert payload["batch_size"] == 2
+    assert payload["negative_prompt"] == "low quality"
+    assert "size" not in payload
+    assert "n" not in payload
 
 
 def test_build_argv_omits_gpt_image_2_opaque_background_default(tmp_path: Path) -> None:
@@ -415,6 +442,68 @@ def test_build_output_paths_multiple(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_imagegen_cli_fails_when_actual_dimensions_do_not_match_requested_aspect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ReleaseHook:
+        def __init__(self) -> None:
+            self.released = False
+
+        def release_media_tool_usage(self, reservation, *, reason, tool_metadata):
+            self.released = True
+            assert reservation["resource_log_id"] == 9
+            assert reason == "media_tool_failed"
+            assert "aspect ratio 9:16" in tool_metadata["error"]
+            return {"media_billing_status": "voided"}
+
+    async def fake_run_media_subprocess(*, argv, cwd, env, timeout_seconds, context, kind):
+        del cwd, timeout_seconds, context, kind
+        out_index = argv.index("--out") + 1
+        local_path = Path(argv[out_index])
+        _write_test_png(local_path, size=(1024, 1024))
+        metadata = {
+            "artifact_paths": [str(local_path)],
+            "model_id": "kolors",
+            "provider": "kolors",
+            "effective_size": "720x1280",
+            "requested_aspect_ratio": "9:16",
+        }
+        Path(env["OPENHARNESS_IMAGEGEN_METADATA_PATH"]).write_text(json.dumps(metadata), encoding="utf-8")
+        return MediaSubprocessResult(0, f"Wrote {local_path}", {})
+
+    hook = ReleaseHook()
+    monkeypatch.setattr("openharness.tools.imagegen_cli_tool.run_media_subprocess", fake_run_media_subprocess)
+    monkeypatch.setattr("openharness.tools.imagegen_cli_tool._read_image_dimensions", lambda path: (1024, 1024))
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-image-key")
+
+    result = await ImagegenCliTool().execute(
+        ImagegenCliInput(
+            command="generate",
+            prompt="vertical poster",
+            model="kolors",
+            aspect_ratio="9:16",
+            out="output/imagegen/poster.png",
+            force=True,
+        ),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={
+                "hook": hook,
+                "media_billing_reservation": {"resource_log_id": 9},
+            },
+        ),
+    )
+
+    assert result.is_error
+    assert hook.released is True
+    assert "Actual dimensions: 1024x1024" in result.output
+    assert result.metadata["media_billing_status"] == "voided"
+    assert result.metadata["actual_width"] == 1024
+    assert result.metadata["actual_height"] == 1024
+
+
+@pytest.mark.asyncio
 async def test_imagegen_cli_text_generation_skips_e2b_workspace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -431,12 +520,11 @@ async def test_imagegen_cli_text_generation_skips_e2b_workspace(
         seen_env.update(env)
         out_index = argv.index("--out") + 1
         local_path = Path(argv[out_index])
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-        local_path.write_bytes(b"png-bytes")
+        _write_test_png(local_path)
         metadata = {
             "artifact_paths": [str(local_path)],
             "model_id": "kolors",
-            "provider": "openai_compatible",
+            "provider": "kolors",
         }
 
         Path(env["OPENHARNESS_IMAGEGEN_METADATA_PATH"]).write_text(json.dumps(metadata), encoding="utf-8")
@@ -445,6 +533,7 @@ async def test_imagegen_cli_text_generation_skips_e2b_workspace(
 
     monkeypatch.setattr("openharness.tools.imagegen_cli_tool.get_e2b_task_session", fake_get_session)
     monkeypatch.setattr("openharness.tools.imagegen_cli_tool.run_media_subprocess", fake_run_media_subprocess)
+    monkeypatch.setattr("openharness.tools.imagegen_cli_tool._read_image_dimensions", lambda path: (32, 32))
     monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-image-key")
 
     result = await ImagegenCliTool().execute(
@@ -522,13 +611,13 @@ async def test_imagegen_cli_e2b_materializes_artifact_input(
         seen_input = Path(argv[argv.index("--image") + 1]).read_bytes()
         out_index = argv.index("--out") + 1
         local_path = Path(argv[out_index])
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-        local_path.write_bytes(b"png-bytes")
+        _write_test_png(local_path)
         output = f"IMAGEGEN_METADATA:{__import__('json').dumps({'artifact_paths': [str(local_path)]})}"
         return MediaSubprocessResult(0, output, {})
 
     monkeypatch.setattr("openharness.tools.imagegen_cli_tool.get_e2b_task_session", fake_get_session)
     monkeypatch.setattr("openharness.tools.imagegen_cli_tool.run_media_subprocess", fake_run_media_subprocess)
+    monkeypatch.setattr("openharness.tools.imagegen_cli_tool._read_image_dimensions", lambda path: (32, 32))
 
     result = await ImagegenCliTool().execute(
         ImagegenCliInput(command="edit", prompt="hat", images=["artifact:art_123"], out="output/imagegen/hat.png"),
@@ -575,13 +664,13 @@ async def test_imagegen_cli_e2b_copies_host_image_and_mask_inputs(
         assert Path(argv[argv.index("--mask") + 1]).read_bytes() == b"mask-image"
         out_index = argv.index("--out") + 1
         local_path = Path(argv[out_index])
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-        local_path.write_bytes(b"png-bytes")
+        _write_test_png(local_path)
         output = f"IMAGEGEN_METADATA:{__import__('json').dumps({'artifact_paths': [str(local_path)]})}"
         return MediaSubprocessResult(0, output, {})
 
     monkeypatch.setattr("openharness.tools.imagegen_cli_tool.get_e2b_task_session", fake_get_session)
     monkeypatch.setattr("openharness.tools.imagegen_cli_tool.run_media_subprocess", fake_run_media_subprocess)
+    monkeypatch.setattr("openharness.tools.imagegen_cli_tool._read_image_dimensions", lambda path: (32, 32))
 
     result = await ImagegenCliTool().execute(
         ImagegenCliInput(

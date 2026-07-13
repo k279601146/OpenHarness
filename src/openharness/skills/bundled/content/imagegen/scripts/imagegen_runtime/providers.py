@@ -44,14 +44,18 @@ def provider_metadata(spec: ImageModelSpec, outputs: list[Path], args: Any | Non
     )
     return {
         "model_id": spec.model_id,
+        "upstream_model_id": spec.api_model,
         "provider": spec.provider,
         "api_model": spec.api_model,
         "size": metadata_size,
+        "effective_size": metadata_size,
         "resolution": resolution,
         "quality": getattr(args, "quality", None) if args is not None else spec.default_quality,
         "aspect_ratio": metadata_aspect_ratio,
+        "requested_aspect_ratio": getattr(args, "aspect_ratio", None) if args is not None else None,
         "output_count": count,
         "artifact_paths": [str(path) for path in outputs],
+        "execution_parameters": _execution_parameters(args, resolution, metadata_size, metadata_aspect_ratio),
     }
 
 
@@ -89,8 +93,8 @@ def run_non_gpt_image(args: Any, outputs: list[Path], prompt: str) -> dict[str, 
         saved = _run_gemini(spec, args, prompt, outputs, api_key, base_url)
     elif spec.provider == "doubao":
         saved = _run_doubao(spec, args, prompt, outputs, api_key, base_url)
-    elif spec.provider == "openai_compatible":
-        saved = _run_openai_compatible(spec, args, prompt, outputs, api_key, base_url)
+    elif spec.provider == "kolors":
+        saved = _run_kolors(spec, args, prompt, outputs, api_key, base_url)
     else:
         raise ImagegenProviderError(f"Unsupported image provider: {spec.provider}")
     return provider_metadata(spec, saved, args, prompt)
@@ -140,10 +144,31 @@ def _build_payload(spec: ImageModelSpec, args: Any, prompt: str) -> dict[str, An
             "sequential_image_generation": "auto" if n > 1 else "disabled",
             "sequential_image_generation_options": {"max_images": n},
         }
+        _add_optional_execution_fields(payload, resolution=resolution, aspect_ratio=aspect_ratio, quality=getattr(args, "quality", None))
         if images:
             payload["image"] = [_load_image(path, "doubao") for path in images]
         return payload
-    return {
+    if spec.provider == "kolors":
+        payload = {
+            "provider": spec.provider,
+            "model": spec.api_model,
+            "prompt": prompt,
+            "image_size": effective_size,
+            "batch_size": n,
+        }
+        negative_prompt = str(getattr(args, "negative", "") or "").strip()
+        if negative_prompt:
+            payload["negative_prompt"] = negative_prompt
+        for source_name, target_name in {
+            "seed": "seed",
+            "num_inference_steps": "num_inference_steps",
+            "guidance_scale": "guidance_scale",
+        }.items():
+            value = getattr(args, source_name, None)
+            if value is not None and str(value).strip() != "":
+                payload[target_name] = value
+        return payload
+    payload = {
         "provider": spec.provider,
         "model": spec.api_model,
         "prompt": prompt,
@@ -151,6 +176,49 @@ def _build_payload(spec: ImageModelSpec, args: Any, prompt: str) -> dict[str, An
         "n": n,
         "response_format": "b64_json",
     }
+    _add_optional_execution_fields(payload, resolution=resolution, aspect_ratio=aspect_ratio, quality=getattr(args, "quality", None))
+    return payload
+
+
+def _execution_parameters(args: Any | None, resolution: str | None, size: str, aspect_ratio: str | None) -> dict[str, Any]:
+    if args is None:
+        return {
+            "effective": {
+                "resolution": resolution,
+                "size": size,
+                "aspect_ratio": aspect_ratio,
+            }
+        }
+    requested = {
+        "resolution": getattr(args, "resolution", None),
+        "size": getattr(args, "size", None),
+        "aspect_ratio": getattr(args, "aspect_ratio", None),
+        "quality": getattr(args, "quality", None),
+    }
+    return {
+        "requested": {key: value for key, value in requested.items() if value is not None and str(value).strip() != ""},
+        "effective": {
+            "resolution": resolution,
+            "size": size,
+            "aspect_ratio": aspect_ratio,
+            "quality": getattr(args, "quality", None),
+        },
+    }
+
+
+def _add_optional_execution_fields(
+    payload: dict[str, Any],
+    *,
+    resolution: str | None,
+    aspect_ratio: str | None,
+    quality: str | None,
+) -> None:
+    if resolution:
+        payload["resolution"] = resolution
+    if aspect_ratio:
+        payload["aspect_ratio"] = aspect_ratio
+    if quality and str(quality).strip().lower() not in {"", "auto"}:
+        payload["quality"] = quality
 
 
 def _run_gemini(spec: ImageModelSpec, args: Any, prompt: str, outputs: list[Path], api_key: str, base_url: str) -> list[Path]:
@@ -211,6 +279,51 @@ def _run_doubao(spec: ImageModelSpec, args: Any, prompt: str, outputs: list[Path
             saved.append(outputs[index])
     if not saved:
         raise ImagegenProviderError("Doubao image API did not return image data.")
+    return saved
+
+
+def _run_kolors(
+    spec: ImageModelSpec,
+    args: Any,
+    prompt: str,
+    outputs: list[Path],
+    api_key: str,
+    base_url: str,
+) -> list[Path]:
+    import httpx
+
+    payload = _build_payload(spec, args, prompt)
+    clean_url = base_url.rstrip("/")
+    if "/v1" not in clean_url:
+        clean_url = f"{clean_url}/v1"
+    response = httpx.post(
+        f"{clean_url}/images/generations",
+        json={key: value for key, value in payload.items() if key != "provider"},
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        timeout=180.0,
+    )
+    response.raise_for_status()
+    data = response.json().get("data", [])
+    saved: list[Path] = []
+    for index, item in enumerate(data):
+        if index >= len(outputs):
+            break
+        b64 = item.get("b64_json")
+        url = item.get("url")
+        if b64:
+            _write_b64(outputs[index], b64)
+        elif url:
+            content = safe_download_image(
+                str(url),
+                max_bytes=15 * 1024 * 1024,
+                timeout_seconds=180.0,
+            )
+            _write_bytes(outputs[index], content)
+        else:
+            continue
+        saved.append(outputs[index])
+    if not saved:
+        raise ImagegenProviderError("Kolors image API did not return image data.")
     return saved
 
 

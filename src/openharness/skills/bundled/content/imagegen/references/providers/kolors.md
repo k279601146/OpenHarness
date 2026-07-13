@@ -1,28 +1,55 @@
 # Kolors Provider Notes
 
-Kolors 通过 OpenAI-compatible 图片接口适配器执行，工具模型 ID 为 `kolors`。
+Kolors 通过 SiliconFlow 风格的图片生成接口执行，工具模型 ID 为 `kolors`，上游模型通常为 `Kwai-Kolors/Kolors`。
+
+官方参考：SiliconFlow image generation API, `POST /v1/images/generations`。
 
 ## 何时选择
 
-- 用户明确要求 Kolors、开源风格模型或低成本轻量生成。
-- 适合快速草图、社媒图、封面图和固定比例出图。
-- 不建议用于需要稳定文字、复杂编辑、精确 mask 或强身份保持的任务。
+- 用户明确要求 Kolors、Kwai-Kolors、开源风格模型或轻量快速文生图。
+- 适合社媒封面、小红书图、中文提示词、快速草图和固定比例出图。
+- 不建议用于需要稳定文字排版、复杂局部编辑、mask、强身份保持或多参考图融合的任务。
 
-## 参数选择
+## API 字段
 
-- 常用尺寸：
-  - `1024x1024` 或 `aspect_ratio="1:1"`
-  - `1792x1024` 或 `aspect_ratio="16:9"`
-  - `1024x1792` 或 `aspect_ratio="9:16"`
-- 如果用户要求 2K/4K，优先保留用户意图传给 `imagegen_cli`；如果 provider 拒绝，再降到最接近的支持尺寸。
-- `quality` 对 Kolors 通常不是强控制项；可省略或使用默认 `medium`。
+Kolors 使用 provider 原生字段，不使用通用 OpenAI 图片字段：
 
-## 编辑与参考图
+- `model`: `Kwai-Kolors/Kolors`
+- `prompt`: 生成提示词
+- `image_size`: 官方尺寸字符串
+- `batch_size`: 生成张数
+- 可选：`negative_prompt`
+- 可选：`seed`
+- 可选：`num_inference_steps`
+- 可选：`guidance_scale`
 
-- Kolors 当前主要保证文生图。
-- 参考图或编辑需求优先考虑 GPT Image、Nano Banana/Gemini 或 Doubao Seedream。
+不要为 Kolors payload 使用 `size` 或 `n`。`imagegen_cli` 可以接收通用 `size` / `n`，runtime 会翻译成 `image_size` / `batch_size`。
+
+## 官方尺寸
+
+Kolors 当前按官方尺寸表选择明确像素尺寸：
+
+- `1:1` -> `1024x1024`
+- `3:4` -> `960x1280`
+- `3:4` 低一档 -> `768x1024`
+- `1:2` -> `720x1440`
+- `9:16` -> `720x1280`
+
+如果用户要求“生成 1 张 9:16”，调用 `imagegen_cli` 时优先传：
+
+```json
+{
+  "model": "kolors",
+  "n": 1,
+  "size": "720x1280",
+  "aspect_ratio": "9:16"
+}
+```
+
+也可以只传 `aspect_ratio="9:16"`，runtime 会派生 `image_size="720x1280"`。显式 `size` 优先级最高。
 
 ## 失败处理
 
-- 如果 OpenAI-compatible 上游返回尺寸不支持，改用 `1024x1024`、`1792x1024` 或 `1024x1792` 中最接近的比例。
-- 不要在服务端计费预检阶段拒绝用户的尺寸创意；参数兼容性由 `imagegen_cli` 和上游错误反馈决定。
+- 如果上游返回尺寸不支持，按官方表选择最接近用户比例的尺寸后重试。
+- 不要把 registry 的 `default_size="1024x1024"` 当作用户比例请求的硬约束；它只用于用户没有给出尺寸或比例时的兜底。
+- 生成后 runtime 会读取真实图片尺寸；如果用户明确要求比例但实际比例不匹配，工具调用必须失败，而不是交付错误图。

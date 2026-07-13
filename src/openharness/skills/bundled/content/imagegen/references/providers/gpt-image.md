@@ -1,28 +1,48 @@
 # GPT Image Provider Notes
 
-GPT Image 是 `imagegen_cli` 中能力最完整的图片路径，适合高保真图像、文字较多的海报/信息图、精细编辑、参考图保持和复杂构图。
+GPT Image 是 `imagegen_cli` 中能力最完整的图片路径，适合高保真图像、文字密集海报/信息图、精细编辑、参考图保持和复杂构图。
+
+官方参考：OpenAI GPT Image Generation Models Prompting Guide 与 Images API。
 
 ## 何时选择
 
 - 用户明确指定 `gpt-image-2` 或其他 `gpt-image-*` 模型。
-- 需要较强文本准确性、复杂画面结构、UI/信息图、商品图精修。
+- 需要强文本准确性、复杂画面结构、UI/信息图、商品图精修。
 - 需要图片编辑、参考图、mask 或更高稳定性。
 
-## 参数选择
+## `gpt-image-2` 尺寸规则
 
-- 常规草图可用 `size="1024x1024"` 或省略尺寸。
-- 2K 输出可用 `2048x2048`、`2048x1152`、`1152x2048`。
-- 4K 横图用 `3840x2160`，4K 竖图用 `2160x3840`。
-- 也可以传 `resolution="2K"` / `resolution="4K"` 与 `aspect_ratio`，让 CLI runtime 解析。
-- `quality` 可用 `low`、`medium`、`high`、`auto`；快速草图用 `low`，正式输出用 `medium/high/auto`。
+`gpt-image-2` 使用 OpenAI Images API 的 `size` 字段。`size` 可以是 `auto` 或 `WIDTHxHEIGHT`，只要满足以下约束：
 
-## 编辑与透明背景
+- 最大边不超过官方限制，实践中按 `<= 3840px` 处理；若上游严格要求 `< 3840`，向下取最近的 16 倍数。
+- 宽和高都必须是 `16px` 的倍数。
+- 长边与短边比例不超过 `3:1`。
+- 总像素数在 `655,360` 到 `8,294,400` 之间。
 
+不要从 registry 枚举里限制 `gpt-image-2` 尺寸；按用户需求给出满足约束的明确 `size`。
+
+## 常用尺寸
+
+- 方图：`1024x1024`
+- 标准横图：`1536x1024`
+- 标准竖图：`1024x1536`
+- 2K 方图：`2048x2048`
+- 2K 横图：`2048x1152`
+- 9:16 2K 竖图：`1152x2048`
+- 4K 横图：`3840x2160`
+- 9:16 4K 竖图：`2160x3840`
+- 自动：`auto`
+
+如果用户要求 9:16，优先使用 `1152x2048`。如果明确要求 4K 竖图，使用 `2160x3840`；若上游严格拒绝最大边等于 3840，可改为最近的 16 倍数。
+
+## 质量与编辑
+
+- `quality` 可用 `low`、`medium`、`high`、`auto`。
+- 快速草图可用 `low`；正式输出、密集文字、信息图、身份敏感编辑用 `medium`、`high` 或 `auto`。
 - 编辑或参考图使用 `command="edit"` 并传 `images=[...]`。
-- `gpt-image-2` 不支持原生 `background=transparent`。透明图默认使用纯色 chroma-key 生成后本地抠图。
-- 只有用户明确接受模型降级时，才考虑支持原生透明背景的旧 GPT Image 路径。
+- `gpt-image-2` 不支持原生 `background=transparent`；透明图默认走纯色 chroma-key 后处理。只有用户明确接受模型降级时，才考虑旧 GPT Image 透明背景路径。
 
 ## 失败处理
 
-- 如果上游返回尺寸或参数错误，调整传给 `imagegen_cli` 的 `size/resolution/aspect_ratio/quality` 后重试。
-- 不要为了通过计费预检降低画面需求；计费由服务端按输出数量和 K 档位处理。
+- 如果上游返回尺寸错误，调整 `size` 到满足 16 倍数、比例和像素总量约束的相邻值后重试。
+- 不要为了计费预检降低用户画面需求；计费由服务端按输出数量和 K 档位处理。

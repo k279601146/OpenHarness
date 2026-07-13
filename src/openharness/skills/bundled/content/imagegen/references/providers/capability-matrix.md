@@ -1,13 +1,20 @@
 # Imagegen Provider Capability Matrix
 
-本目录说明 `imagegen_cli` 的执行能力和 Agent 参数选择方式，不是服务端计费准入规则。SaaS 计费只由后端在请求上游前按可信的输出张数和 `billing_size_tier` 预检、预占，并在成功后提交扣费。
+本文件只用于“需要选择模型”时的快速概览，不是每次生成都要读取的参数表。
 
-| Model family | Provider | Tool model ids | Generate | Edit/reference | Notes |
+如果用户已经显式指定图片模型，或 UI 已选择图片模型且 `is_model_auto_mode=false`，不要先读本矩阵。直接使用该模型，并读取对应 provider 文档：
+
+- `gpt-image-2` / `gpt-image-*` -> `gpt-image.md`
+- `nano-banana` / `nano-banana-2` / `nano-banana-pro` -> `nano-banana.md`
+- `doubao-seedream-*` -> `doubao-seedream.md`
+- `kolors` -> `kolors.md`
+
+| Model family | Provider | Tool model ids | Generate | Edit/reference | Best fit |
 | --- | --- | --- | --- | --- | --- |
-| GPT Image | `gpt_image` | `gpt-image-2`, other `gpt-image-*` | Yes | Yes | 最适合高保真、文字密集、复杂编辑；详见 `gpt-image.md`。 |
-| Nano Banana / Gemini | `gemini` | `nano-banana`, `nano-banana-2`, `nano-banana-pro` | Yes | Yes | 使用 Gemini image API 风格的 `resolution + aspect_ratio`；详见 `nano-banana.md`。 |
-| Doubao Seedream | `doubao` | `doubao-seedream-5-0-260128`, `doubao-seedream-5-0-lite-260128`, `doubao-seedream-4-5-251128`, `doubao-seedream-4-0-250828` | Yes | Yes | 适合中文语境、电商和社媒图；详见 `doubao-seedream.md`。 |
-| Kolors | `openai_compatible` | `kolors` | Yes | No guaranteed edit support | 适合轻量开放模型和固定比例生成；详见 `kolors.md`。 |
+| GPT Image | `gpt_image` | `gpt-image-2`, other `gpt-image-*` | Yes | Yes | 高保真、文字密集、复杂编辑、参考图保持、灵活尺寸 |
+| Nano Banana / Gemini | `gemini` | `nano-banana`, `nano-banana-2`, `nano-banana-pro` | Yes | Yes | Gemini 原生图像生成/编辑、自然语言迭代、参考图扩展 |
+| Doubao Seedream | `doubao` | `doubao-seedream-5-0-260128`, `doubao-seedream-5-0-lite-260128`, `doubao-seedream-4-5-251128`, `doubao-seedream-4-0-250828` | Yes | Yes | 中文市场、电商图、社媒封面、多图参考、组图生成 |
+| Kolors | `kolors` | `kolors` | Yes | No guaranteed edit support | 快速文生图、固定官方尺寸、中文语义、轻量生成 |
 
 Credentials come from the SaaS media model gateway:
 
@@ -18,7 +25,7 @@ Credentials come from the SaaS media model gateway:
 
 Agent 执行规则：
 
-- 用户指定模型时，将该模型 ID 原样传给 `imagegen_cli.model`。
-- 用户没有指定模型时，省略 `model`，由运行时使用 UI 或线程偏好。
-- 需要具体尺寸、比例、质量或参考图时，先读取本文件，再按 provider 文件选择参数。
-- 如果 provider 返回参数错误，不要改写计费；根据错误调整 `imagegen_cli` 参数后重试。
+- 用户指定模型时，把该模型 ID 原样传给 `imagegen_cli.model`。
+- UI 已选模型且非自动模式时，可以省略 `model`，由 runtime 使用 UI 偏好；但参数选择仍按该 provider 文档执行。
+- 只有用户没有指定模型，且 UI 没有明确非自动偏好时，才使用本矩阵帮助选型。
+- 不要把本矩阵当作尺寸白名单。具体 `size`、`aspect_ratio`、`resolution`、`image_size` 等字段以 provider 文档和官方 API 语义为准。
