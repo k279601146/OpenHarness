@@ -77,6 +77,20 @@ def test_imagegen_cli_metadata_file_does_not_write_stdout(
     assert json.loads(metadata_path.read_text(encoding="utf-8"))["billing_units"] == 6.0
 
 
+def test_imagegen_provider_specs_drive_model_registry() -> None:
+    kolors = get_model_spec("kolors")
+    doubao = get_model_spec("doubao-seedream-5-0-260128")
+    gemini = get_model_spec("nano-banana-pro")
+
+    assert kolors.count_field == "batch_size"
+    assert kolors.size_field == "image_size"
+    assert kolors.aspect_to_size["9:16"] == "720x1280"
+    assert "negative_prompt" in kolors.safe_optional_fields
+    assert doubao.count_field == "sequential_image_generation_options.max_images"
+    assert doubao.aspect_to_size["9:16"] == "1600x2848"
+    assert gemini.size_field == "generationConfig.imageConfig.imageSize"
+
+
 @pytest.mark.asyncio
 async def test_imagegen_cli_dry_run_routes_nano_banana(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-key")
@@ -126,7 +140,7 @@ async def test_imagegen_cli_doubao_aspect_ratio_is_forwarded_as_execution_parame
 
     assert not result.is_error
     assert result.metadata["resolution"] == "2K"
-    assert result.metadata["size"] == "2048x2048"
+    assert result.metadata["size"] == "1600x2848"
     assert result.metadata["aspect_ratio"] == "9:16"
     assert result.metadata["execution_parameters"]["requested"]["aspect_ratio"] == "9:16"
 
@@ -293,6 +307,19 @@ def test_kolors_payload_uses_siliconflow_fields() -> None:
     assert payload["negative_prompt"] == "low quality"
     assert "size" not in payload
     assert "n" not in payload
+
+
+def test_doubao_payload_uses_spec_count_and_aspect_size() -> None:
+    payload = _build_payload(
+        get_model_spec("doubao-seedream-5-0-260128"),
+        SimpleNamespace(resolution=None, size=None, aspect_ratio="9:16", image=[], n=3),
+        "a vertical poster",
+    )
+
+    assert payload["size"] == "1600x2848"
+    assert payload["sequential_image_generation"] == "auto"
+    assert payload["sequential_image_generation_options"]["max_images"] == 3
+    assert payload["response_format"] == "b64_json"
 
 
 def test_build_argv_omits_gpt_image_2_opaque_background_default(tmp_path: Path) -> None:
@@ -501,6 +528,65 @@ async def test_imagegen_cli_fails_when_actual_dimensions_do_not_match_requested_
     assert result.metadata["media_billing_status"] == "voided"
     assert result.metadata["actual_width"] == 1024
     assert result.metadata["actual_height"] == 1024
+
+
+@pytest.mark.asyncio
+async def test_imagegen_cli_fails_when_artifact_count_exceeds_reservation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ReleaseHook:
+        def __init__(self) -> None:
+            self.released = False
+
+        def release_media_tool_usage(self, reservation, *, reason, tool_metadata):
+            self.released = True
+            assert reservation["resource_log_id"] == 12
+            assert reason == "media_tool_failed"
+            assert "exceeding the reserved output count 1" in tool_metadata["error"]
+            return {"media_billing_status": "voided"}
+
+    async def fake_run_media_subprocess(*, argv, cwd, env, timeout_seconds, context, kind):
+        del argv, cwd, timeout_seconds, context, kind
+        first = tmp_path / "output" / "imagegen" / "one.png"
+        second = tmp_path / "output" / "imagegen" / "two.png"
+        _write_test_png(first)
+        _write_test_png(second)
+        metadata = {
+            "artifact_paths": [str(first), str(second)],
+            "model_id": "kolors",
+            "provider": "kolors",
+            "output_count": 2,
+        }
+        Path(env["OPENHARNESS_IMAGEGEN_METADATA_PATH"]).write_text(json.dumps(metadata), encoding="utf-8")
+        return MediaSubprocessResult(0, "Wrote two files", {})
+
+    hook = ReleaseHook()
+    monkeypatch.setattr("openharness.tools.imagegen_cli_tool.run_media_subprocess", fake_run_media_subprocess)
+    monkeypatch.setattr("openharness.tools.imagegen_cli_tool._read_image_dimensions", lambda path: (32, 32))
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-image-key")
+
+    result = await ImagegenCliTool().execute(
+        ImagegenCliInput(
+            command="generate",
+            prompt="cover",
+            model="kolors",
+            out="output/imagegen/one.png",
+            force=True,
+        ),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={
+                "hook": hook,
+                "media_billing_reservation": {"resource_log_id": 12, "output_count": 1},
+            },
+        ),
+    )
+
+    assert result.is_error
+    assert hook.released is True
+    assert result.metadata["media_billing_status"] == "voided"
+    assert result.metadata["reserved_output_count"] == 1
 
 
 @pytest.mark.asyncio

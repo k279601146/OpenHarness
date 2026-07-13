@@ -45,3 +45,10 @@ Google 文档要求 K 值使用大写，例如 `1K`、`2K`、`4K`；不要传 `1
 
 - 如果 Gemini 返回比例或分辨率不支持，保留用户意图，换成相近比例或降低分辨率后重试。
 - 不要为了计费预检删除用户需要的比例或参考图。
+
+## 计费与执行边界
+
+- 必须通过 `imagegen_cli` 调用，不要用 `bash`、自写脚本或直接 HTTP 请求 Gemini API。
+- 当前 Nano Banana/Gemini 图片路径按单图输出处理；需要多张时让系统拆成多次 `n=1` 子调用，不能用隐藏 provider 字段绕过计费。
+- 生成数量由后端 reservation 控制；runtime 会把 reservation 张数写回工具执行参数。
+- 执行日志只展示模型、provider、上游模型、尺寸、比例、实际尺寸和张数等安全 metadata。

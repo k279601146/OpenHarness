@@ -1468,11 +1468,17 @@ def _media_kind_for_tool(tool_name: str) -> str:
 
 def _media_output_count(tool_input: dict[str, object]) -> int:
     count = 1
-    for key in ("outputCount", "output_count", "num_images", "num_videos", "count", "n"):
+    for key in ("outputCount", "output_count", "num_images", "num_videos", "count", "n", "batch_size", "batchSize"):
         try:
             count = max(count, int(tool_input.get(key) or 0))
         except (TypeError, ValueError):
             continue
+    sequential_options = tool_input.get("sequential_image_generation_options")
+    if isinstance(sequential_options, dict):
+        try:
+            count = max(count, int(sequential_options.get("max_images") or 0))
+        except (TypeError, ValueError):
+            pass
     return count
 
 
@@ -1492,8 +1498,9 @@ def _bounded_media_int(raw: object, *, default: int, minimum: int, maximum: int)
 
 def _media_subtask_input(tool_input: dict[str, object], *, index: int, kind: str) -> dict[str, object]:
     item = dict(tool_input)
-    for key in ("outputCount", "output_count", "count", "num_images", "num_videos"):
+    for key in ("outputCount", "output_count", "count", "num_images", "num_videos", "batch_size", "batchSize"):
         item.pop(key, None)
+    item.pop("sequential_image_generation_options", None)
     item["n"] = 1
     if kind == "image":
         item["num_images"] = 1

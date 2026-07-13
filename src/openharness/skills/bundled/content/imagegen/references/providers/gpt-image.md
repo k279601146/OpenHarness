@@ -46,3 +46,10 @@ GPT Image 是 `imagegen_cli` 中能力最完整的图片路径，适合高保真
 
 - 如果上游返回尺寸错误，调整 `size` 到满足 16 倍数、比例和像素总量约束的相邻值后重试。
 - 不要为了计费预检降低用户画面需求；计费由服务端按输出数量和 K 档位处理。
+
+## 计费与执行边界
+
+- 必须通过 `imagegen_cli` 调用，不要用 `bash`、自写脚本或直接 HTTP 请求 OpenAI/兼容网关。
+- 生成张数使用 `n` 或 `num_images` 表达；后端会按规范化后的 `output_count` 创建 reservation。
+- 不要把 provider request body 放进 prompt、metadata 或隐藏字段中；runtime 只会发送 spec allowlist 内的字段。
+- 如果上游返回图片数超过 reservation 张数，工具调用会失败并释放/作废 reservation。

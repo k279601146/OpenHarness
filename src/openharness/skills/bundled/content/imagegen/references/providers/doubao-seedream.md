@@ -59,3 +59,10 @@ Seedream 更适合使用明确尺寸。常用 2K 尺寸：
 
 - 如果上游对某个尺寸拒绝，换成同一比例的邻近官方尺寸后重试。
 - 不要把上游尝试次数转化为用户额外扣费；同一次工具调用应共享服务端 reservation。
+
+## 计费与执行边界
+
+- 必须通过 `imagegen_cli` 调用，不要用 `bash`、自写脚本或直接 HTTP 请求 Seedream API。
+- 多图请求使用 `n` 或 `num_images` 表达；runtime 会把 reservation 张数翻译成 `sequential_image_generation_options.max_images`。
+- 不要直接传隐藏的 `sequential_image_generation_options.max_images` 来提高返回张数；后端会把该字段纳入 `output_count` 计费。
+- provider 返回图片数超过 reservation 张数时，工具调用会失败，不发布 artifact，不提交扣费。

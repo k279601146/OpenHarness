@@ -117,66 +117,62 @@ def _build_payload(spec: ImageModelSpec, args: Any, prompt: str) -> dict[str, An
         size=getattr(args, "size", None),
         aspect_ratio=getattr(args, "aspect_ratio", None),
     )
-    n = int(getattr(args, "n", 1) or 1)
+    n = _requested_output_count(spec, args)
     if spec.provider == "gemini":
         parts: list[dict[str, Any]] = [{"text": prompt}]
         parts.extend(_load_image(path, "gemini") for path in images)
+        generation_config = {
+            "responseModalities": ["IMAGE"],
+            "imageConfig": {
+                "aspectRatio": aspect_ratio,
+                "imageSize": resolution,
+            },
+        }
         return {
             "provider": spec.provider,
             "model": spec.api_model,
             "contents": [{"parts": parts}],
-            "generationConfig": {
-                "responseModalities": ["IMAGE"],
-                "imageConfig": {
-                    "aspectRatio": aspect_ratio,
-                    "imageSize": resolution,
-                },
-            },
+            "generationConfig": generation_config,
         }
     if spec.provider == "doubao":
-        payload = {
-            "provider": spec.provider,
-            "model": spec.api_model,
-            "prompt": prompt,
-            "size": effective_size,
-            "stream": True,
-            "response_format": "b64_json",
-            "sequential_image_generation": "auto" if n > 1 else "disabled",
-            "sequential_image_generation_options": {"max_images": n},
-        }
-        _add_optional_execution_fields(payload, resolution=resolution, aspect_ratio=aspect_ratio, quality=getattr(args, "quality", None))
+        payload = _default_execution_payload(spec)
+        payload.update(
+            {
+                "provider": spec.provider,
+                "model": spec.api_model,
+                "prompt": prompt,
+            }
+        )
+        _set_payload_field(payload, spec.size_field, effective_size)
+        _set_payload_field(payload, spec.count_field, n)
+        payload["sequential_image_generation"] = "auto" if n > 1 else "disabled"
         if images:
             payload["image"] = [_load_image(path, "doubao") for path in images]
         return payload
     if spec.provider == "kolors":
-        payload = {
+        payload = _default_execution_payload(spec)
+        payload.update(
+            {
+                "provider": spec.provider,
+                "model": spec.api_model,
+                "prompt": prompt,
+            }
+        )
+        _set_payload_field(payload, spec.size_field, effective_size)
+        _set_payload_field(payload, spec.count_field, n)
+        _copy_safe_optional_fields(payload, spec, args)
+        return payload
+    payload = _default_execution_payload(spec)
+    payload.update(
+        {
             "provider": spec.provider,
             "model": spec.api_model,
             "prompt": prompt,
-            "image_size": effective_size,
-            "batch_size": n,
         }
-        negative_prompt = str(getattr(args, "negative", "") or "").strip()
-        if negative_prompt:
-            payload["negative_prompt"] = negative_prompt
-        for source_name, target_name in {
-            "seed": "seed",
-            "num_inference_steps": "num_inference_steps",
-            "guidance_scale": "guidance_scale",
-        }.items():
-            value = getattr(args, source_name, None)
-            if value is not None and str(value).strip() != "":
-                payload[target_name] = value
-        return payload
-    payload = {
-        "provider": spec.provider,
-        "model": spec.api_model,
-        "prompt": prompt,
-        "size": effective_size,
-        "n": n,
-        "response_format": "b64_json",
-    }
-    _add_optional_execution_fields(payload, resolution=resolution, aspect_ratio=aspect_ratio, quality=getattr(args, "quality", None))
+    )
+    _set_payload_field(payload, spec.size_field, effective_size)
+    _set_payload_field(payload, spec.count_field, n)
+    _copy_safe_optional_fields(payload, spec, args)
     return payload
 
 
@@ -221,6 +217,55 @@ def _add_optional_execution_fields(
         payload["quality"] = quality
 
 
+def _requested_output_count(spec: ImageModelSpec, args: Any) -> int:
+    try:
+        count = int(getattr(args, "n", 1) or 1)
+    except (TypeError, ValueError):
+        count = 1
+    count = max(count, 1)
+    if count > spec.max_outputs:
+        raise ImagegenProviderError(
+            f"{spec.model_id} requested {count} image(s), but the provider spec allows at most {spec.max_outputs}."
+        )
+    return count
+
+
+def _default_execution_payload(spec: ImageModelSpec) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in (spec.default_execution_parameters or {}).items():
+        _set_payload_field(payload, key, value)
+    return payload
+
+
+def _set_payload_field(payload: dict[str, Any], field_path: str | None, value: Any) -> None:
+    if not field_path or value is None:
+        return
+    parts = [part for part in str(field_path).split(".") if part]
+    if not parts:
+        return
+    cursor = payload
+    for part in parts[:-1]:
+        existing = cursor.get(part)
+        if not isinstance(existing, dict):
+            existing = {}
+            cursor[part] = existing
+        cursor = existing
+    cursor[parts[-1]] = value
+
+
+def _copy_safe_optional_fields(payload: dict[str, Any], spec: ImageModelSpec, args: Any) -> None:
+    aliases = spec.optional_field_aliases or {}
+    for target_name in spec.safe_optional_fields:
+        source_names = [source for source, target in aliases.items() if target == target_name]
+        source_names.append(target_name)
+        for source_name in source_names:
+            value = getattr(args, source_name, None)
+            if value is None or str(value).strip() == "":
+                continue
+            _set_payload_field(payload, target_name, value)
+            break
+
+
 def _run_gemini(spec: ImageModelSpec, args: Any, prompt: str, outputs: list[Path], api_key: str, base_url: str) -> list[Path]:
     import httpx
 
@@ -239,6 +284,10 @@ def _run_gemini(spec: ImageModelSpec, args: Any, prompt: str, outputs: list[Path
     images = [item.get("inlineData", {}).get("data") for item in parts if item.get("inlineData", {}).get("data")]
     if not images:
         raise ImagegenProviderError("Gemini image API did not return image data.")
+    if len(images) > len(outputs):
+        raise ImagegenProviderError(
+            f"Gemini image API returned {len(images)} image(s), exceeding the reserved output count {len(outputs)}."
+        )
     return _write_b64_images(images[: len(outputs)], outputs)
 
 
@@ -274,7 +323,9 @@ def _run_doubao(spec: ImageModelSpec, args: Any, prompt: str, outputs: list[Path
                 continue
             index = len(saved)
             if index >= len(outputs):
-                break
+                raise ImagegenProviderError(
+                    f"Doubao image API returned more images than the reserved output count {len(outputs)}."
+                )
             _write_b64(outputs[index], b64)
             saved.append(outputs[index])
     if not saved:
@@ -304,6 +355,10 @@ def _run_kolors(
     )
     response.raise_for_status()
     data = response.json().get("data", [])
+    if len(data) > len(outputs):
+        raise ImagegenProviderError(
+            f"Kolors image API returned {len(data)} image(s), exceeding the reserved output count {len(outputs)}."
+        )
     saved: list[Path] = []
     for index, item in enumerate(data):
         if index >= len(outputs):
@@ -349,6 +404,10 @@ def _run_openai_compatible(
     )
     response.raise_for_status()
     data = response.json().get("data", [])
+    if len(data) > len(outputs):
+        raise ImagegenProviderError(
+            f"OpenAI-compatible image API returned {len(data)} image(s), exceeding the reserved output count {len(outputs)}."
+        )
     saved: list[Path] = []
     for index, item in enumerate(data):
         if index >= len(outputs):

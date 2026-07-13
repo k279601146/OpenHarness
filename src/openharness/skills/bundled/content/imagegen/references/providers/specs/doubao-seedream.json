@@ -1,0 +1,40 @@
+{
+  "model_ids": [
+    "doubao-seedream-5-0-260128",
+    "doubao-seedream-5-0-lite-260128",
+    "doubao-seedream-4-5-251128",
+    "doubao-seedream-4-0-250828"
+  ],
+  "provider": "doubao",
+  "api_model_default": "$model_id",
+  "default_base_url": "https://api.packyapi.com",
+  "count_field": "sequential_image_generation_options.max_images",
+  "size_field": "size",
+  "aspect_to_size": {
+    "1:1": "2048x2048",
+    "4:3": "2304x1728",
+    "3:4": "1728x2304",
+    "16:9": "2848x1600",
+    "9:16": "1600x2848"
+  },
+  "derive_size_from_aspect": true,
+  "safe_optional_fields": [],
+  "default_execution_parameters": {
+    "stream": true,
+    "response_format": "b64_json",
+    "sequential_image_generation": "disabled",
+    "sequential_image_generation_options.max_images": 1
+  },
+  "max_outputs": 4,
+  "defaults": {
+    "resolution": "2K",
+    "size": "2048x2048",
+    "aspect_ratio": "1:1",
+    "quality": "medium"
+  },
+  "supports": {
+    "edit": true,
+    "reference": true,
+    "batch": true
+  }
+}

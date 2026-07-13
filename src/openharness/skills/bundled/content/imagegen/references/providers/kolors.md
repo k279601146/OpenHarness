@@ -53,3 +53,10 @@ Kolors 当前按官方尺寸表选择明确像素尺寸：
 - 如果上游返回尺寸不支持，按官方表选择最接近用户比例的尺寸后重试。
 - 不要把 registry 的 `default_size="1024x1024"` 当作用户比例请求的硬约束；它只用于用户没有给出尺寸或比例时的兜底。
 - 生成后 runtime 会读取真实图片尺寸；如果用户明确要求比例但实际比例不匹配，工具调用必须失败，而不是交付错误图。
+
+## 计费与执行边界
+
+- 必须通过 `imagegen_cli` 调用，不要用 `bash`、自写脚本或直接 HTTP 请求 SiliconFlow/Kolors API。
+- 多图请求使用 `n` 或 `num_images` 表达；runtime 会把 reservation 张数翻译成 Kolors `batch_size`。
+- 不要直接传隐藏的 `batch_size` 来提高返回张数；后端会把 `batch_size` 纳入 `output_count` 计费。
+- provider 返回图片数超过 reservation 张数时，工具调用会失败，不发布 artifact，不提交扣费。

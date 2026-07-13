@@ -1,0 +1,37 @@
+{
+  "model_ids": ["gpt-image-2"],
+  "provider": "gpt_image",
+  "api_model_default": "gpt-image-2",
+  "default_base_url": "https://api.packyapi.com",
+  "count_field": "n",
+  "size_field": "size",
+  "aspect_to_size": {},
+  "derive_size_from_aspect": false,
+  "safe_optional_fields": [
+    "quality",
+    "background",
+    "output_format",
+    "output_compression",
+    "moderation",
+    "input_fidelity"
+  ],
+  "default_execution_parameters": {
+    "size": "auto",
+    "quality": "medium"
+  },
+  "max_outputs": 10,
+  "defaults": {
+    "resolution": "1K",
+    "size": "auto",
+    "aspect_ratio": "1:1",
+    "quality": "medium"
+  },
+  "supports": {
+    "edit": true,
+    "reference": true,
+    "batch": true
+  },
+  "supported_output_formats": ["png", "jpeg", "webp"],
+  "supported_backgrounds": ["opaque", "auto"],
+  "supported_input_fidelities": []
+}

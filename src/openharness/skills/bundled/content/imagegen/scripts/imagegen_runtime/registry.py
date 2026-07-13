@@ -7,10 +7,12 @@ dimension allowlists.
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from dataclasses import dataclass
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal
 
 
 Provider = Literal["gpt_image", "kolors", "gemini", "doubao"]
@@ -22,6 +24,14 @@ class ImageModelSpec:
     provider: Provider
     api_model: str
     default_base_url: str
+    count_field: str | None = None
+    size_field: str = "size"
+    aspect_ratio_field: str | None = None
+    aspect_to_size: dict[str, str] | None = None
+    derive_size_from_aspect: bool = False
+    safe_optional_fields: tuple[str, ...] = ()
+    optional_field_aliases: dict[str, str] | None = None
+    default_execution_parameters: dict[str, Any] | None = None
     supports_edit: bool = False
     supports_reference: bool = False
     supports_batch: bool = False
@@ -35,117 +45,91 @@ class ImageModelSpec:
     supported_input_fidelities: tuple[str, ...] = ()
 
 
-IMAGE_MODEL_REGISTRY: dict[str, ImageModelSpec] = {
-    "kolors": ImageModelSpec(
-        model_id="kolors",
-        provider="kolors",
-        api_model="Kwai-Kolors/Kolors",
-        default_base_url="https://api.packyapi.com/v1",
-        default_size="1024x1024",
-        default_resolution="1K",
-        default_aspect_ratio="1:1",
-        max_outputs=4,
-    ),
-    "gpt-image-2": ImageModelSpec(
-        model_id="gpt-image-2",
-        provider="gpt_image",
-        api_model="gpt-image-2",
-        default_base_url="https://api.packyapi.com",
-        supports_edit=True,
-        supports_reference=True,
-        supports_batch=True,
-        default_size="auto",
-        default_resolution="1K",
-        default_aspect_ratio="1:1",
-        default_quality="medium",
-        max_outputs=10,
-        supported_output_formats=("png", "jpeg", "webp"),
-        supported_backgrounds=("opaque", "auto"),
-        supported_input_fidelities=(),
-    ),
-    "nano-banana": ImageModelSpec(
-        model_id="nano-banana",
-        provider="gemini",
-        api_model="gemini-2.5-flash-image",
-        default_base_url="https://generativelanguage.googleapis.com",
-        supports_edit=True,
-        supports_reference=True,
-        default_resolution="1K",
-        default_size="1K",
-        default_aspect_ratio="1:1",
-    ),
-    "nano-banana-2": ImageModelSpec(
-        model_id="nano-banana-2",
-        provider="gemini",
-        api_model="gemini-3.1-flash-image",
-        default_base_url="https://generativelanguage.googleapis.com",
-        supports_edit=True,
-        supports_reference=True,
-        default_resolution="1K",
-        default_size="1K",
-        default_aspect_ratio="1:1",
-    ),
-    "nano-banana-pro": ImageModelSpec(
-        model_id="nano-banana-pro",
-        provider="gemini",
-        api_model="gemini-3-pro-image",
-        default_base_url="https://generativelanguage.googleapis.com",
-        supports_edit=True,
-        supports_reference=True,
-        default_resolution="1K",
-        default_size="1K",
-        default_aspect_ratio="1:1",
-        default_quality="medium",
-    ),
-    "doubao-seedream-5-0-260128": ImageModelSpec(
-        model_id="doubao-seedream-5-0-260128",
-        provider="doubao",
-        api_model="doubao-seedream-5-0-260128",
-        default_base_url="https://api.packyapi.com",
-        supports_edit=True,
-        supports_reference=True,
-        default_size="2048x2048",
-        default_resolution="2K",
-        default_aspect_ratio="1:1",
-        max_outputs=4,
-    ),
-    "doubao-seedream-5-0-lite-260128": ImageModelSpec(
-        model_id="doubao-seedream-5-0-lite-260128",
-        provider="doubao",
-        api_model="doubao-seedream-5-0-lite-260128",
-        default_base_url="https://api.packyapi.com",
-        supports_edit=True,
-        supports_reference=True,
-        default_size="2048x2048",
-        default_resolution="2K",
-        default_aspect_ratio="1:1",
-        max_outputs=4,
-    ),
-    "doubao-seedream-4-5-251128": ImageModelSpec(
-        model_id="doubao-seedream-4-5-251128",
-        provider="doubao",
-        api_model="doubao-seedream-4-5-251128",
-        default_base_url="https://api.packyapi.com",
-        supports_edit=True,
-        supports_reference=True,
-        default_size="2048x2048",
-        default_resolution="2K",
-        default_aspect_ratio="1:1",
-        max_outputs=4,
-    ),
-    "doubao-seedream-4-0-250828": ImageModelSpec(
-        model_id="doubao-seedream-4-0-250828",
-        provider="doubao",
-        api_model="doubao-seedream-4-0-250828",
-        default_base_url="https://api.packyapi.com",
-        supports_edit=True,
-        supports_reference=True,
-        default_size="2048x2048",
-        default_resolution="2K",
-        default_aspect_ratio="1:1",
-        max_outputs=4,
-    ),
-}
+SPEC_DIR = Path(__file__).resolve().parents[2] / "references" / "providers" / "specs"
+
+
+def _load_provider_specs() -> dict[str, ImageModelSpec]:
+    registry: dict[str, ImageModelSpec] = {}
+    for path in sorted(SPEC_DIR.glob("*.json")):
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            continue
+        provider = str(raw.get("provider") or "").strip()
+        if provider not in {"gpt_image", "kolors", "gemini", "doubao"}:
+            raise ValueError(f"Unsupported image provider in {path.name}: {provider}")
+        model_ids = raw.get("model_ids")
+        if not isinstance(model_ids, list) or not model_ids:
+            raise ValueError(f"{path.name} must define non-empty model_ids")
+        for raw_model_id in model_ids:
+            model_id = str(raw_model_id or "").strip().lower()
+            if not model_id:
+                continue
+            registry[model_id] = _spec_from_provider_doc(model_id, provider, raw, path)
+    if "gpt-image-2" not in registry:
+        raise ValueError("image provider specs must include gpt-image-2")
+    return registry
+
+
+def _spec_from_provider_doc(model_id: str, provider: str, raw: dict[str, Any], path: Path) -> ImageModelSpec:
+    defaults = raw.get("defaults") if isinstance(raw.get("defaults"), dict) else {}
+    supports = raw.get("supports") if isinstance(raw.get("supports"), dict) else {}
+    return ImageModelSpec(
+        model_id=model_id,
+        provider=provider,  # type: ignore[arg-type]
+        api_model=_api_model_for(model_id, raw.get("api_model_default")),
+        default_base_url=str(raw.get("default_base_url") or "").strip(),
+        count_field=_optional_string(raw.get("count_field")),
+        size_field=str(raw.get("size_field") or "size").strip(),
+        aspect_ratio_field=_optional_string(raw.get("aspect_ratio_field")),
+        aspect_to_size=_string_map(raw.get("aspect_to_size")),
+        derive_size_from_aspect=bool(raw.get("derive_size_from_aspect")),
+        safe_optional_fields=tuple(_string_list(raw.get("safe_optional_fields"))),
+        optional_field_aliases=_string_map(raw.get("optional_field_aliases")),
+        default_execution_parameters=dict(raw.get("default_execution_parameters") or {}),
+        supports_edit=bool(supports.get("edit")),
+        supports_reference=bool(supports.get("reference")),
+        supports_batch=bool(supports.get("batch")),
+        default_resolution=_optional_string(defaults.get("resolution")),
+        default_size=str(defaults.get("size") or "auto").strip(),
+        default_aspect_ratio=_optional_string(defaults.get("aspect_ratio")),
+        default_quality=str(defaults.get("quality") or "medium").strip(),
+        max_outputs=max(int(raw.get("max_outputs") or 1), 1),
+        supported_output_formats=tuple(_string_list(raw.get("supported_output_formats"))),
+        supported_backgrounds=tuple(_string_list(raw.get("supported_backgrounds"))),
+        supported_input_fidelities=tuple(_string_list(raw.get("supported_input_fidelities"))),
+    )
+
+
+def _api_model_for(model_id: str, raw_default: Any) -> str:
+    if isinstance(raw_default, dict):
+        return str(raw_default.get(model_id) or model_id).strip()
+    if str(raw_default or "").strip() == "$model_id":
+        return model_id
+    return str(raw_default or model_id).strip()
+
+
+def _optional_string(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item or "").strip()]
+
+
+def _string_map(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key).strip(): str(item).strip()
+        for key, item in value.items()
+        if str(key or "").strip() and str(item or "").strip()
+    }
+
+
+IMAGE_MODEL_REGISTRY: dict[str, ImageModelSpec] = _load_provider_specs()
 
 
 def get_model_spec(model_id: str | None) -> ImageModelSpec:
@@ -161,6 +145,14 @@ def get_model_spec(model_id: str | None) -> ImageModelSpec:
             provider="gpt_image",
             api_model=key,
             default_base_url=base.default_base_url,
+            count_field=base.count_field,
+            size_field=base.size_field,
+            aspect_ratio_field=base.aspect_ratio_field,
+            aspect_to_size=base.aspect_to_size,
+            derive_size_from_aspect=base.derive_size_from_aspect,
+            safe_optional_fields=base.safe_optional_fields,
+            optional_field_aliases=base.optional_field_aliases,
+            default_execution_parameters=base.default_execution_parameters,
             supports_edit=True,
             supports_reference=True,
             supports_batch=True,
@@ -202,12 +194,12 @@ def resolve_image_dimensions(
         effective_aspect = raw_aspect or _aspect_from_size(raw_size) or spec.default_aspect_ratio
         return effective_resolution, str(effective_resolution or spec.default_size or "1K"), effective_aspect
 
-    if spec.provider == "kolors":
+    if spec.derive_size_from_aspect:
         if raw_size:
             effective_resolution = raw_resolution or _resolution_from_size(raw_size) or spec.default_resolution
             effective_aspect = raw_aspect or _aspect_from_size(raw_size) or spec.default_aspect_ratio
             return effective_resolution, raw_size, effective_aspect
-        effective_size = _kolors_size_for_aspect(raw_aspect) or spec.default_size or "1024x1024"
+        effective_size = _size_for_aspect(spec, raw_aspect) or spec.default_size or "auto"
         effective_resolution = raw_resolution or _resolution_from_size(effective_size) or spec.default_resolution
         effective_aspect = raw_aspect or _aspect_from_size(effective_size) or spec.default_aspect_ratio
         return effective_resolution, effective_size, effective_aspect
@@ -252,13 +244,8 @@ def _normalize_aspect_ratio(value: str | None) -> str | None:
     return text
 
 
-def _kolors_size_for_aspect(aspect_ratio: str | None) -> str | None:
-    return {
-        "1:1": "1024x1024",
-        "3:4": "960x1280",
-        "1:2": "720x1440",
-        "9:16": "720x1280",
-    }.get(str(aspect_ratio or "").strip().lower())
+def _size_for_aspect(spec: ImageModelSpec, aspect_ratio: str | None) -> str | None:
+    return (spec.aspect_to_size or {}).get(str(aspect_ratio or "").strip().lower())
 
 
 def _resolution_from_size(size: str | None) -> str | None:

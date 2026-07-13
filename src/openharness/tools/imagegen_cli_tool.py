@@ -158,6 +158,9 @@ class ImagegenCliTool(BaseTool):
 
         parsed_metadata = {**_parse_cli_metadata(output), **file_metadata, **completed.metadata}
         artifacts = [] if arguments.dry_run else _expected_artifacts(arguments, cwd, parsed_metadata)
+        count_error = _validate_reserved_output_count(artifacts, context, parsed_metadata)
+        if count_error:
+            return await _media_billing_error_result(context, count_error, parsed_metadata)
         missing = [path for path in artifacts if not path.is_file()]
         if missing:
             missing_text = "\n".join(f"- {path}" for path in missing)
@@ -293,6 +296,9 @@ async def _execute_e2b_imagegen(
 
         parsed_metadata = {**_parse_cli_metadata(output), **file_metadata, **completed.metadata}
         local_artifacts = [] if arguments.dry_run else _expected_artifacts(local_arguments, local_cwd, parsed_metadata)
+        count_error = _validate_reserved_output_count(local_artifacts, context, parsed_metadata)
+        if count_error:
+            return await _media_billing_error_result(context, count_error, parsed_metadata)
         missing = [path for path in local_artifacts if not path.is_file()]
         if missing:
             missing_text = "\n".join(f"- {path}" for path in missing)
@@ -631,6 +637,10 @@ def _looks_like_artifact_reference(raw: str) -> bool:
 
 def _apply_context_defaults(arguments: ImagegenCliInput, context: ToolExecutionContext) -> ImagegenCliInput:
     updates: dict[str, object] = {}
+    reserved_count = _reserved_output_count(context)
+    if reserved_count is not None:
+        updates["n"] = reserved_count
+        updates["num_images"] = reserved_count
     media_preferences = context.metadata.get("media_preferences")
     if not arguments.model and isinstance(media_preferences, dict) and not media_preferences.get("is_auto", True):
         preferred_model = str(media_preferences.get("image_model") or "").strip()
@@ -638,7 +648,7 @@ def _apply_context_defaults(arguments: ImagegenCliInput, context: ToolExecutionC
             updates["model"] = preferred_model
     if not arguments.model and "model" not in updates:
         updates["model"] = "gpt-image-2"
-    if arguments.num_images is not None:
+    if reserved_count is None and arguments.num_images is not None:
         updates["n"] = arguments.num_images
     image_refs = media_input_refs(context, "image")
     if image_refs and not arguments.images:
@@ -650,6 +660,47 @@ def _apply_context_defaults(arguments: ImagegenCliInput, context: ToolExecutionC
     if not updates:
         return arguments
     return arguments.model_copy(update=updates)
+
+
+def _reserved_output_count(context: ToolExecutionContext) -> int | None:
+    reservation = context.metadata.get("media_billing_reservation")
+    if not isinstance(reservation, dict):
+        return None
+    for key in ("output_count", "image_output_count", "video_output_count"):
+        value = reservation.get(key)
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            return parsed
+    breakdown = reservation.get("pricing_breakdown")
+    if isinstance(breakdown, dict):
+        try:
+            parsed = int(breakdown.get("output_count") or 0)
+            if parsed > 0:
+                return parsed
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
+def _validate_reserved_output_count(
+    artifacts: list[Path],
+    context: ToolExecutionContext,
+    metadata: dict[str, object],
+) -> str | None:
+    reserved_count = _reserved_output_count(context)
+    if reserved_count is None:
+        return None
+    actual_count = len(artifacts)
+    metadata["reserved_output_count"] = reserved_count
+    if actual_count > reserved_count:
+        return (
+            f"imagegen CLI produced {actual_count} image artifact(s), exceeding the reserved output count "
+            f"{reserved_count}. The generation was rejected before billing commit."
+        )
+    return None
 
 
 def _validate_image_artifact_inputs(arguments: ImagegenCliInput, context: ToolExecutionContext) -> ToolResult | None:
@@ -967,6 +1018,7 @@ def _imagegen_execution_summary(metadata: dict[str, object]) -> list[str]:
         ("Gateway", metadata.get("gateway_name")),
         ("Effective size", metadata.get("effective_size") or metadata.get("size")),
         ("Requested aspect ratio", metadata.get("requested_aspect_ratio") or metadata.get("aspect_ratio")),
+        ("Output count", metadata.get("output_count") or metadata.get("reserved_output_count")),
     ]
     actual_width = metadata.get("actual_width")
     actual_height = metadata.get("actual_height")
