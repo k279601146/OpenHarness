@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import importlib.util
 import json
 import subprocess
 import sys
@@ -54,6 +56,18 @@ class FakeArtifactHook:
 
     async def on_artifact(self, file_path: str, **kwargs) -> None:
         self.calls.append({"file_path": file_path, **kwargs})
+
+
+def _load_image_gen_module():
+    script = Path(__file__).resolve().parents[2] / "src/openharness/skills/bundled/content/imagegen/scripts/image_gen.py"
+    script_dir = str(script.parent)
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
+    spec = importlib.util.spec_from_file_location("image_gen_under_test", script)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _write_test_png(path: Path, size: tuple[int, int] = (32, 32)) -> None:
@@ -279,6 +293,69 @@ def test_gpt_image_2_dry_run_payload_keeps_auto_size_when_no_size_requested() ->
     )
 
     assert '"size": "auto"' in result.stdout
+
+
+def test_gpt_image_result_writer_accepts_base64_data_uri_and_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image_gen = _load_image_gen_module()
+    png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+    image_b64 = base64.b64encode(png_bytes).decode("ascii")
+    data_uri_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rDATA"
+    data_uri_b64 = base64.b64encode(data_uri_bytes).decode("ascii")
+    url_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rURL!"
+    outputs = [tmp_path / "a.png", tmp_path / "b.png", tmp_path / "c.png"]
+    result = SimpleNamespace(
+        data=[
+            SimpleNamespace(b64_json=image_b64),
+            {"image_url": {"url": f"data:image/png;base64,{data_uri_b64}"}},
+            {"url": "https://cdn.example.test/image.png"},
+        ]
+    )
+
+    monkeypatch.setattr(image_gen, "safe_download_image", lambda url, **kwargs: url_bytes)
+
+    image_gen._write_result_images_and_downscale(
+        result,
+        outputs,
+        force=True,
+        downscale_max_dim=None,
+        downscale_suffix="-web",
+        output_format="png",
+    )
+
+    assert [path.read_bytes() for path in outputs] == [png_bytes, data_uri_bytes, url_bytes]
+
+
+def test_gpt_image_result_writer_fails_on_missing_image_data(tmp_path: Path) -> None:
+    image_gen = _load_image_gen_module()
+
+    with pytest.raises(SystemExit):
+        image_gen._write_result_images_and_downscale(
+            SimpleNamespace(data=[SimpleNamespace(b64_json=None)]),
+            [tmp_path / "missing.png"],
+            force=True,
+            downscale_max_dim=None,
+            downscale_suffix="-web",
+            output_format="png",
+        )
+
+
+def test_gpt_image_result_writer_fails_on_unexpected_image_count(tmp_path: Path) -> None:
+    image_gen = _load_image_gen_module()
+    image_b64 = base64.b64encode(b"first").decode("ascii")
+    other_b64 = base64.b64encode(b"second").decode("ascii")
+
+    with pytest.raises(SystemExit):
+        image_gen._write_result_images_and_downscale(
+            {"data": [{"b64_json": image_b64}, {"b64_json": other_b64}]},
+            [tmp_path / "one.png"],
+            force=True,
+            downscale_max_dim=None,
+            downscale_suffix="-web",
+            output_format="png",
+        )
 
 
 def test_gemini_payload_forwards_resolution_and_aspect_ratio() -> None:

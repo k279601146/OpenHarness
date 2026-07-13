@@ -25,7 +25,7 @@ from io import BytesIO
 
 from imagegen_runtime import get_model_spec, resolve_image_dimensions, run_non_gpt_image
 from imagegen_runtime.providers import ImagegenProviderError, emit_metadata, provider_metadata
-from media_safe_http import validate_public_http_url
+from media_safe_http import safe_download_image, validate_public_http_url
 
 DEFAULT_MODEL = "gpt-image-2"
 DEFAULT_SIZE = "auto"
@@ -396,6 +396,155 @@ def _derive_downscale_path(path: Path, suffix: str) -> Path:
     return path.with_name(f"{path.stem}{suffix}{path.suffix}")
 
 
+DATA_IMAGE_BASE64_RE = re.compile(r"^data:image/[A-Za-z0-9.+-]+;base64,(?P<data>.+)$", re.DOTALL)
+IMAGE_BASE64_KEYS = ("b64_json", "base64", "image_base64", "image_b64", "b64", "data", "bytes")
+IMAGE_URL_KEYS = ("url", "image_url", "uri")
+IMAGE_CONTAINER_KEYS = (
+    "data",
+    "images",
+    "image",
+    "output",
+    "outputs",
+    "result",
+    "results",
+    "content",
+    "items",
+)
+
+
+def _plain_response_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, list):
+        return [_plain_response_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_plain_response_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _plain_response_value(item) for key, item in value.items()}
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return _plain_response_value(model_dump(mode="json", exclude_none=False))
+        except TypeError:
+            return _plain_response_value(model_dump())
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return _plain_response_value(to_dict())
+    if hasattr(value, "__dict__"):
+        return {
+            key: _plain_response_value(item)
+            for key, item in vars(value).items()
+            if not key.startswith("_")
+        }
+    return value
+
+
+def _split_data_image_base64(value: str) -> str | None:
+    match = DATA_IMAGE_BASE64_RE.match(value.strip())
+    return match.group("data") if match else None
+
+
+def _add_image_source(
+    sources: list[tuple[str, str]],
+    kind: str,
+    value: str,
+) -> None:
+    normalized = value.strip()
+    if not normalized:
+        return
+    sources.append((kind, normalized))
+
+
+def _add_string_image_source(
+    sources: list[tuple[str, str]],
+    value: str,
+    *,
+    default_kind: str | None = None,
+) -> None:
+    data_uri = _split_data_image_base64(value)
+    if data_uri is not None:
+        _add_image_source(sources, "base64", data_uri)
+        return
+    parsed = urlparse(value.strip())
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        _add_image_source(sources, "url", value)
+        return
+    if default_kind:
+        _add_image_source(sources, default_kind, value)
+
+
+def _extract_image_sources_from_value(
+    value: Any,
+    sources: list[tuple[str, str]],
+) -> None:
+    value = _plain_response_value(value)
+    if isinstance(value, list):
+        for item in value:
+            _extract_image_sources_from_value(item, sources)
+        return
+    if not isinstance(value, dict):
+        return
+
+    for key in IMAGE_BASE64_KEYS:
+        raw = value.get(key)
+        if isinstance(raw, str):
+            _add_string_image_source(sources, raw, default_kind="base64")
+    for key in IMAGE_URL_KEYS:
+        raw = value.get(key)
+        if isinstance(raw, str):
+            _add_string_image_source(sources, raw)
+        elif isinstance(raw, (dict, list)):
+            _extract_image_sources_from_value(raw, sources)
+    for key in IMAGE_CONTAINER_KEYS:
+        raw = value.get(key)
+        if isinstance(raw, (dict, list)):
+            _extract_image_sources_from_value(raw, sources)
+
+
+def _extract_image_sources(result: Any) -> list[tuple[str, str]]:
+    sources: list[tuple[str, str]] = []
+    _extract_image_sources_from_value(result, sources)
+    data_attr = getattr(result, "data", None)
+    if not sources and data_attr is not None:
+        _extract_image_sources_from_value(data_attr, sources)
+    return sources
+
+
+def _image_source_bytes(kind: str, value: str) -> bytes:
+    if kind == "base64":
+        return base64.b64decode(value)
+    if kind == "url":
+        return safe_download_image(value, max_bytes=15 * 1024 * 1024, timeout_seconds=180.0)
+    raise ValueError(f"Unsupported image source kind: {kind}")
+
+
+def _write_image_bytes_and_downscale(
+    raw: bytes,
+    out_path: Path,
+    *,
+    force: bool,
+    downscale_max_dim: Optional[int],
+    downscale_suffix: str,
+    output_format: str,
+) -> None:
+    if out_path.exists() and not force:
+        _die(f"Output already exists: {out_path} (use --force to overwrite)")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(raw)
+    print(f"Wrote {out_path}")
+
+    if downscale_max_dim is None:
+        return
+
+    derived = _derive_downscale_path(out_path, downscale_suffix)
+    if derived.exists() and not force:
+        _die(f"Output already exists: {derived} (use --force to overwrite)")
+    derived.parent.mkdir(parents=True, exist_ok=True)
+    resized = _downscale_image_bytes(raw, max_dim=downscale_max_dim, output_format=output_format)
+    derived.write_bytes(resized)
+    print(f"Wrote {derived}")
+
+
 def _downscale_image_bytes(image_bytes: bytes, *, max_dim: int, output_format: str) -> bytes:
     try:
         from PIL import Image
@@ -442,25 +591,41 @@ def _decode_write_and_downscale(
     for idx, image_b64 in enumerate(images):
         if idx >= len(outputs):
             break
-        out_path = outputs[idx]
-        if out_path.exists() and not force:
-            _die(f"Output already exists: {out_path} (use --force to overwrite)")
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-
         raw = base64.b64decode(image_b64)
-        out_path.write_bytes(raw)
-        print(f"Wrote {out_path}")
+        _write_image_bytes_and_downscale(
+            raw,
+            outputs[idx],
+            force=force,
+            downscale_max_dim=downscale_max_dim,
+            downscale_suffix=downscale_suffix,
+            output_format=output_format,
+        )
 
-        if downscale_max_dim is None:
-            continue
 
-        derived = _derive_downscale_path(out_path, downscale_suffix)
-        if derived.exists() and not force:
-            _die(f"Output already exists: {derived} (use --force to overwrite)")
-        derived.parent.mkdir(parents=True, exist_ok=True)
-        resized = _downscale_image_bytes(raw, max_dim=downscale_max_dim, output_format=output_format)
-        derived.write_bytes(resized)
-        print(f"Wrote {derived}")
+def _write_result_images_and_downscale(
+    result: Any,
+    outputs: List[Path],
+    *,
+    force: bool,
+    downscale_max_dim: Optional[int],
+    downscale_suffix: str,
+    output_format: str,
+) -> None:
+    sources = _extract_image_sources(result)
+    if not sources:
+        _die("Image API did not return usable image data.")
+    if len(sources) != len(outputs):
+        _die(f"Image API returned {len(sources)} image(s), expected {len(outputs)}.")
+    for (kind, value), out_path in zip(sources, outputs):
+        raw = _image_source_bytes(kind, value)
+        _write_image_bytes_and_downscale(
+            raw,
+            out_path,
+            force=force,
+            downscale_max_dim=downscale_max_dim,
+            downscale_suffix=downscale_suffix,
+            output_format=output_format,
+        )
 
 
 def _create_client():
@@ -742,9 +907,8 @@ async def _run_generate_batch(args: argparse.Namespace) -> int:
                 )
                 elapsed = time.time() - started
                 print(f"{job_label} completed in {elapsed:.1f}s", file=sys.stderr)
-            images = [item.b64_json for item in result.data]
-            _decode_write_and_downscale(
-                images,
+            _write_result_images_and_downscale(
+                result,
                 outputs,
                 force=args.force,
                 downscale_max_dim=args.downscale_max_dim,
@@ -848,9 +1012,8 @@ def _generate(args: argparse.Namespace) -> None:
     elapsed = time.time() - started
     print(f"Generation completed in {elapsed:.1f}s.", file=sys.stderr)
 
-    images = [item.b64_json for item in result.data]
-    _decode_write_and_downscale(
-        images,
+    _write_result_images_and_downscale(
+        result,
         output_paths,
         force=args.force,
         downscale_max_dim=args.downscale_max_dim,
@@ -951,9 +1114,8 @@ def _edit(args: argparse.Namespace) -> None:
 
     elapsed = time.time() - started
     print(f"Edit completed in {elapsed:.1f}s.", file=sys.stderr)
-    images = [item.b64_json for item in result.data]
-    _decode_write_and_downscale(
-        images,
+    _write_result_images_and_downscale(
+        result,
         output_paths,
         force=args.force,
         downscale_max_dim=args.downscale_max_dim,
