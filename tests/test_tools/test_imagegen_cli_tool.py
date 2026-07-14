@@ -21,7 +21,12 @@ from openharness.tools.imagegen_cli_tool import (
     _normalize_openai_sdk_base_url,
 )
 from openharness.tools.media_gateway_runtime import MediaSubprocessResult
-from openharness.skills.bundled.content.imagegen.scripts.imagegen_runtime.providers import _build_payload, emit_metadata
+from openharness.skills.bundled.content.imagegen.scripts.imagegen_runtime.providers import (
+    ImagegenProviderError,
+    _build_payload,
+    emit_metadata,
+    run_non_gpt_image,
+)
 from openharness.skills.bundled.content.imagegen.scripts.imagegen_runtime.registry import get_model_spec
 
 
@@ -386,6 +391,48 @@ def test_kolors_payload_uses_siliconflow_fields() -> None:
     assert "n" not in payload
 
 
+def test_non_gpt_provider_http_errors_are_public_safe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    class FailedResponse:
+        def raise_for_status(self) -> None:
+            request = httpx.Request("POST", "https://api.siliconflow.cn/v1/images/generations")
+            response = httpx.Response(500, request=request)
+            raise httpx.HTTPStatusError(
+                "Server error '500 Internal Server Error' for url 'https://api.siliconflow.cn/v1/images/generations'",
+                request=request,
+                response=response,
+            )
+
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-key")
+    monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: FailedResponse())
+
+    args = SimpleNamespace(
+        model="kolors",
+        command="generate",
+        dry_run=False,
+        force=True,
+        resolution=None,
+        size=None,
+        aspect_ratio=None,
+        image=[],
+        n=1,
+        negative=None,
+        quality="medium",
+    )
+
+    with pytest.raises(ImagegenProviderError) as exc_info:
+        run_non_gpt_image(args, [tmp_path / "out.png"], "a poster")
+
+    message = str(exc_info.value)
+    assert message == "Image provider request failed with HTTP 500."
+    assert "siliconflow" not in message
+    assert "HTTPStatusError" not in message
+
+
 def test_doubao_payload_uses_spec_count_and_aspect_size() -> None:
     payload = _build_payload(
         get_model_spec("doubao-seedream-5-0-260128"),
@@ -605,6 +652,45 @@ async def test_imagegen_cli_fails_when_actual_dimensions_do_not_match_requested_
     assert result.metadata["media_billing_status"] == "voided"
     assert result.metadata["actual_width"] == 1024
     assert result.metadata["actual_height"] == 1024
+
+
+@pytest.mark.asyncio
+async def test_imagegen_cli_failure_output_hides_traceback_and_provider_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    traceback_output = """Traceback (most recent call last):
+  File "D:\\workspace\\dev2_OpenHarness_SaaS\\OpenHarness\\src\\openharness\\skills\\bundled\\content\\imagegen\\scripts\\imagegen_runtime\\providers.py", line 356, in _run_kolors
+    response.raise_for_status()
+httpx.HTTPStatusError: Server error '500 Internal Server Error' for url 'https://api.siliconflow.cn/v1/images/generations'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500
+"""
+
+    async def fake_run_media_subprocess(*, argv, cwd, env, timeout_seconds, context, kind):
+        del argv, cwd, env, timeout_seconds, context, kind
+        return MediaSubprocessResult(1, traceback_output, {})
+
+    monkeypatch.setattr("openharness.tools.imagegen_cli_tool.run_media_subprocess", fake_run_media_subprocess)
+    monkeypatch.setenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "test-image-key")
+
+    result = await ImagegenCliTool().execute(
+        ImagegenCliInput(
+            command="generate",
+            prompt="cover",
+            model="kolors",
+            out="output/imagegen/cover.png",
+            force=True,
+        ),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert result.is_error
+    assert result.output == "Image provider request failed with HTTP 500."
+    assert "Traceback" not in result.output
+    assert "providers.py" not in result.output
+    assert "siliconflow" not in result.output
+    assert "HTTPStatusError" not in result.output
+    assert "developer.mozilla.org" not in result.output
 
 
 @pytest.mark.asyncio

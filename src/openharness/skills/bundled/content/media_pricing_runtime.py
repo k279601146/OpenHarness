@@ -650,6 +650,8 @@ def _billing_size_tier_from_value(rule: dict[str, Any], value: str | None) -> st
     text = str(value or "").strip()
     if not text or text.lower() in {"auto", "adaptive", "default"}:
         return None
+    if re.fullmatch(r"\d{1,2}\s*:\s*\d{1,2}", text):
+        return None
     alias_key = _normalize_alias_key(text)
     aliases = rule.get("tier_aliases")
     if isinstance(aliases, dict) and alias_key in aliases:

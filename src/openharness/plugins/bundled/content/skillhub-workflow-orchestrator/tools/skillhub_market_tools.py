@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -14,6 +15,9 @@ from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
 
 InstallMode = Literal["auto", "skill", "plugin"]
+CONFIRMATION_TTL_MINUTES = 30
+CONFIRMATION_EVENT_TYPE = "skillhub_install_confirmation"
+CONFIRMATION_CONSUMED_EVENT_TYPE = "skillhub_install_confirmation_consumed"
 
 
 class SkillHubSearchInput(BaseModel):
@@ -62,8 +66,145 @@ def _current_user(context: ToolExecutionContext):
     return user
 
 
+def _thread_id(context: ToolExecutionContext) -> str:
+    thread_id = str(context.metadata.get("thread_id") or "").strip()
+    if not thread_id:
+        raise RuntimeError("SaaS thread context is unavailable.")
+    return thread_id
+
+
 def _json_output(payload: dict) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_utc_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _persist_confirmation(
+    context: ToolExecutionContext,
+    *,
+    confirmation_id: str,
+    slug: str,
+    install_as: InstallMode,
+    capability_hint: str,
+    name: str,
+) -> None:
+    _ensure_api_path(context)
+    from models import AgentEvent
+
+    db = context.metadata.get("db_session")
+    user_id = context.metadata.get("user_id")
+    if db is None or user_id is None:
+        raise RuntimeError("SaaS user context is unavailable.")
+    thread_id = _thread_id(context)
+    expires_at = _utc_now() + timedelta(minutes=CONFIRMATION_TTL_MINUTES)
+    db.add(
+        AgentEvent(
+            thread_id=thread_id,
+            type=CONFIRMATION_EVENT_TYPE,
+            payload={
+                "confirmation_id": confirmation_id,
+                "slug": slug,
+                "install_as": install_as,
+                "capability_hint": capability_hint,
+                "name": name,
+                "user_id": int(user_id),
+                "thread_id": thread_id,
+                "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
+                "turn_id": context.metadata.get("turn_id"),
+            },
+        )
+    )
+    db.commit()
+
+
+def _confirmation_consumed(db, *, thread_id: str, user_id: int, confirmation_id: str) -> bool:
+    from models import AgentEvent
+
+    rows = (
+        db.query(AgentEvent)
+        .filter(AgentEvent.thread_id == thread_id, AgentEvent.type == CONFIRMATION_CONSUMED_EVENT_TYPE)
+        .order_by(AgentEvent.id.desc())
+        .all()
+    )
+    return any(
+        isinstance(row.payload, dict)
+        and row.payload.get("confirmation_id") == confirmation_id
+        and int(row.payload.get("user_id") or 0) == int(user_id)
+        for row in rows
+    )
+
+
+def _load_confirmation(context: ToolExecutionContext, *, confirmation_id: str) -> dict | None:
+    _ensure_api_path(context)
+    from models import AgentEvent
+
+    db = context.metadata.get("db_session")
+    user_id = context.metadata.get("user_id")
+    if db is None or user_id is None:
+        raise RuntimeError("SaaS user context is unavailable.")
+    thread_id = _thread_id(context)
+    if _confirmation_consumed(db, thread_id=thread_id, user_id=int(user_id), confirmation_id=confirmation_id):
+        return {"consumed": True}
+
+    rows = (
+        db.query(AgentEvent)
+        .filter(AgentEvent.thread_id == thread_id, AgentEvent.type == CONFIRMATION_EVENT_TYPE)
+        .order_by(AgentEvent.id.desc())
+        .all()
+    )
+    for row in rows:
+        payload = row.payload if isinstance(row.payload, dict) else {}
+        if payload.get("confirmation_id") != confirmation_id:
+            continue
+        if int(payload.get("user_id") or 0) != int(user_id):
+            continue
+        if payload.get("thread_id") != thread_id:
+            continue
+        expires_at = _parse_utc_datetime(payload.get("expires_at"))
+        if expires_at is None or expires_at < _utc_now():
+            return {"expired": True}
+        return payload
+    return None
+
+
+def _mark_confirmation_consumed(context: ToolExecutionContext, *, confirmation: dict, installed_as: str | None) -> None:
+    _ensure_api_path(context)
+    from models import AgentEvent
+
+    db = context.metadata.get("db_session")
+    user_id = int(context.metadata.get("user_id") or 0)
+    thread_id = _thread_id(context)
+    db.add(
+        AgentEvent(
+            thread_id=thread_id,
+            type=CONFIRMATION_CONSUMED_EVENT_TYPE,
+            payload={
+                "confirmation_id": confirmation.get("confirmation_id"),
+                "slug": confirmation.get("slug"),
+                "install_as": confirmation.get("install_as"),
+                "installed_as": installed_as,
+                "user_id": user_id,
+                "thread_id": thread_id,
+                "consumed_at": _utc_now().isoformat().replace("+00:00", "Z"),
+                "turn_id": context.metadata.get("turn_id"),
+            },
+        )
+    )
+    db.commit()
 
 
 def _catalog_items(skill_market, db, user, query: str, category: str | None, limit: int) -> list[dict]:
@@ -178,13 +319,15 @@ class SkillHubPrepareInstallTool(BaseTool):
             files, has_manifest = skill_market._read_files_manifest(slug)
             capability_hint = "plugin_candidate" if any(path.endswith("plugin.json") for path in files.keys()) else "skill"
             confirmation_id = uuid.uuid4().hex
-            pending = context.metadata.setdefault("pending_skillhub_installs", {})
-            pending[confirmation_id] = {
-                "slug": slug,
-                "install_as": arguments.install_as,
-                "capability_hint": capability_hint,
-                "name": item.get("display_name") or item.get("name") or slug,
-            }
+            name = item.get("display_name") or item.get("name") or slug
+            _persist_confirmation(
+                context,
+                confirmation_id=confirmation_id,
+                slug=slug,
+                install_as=arguments.install_as,
+                capability_hint=capability_hint,
+                name=name,
+            )
             risks: list[str] = []
             if capability_hint == "plugin_candidate" or arguments.install_as == "plugin":
                 risks.append("该能力可能作为插件型扩展安装，可能注册工具、MCP、hooks 或插件技能。")
@@ -197,7 +340,7 @@ class SkillHubPrepareInstallTool(BaseTool):
                     {
                         "confirmation_id": confirmation_id,
                         "slug": slug,
-                        "name": item.get("display_name") or item.get("name") or slug,
+                        "name": name,
                         "install_as": arguments.install_as,
                         "capability_hint": capability_hint,
                         "requires_api_key": bool(item.get("requires_api_key")),
@@ -229,11 +372,12 @@ class SkillHubInstallConfirmedTool(BaseTool):
             skill_market = _skill_market_module(context)
             db = context.metadata.get("db_session")
             user = _current_user(context)
-            pending = context.metadata.get("pending_skillhub_installs")
-            if not isinstance(pending, dict):
-                return ToolResult(output="No pending SkillHub install confirmation exists.", is_error=True)
-            prepared = pending.get(arguments.confirmation_id)
+            prepared = _load_confirmation(context, confirmation_id=arguments.confirmation_id)
             if not isinstance(prepared, dict):
+                return ToolResult(output="SkillHub install confirmation id is invalid or expired.", is_error=True)
+            if prepared.get("consumed"):
+                return ToolResult(output="SkillHub install confirmation has already been used.", is_error=True)
+            if prepared.get("expired"):
                 return ToolResult(output="SkillHub install confirmation id is invalid or expired.", is_error=True)
             slug = skill_market._normalize_slug(arguments.slug)
             if prepared.get("slug") != slug:
@@ -247,7 +391,7 @@ class SkillHubInstallConfirmedTool(BaseTool):
                 acknowledge_plugin_permissions=True,
             )
             result = skill_market.install(request, db=db, current_user=user)
-            pending.pop(arguments.confirmation_id, None)
+            _mark_confirmation_consumed(context, confirmation=prepared, installed_as=result.get("installed_as"))
             return ToolResult(
                 output=_json_output(
                     {

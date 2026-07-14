@@ -8,6 +8,7 @@ import math
 import json
 import os
 import posixpath
+import re
 from pathlib import Path, PurePosixPath
 import sys
 import tempfile
@@ -29,6 +30,18 @@ from openharness.tools.sandbox_workspace import get_e2b_task_session, to_sandbox
 GPT_IMAGE_2_MODEL = "gpt-image-2"
 IMAGEGEN_METADATA_PREFIX = "IMAGEGEN_METADATA:"
 IMAGEGEN_METADATA_PATH_ENV = "OPENHARNESS_IMAGEGEN_METADATA_PATH"
+PUBLIC_IMAGEGEN_FAILURE = "Image generation failed. Please try again or choose another image model."
+TRACEBACK_MARKERS = (
+    "Traceback (most recent call last):",
+    "HTTPStatusError",
+    "RequestError",
+    "ConnectError",
+    "ReadTimeout",
+)
+URL_RE = re.compile(r"https?://[^\s)'\"<>]+")
+WINDOWS_ABSOLUTE_PATH_RE = re.compile(r"(?i)\b[A-Z]:\\[^\s\"'<>]+")
+POSIX_ABSOLUTE_PATH_RE = re.compile(r"(?<![\w.-])/(?:Users|home|tmp|var|private|workspace|www|mnt|opt|root|srv|app)/[^\s\"'<>]+")
+HTTP_STATUS_RE = re.compile(r"\b([45]\d\d)\b")
 
 
 @dataclass(frozen=True)
@@ -807,6 +820,8 @@ def _build_sandbox_output_paths(
 def _sanitize_cli_output(output: str, metadata_prefix: str, path_map: dict[Path, str]) -> str:
     if not output:
         return ""
+    if _contains_internal_error_details(output):
+        return _public_failure_from_output(output)
     replacements: dict[str, str] = {}
     for local_path, sandbox_path in path_map.items():
         replacements[str(local_path)] = sandbox_path
@@ -816,11 +831,29 @@ def _sanitize_cli_output(output: str, metadata_prefix: str, path_map: dict[Path,
     for line in output.splitlines():
         if line.startswith(metadata_prefix):
             continue
-        sanitized = line
+        sanitized = _redact_cli_line(line)
         for host_path, sandbox_path in replacements.items():
             sanitized = sanitized.replace(host_path, sandbox_path)
         lines.append(sanitized)
     return "\n".join(lines).strip()
+
+
+def _contains_internal_error_details(output: str) -> bool:
+    return any(marker in output for marker in TRACEBACK_MARKERS) or "\n  File \"" in output
+
+
+def _public_failure_from_output(output: str) -> str:
+    match = HTTP_STATUS_RE.search(output or "")
+    if match:
+        return f"Image provider request failed with HTTP {match.group(1)}."
+    return PUBLIC_IMAGEGEN_FAILURE
+
+
+def _redact_cli_line(line: str) -> str:
+    sanitized = URL_RE.sub("[redacted-url]", line)
+    sanitized = WINDOWS_ABSOLUTE_PATH_RE.sub("[redacted-path]", sanitized)
+    sanitized = POSIX_ABSOLUTE_PATH_RE.sub("[redacted-path]", sanitized)
+    return sanitized
 
 
 def _ensure_bytes(content) -> bytes:
@@ -905,7 +938,7 @@ def _validate_generated_image_dimensions(
 def _read_image_dimensions(path: Path) -> tuple[int, int]:
     try:
         from PIL import Image
-    except Exception as exc:
+    except Exception:
         try:
             return _read_image_dimensions_from_header(path)
         except Exception as fallback_exc:

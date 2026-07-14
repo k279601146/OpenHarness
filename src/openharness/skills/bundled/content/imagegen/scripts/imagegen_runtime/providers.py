@@ -24,6 +24,26 @@ class ImagegenProviderError(RuntimeError):
     pass
 
 
+def _provider_failure_message(exc: Exception) -> str:
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, int):
+        return f"Image provider request failed with HTTP {status_code}."
+    name = type(exc).__name__.lower()
+    if "timeout" in name or "timedout" in name:
+        return "Image provider request timed out."
+    if "json" in name or isinstance(exc, ValueError):
+        return "Image provider returned an invalid response."
+    return "Image provider request failed."
+
+
+def _raise_for_status(response: Any) -> None:
+    try:
+        response.raise_for_status()
+    except Exception as exc:
+        raise ImagegenProviderError(_provider_failure_message(exc)) from exc
+
+
 def emit_metadata(metadata: dict[str, Any]) -> None:
     metadata_path = os.getenv(IMAGEGEN_METADATA_PATH_ENV, "").strip()
     if not metadata_path:
@@ -89,14 +109,19 @@ def run_non_gpt_image(args: Any, outputs: list[Path], prompt: str) -> dict[str, 
         if existing:
             raise ImagegenProviderError(f"Output already exists: {existing[0]} (use --force to overwrite)")
 
-    if spec.provider == "gemini":
-        saved = _run_gemini(spec, args, prompt, outputs, api_key, base_url)
-    elif spec.provider == "doubao":
-        saved = _run_doubao(spec, args, prompt, outputs, api_key, base_url)
-    elif spec.provider == "kolors":
-        saved = _run_kolors(spec, args, prompt, outputs, api_key, base_url)
-    else:
-        raise ImagegenProviderError(f"Unsupported image provider: {spec.provider}")
+    try:
+        if spec.provider == "gemini":
+            saved = _run_gemini(spec, args, prompt, outputs, api_key, base_url)
+        elif spec.provider == "doubao":
+            saved = _run_doubao(spec, args, prompt, outputs, api_key, base_url)
+        elif spec.provider == "kolors":
+            saved = _run_kolors(spec, args, prompt, outputs, api_key, base_url)
+        else:
+            raise ImagegenProviderError(f"Unsupported image provider: {spec.provider}")
+    except ImagegenProviderError:
+        raise
+    except Exception as exc:
+        raise ImagegenProviderError(_provider_failure_message(exc)) from exc
     return provider_metadata(spec, saved, args, prompt)
 
 
@@ -279,7 +304,7 @@ def _run_gemini(spec: ImageModelSpec, args: Any, prompt: str, outputs: list[Path
         headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
         timeout=180.0,
     )
-    response.raise_for_status()
+    _raise_for_status(response)
     parts = response.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
     images = [item.get("inlineData", {}).get("data") for item in parts if item.get("inlineData", {}).get("data")]
     if not images:
@@ -304,7 +329,7 @@ def _run_doubao(spec: ImageModelSpec, args: Any, prompt: str, outputs: list[Path
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         timeout=240.0,
     ) as response:
-        response.raise_for_status()
+        _raise_for_status(response)
         for line in response.iter_lines():
             line = line.strip()
             if not line.startswith("data:"):
@@ -353,7 +378,7 @@ def _run_kolors(
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         timeout=180.0,
     )
-    response.raise_for_status()
+    _raise_for_status(response)
     data = response.json().get("data", [])
     if len(data) > len(outputs):
         raise ImagegenProviderError(
@@ -402,7 +427,7 @@ def _run_openai_compatible(
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         timeout=180.0,
     )
-    response.raise_for_status()
+    _raise_for_status(response)
     data = response.json().get("data", [])
     if len(data) > len(outputs):
         raise ImagegenProviderError(

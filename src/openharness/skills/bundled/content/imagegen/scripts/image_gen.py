@@ -35,6 +35,7 @@ DEFAULT_CONCURRENCY = 5
 DEFAULT_DOWNSCALE_SUFFIX = "-web"
 DEFAULT_OUTPUT_PATH = "output/imagegen/output.png"
 GPT_IMAGE_MODEL_PREFIX = "gpt-image-"
+PUBLIC_IMAGEGEN_FAILURE = "Image generation failed. Please try again or choose another image model."
 
 ALLOWED_LEGACY_SIZES = {"1024x1024", "1536x1024", "1024x1536", "auto"}
 ALLOWED_QUALITIES = {"low", "medium", "high", "auto"}
@@ -776,6 +777,19 @@ def _is_transient_error(exc: Exception) -> bool:
     return "timeout" in msg or "timed out" in msg or "connection reset" in msg
 
 
+def _public_exception_message(exc: Exception) -> str:
+    if isinstance(exc, ImagegenProviderError):
+        return str(exc) or PUBLIC_IMAGEGEN_FAILURE
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None) or getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return f"Image provider request failed with HTTP {status_code}."
+    name = type(exc).__name__.lower()
+    if "timeout" in name or "timedout" in name:
+        return "Image provider request timed out."
+    return PUBLIC_IMAGEGEN_FAILURE
+
+
 async def _generate_one_with_retries(
     client: Any,
     payload: Dict[str, Any],
@@ -918,7 +932,7 @@ async def _run_generate_batch(args: argparse.Namespace) -> int:
             return i, None
         except Exception as exc:
             any_failed = True
-            print(f"{job_label} failed: {exc}", file=sys.stderr)
+            print(f"{job_label} failed: {_public_exception_message(exc)}", file=sys.stderr)
             if args.fail_fast:
                 raise
             return i, str(exc)
@@ -1273,7 +1287,12 @@ def main() -> int:
     if get_model_spec(args.model).provider == "gpt_image":
         _ensure_api_key(args.dry_run)
 
-    args.func(args)
+    try:
+        args.func(args)
+    except ImagegenProviderError as exc:
+        _die(_public_exception_message(exc))
+    except Exception as exc:
+        _die(_public_exception_message(exc))
     return 0
 
 
