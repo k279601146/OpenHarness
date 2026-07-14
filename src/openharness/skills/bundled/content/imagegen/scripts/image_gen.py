@@ -76,7 +76,7 @@ def _get_api_credentials() -> tuple[str, str]:
     """Return the gpt-image-2 image generation API key and base URL."""
     gateway_base_url = os.getenv("OPENHARNESS_MEDIA_GATEWAY_BASE_URL", "").strip()
     api_key = os.getenv("OPENHARNESS_MEDIA_GATEWAY_API_KEY", "")
-    base_url = gateway_base_url or "https://api.packyapi.com"
+    base_url = gateway_base_url or "https://www.bahew.com"
     return api_key, validate_public_http_url(base_url) if gateway_base_url else base_url
 
 

@@ -234,7 +234,7 @@ def test_bundled_skillhub_workflow_plugin_loads_skills_and_tools(tmp_path: Path,
         include_default_roots=False,
     )
 
-    plugin = next(item for item in plugins if item.manifest.name == "skillhub-workflow-orchestrator")
+    plugin = next(item for item in plugins if item.manifest.name == "workflow-orchestrator")
     assert plugin.enabled is True
     assert {skill.command_name for skill in plugin.skills} >= {"workflow-composer", "find-skill"}
     assert {tool.name for tool in plugin.tools} >= {

@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 
 PRICING_RULES_ENV = "OPENHARNESS_MEDIA_MODEL_PRICING_RULES"
-DEFAULT_CREDITS_PER_USD = 25.0
+DEFAULT_CREDITS_PER_USD = 125.0
 SUPPORTED_IMAGE_SCHEMES = {"image_size_tier_pricing"}
 SUPPORTED_VIDEO_SCHEMES = {"video_seconds_pricing", "video_unit_pricing"}
 

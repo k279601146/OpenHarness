@@ -31,6 +31,7 @@ SKILL_ARCHIVE_SYNC_FILE_THRESHOLD = 128
 SKILL_ARCHIVE_SYNC_SIZE_THRESHOLD = 8 * 1024 * 1024
 SKILL_SYNC_PROGRESS_INTERVAL_SECONDS = 8.0
 BUNDLED_SKILL_CONTENT_ROOT = Path(__file__).resolve().parents[1] / "skills" / "bundled" / "content"
+BUNDLED_PLUGIN_CONTENT_ROOT = Path(__file__).resolve().parents[1] / "plugins" / "bundled" / "content"
 
 T = TypeVar("T")
 
@@ -208,17 +209,26 @@ def sandbox_skill_dir(context: ToolExecutionContext, skill: Any) -> str:
 
 def preinstalled_bundled_skill_dir(context: ToolExecutionContext, skill: Any) -> str | None:
     """Return the sandbox path for bundled skills baked into the E2B template."""
-    if getattr(skill, "source", None) != "bundled":
+    source = getattr(skill, "source", None)
+    if source not in {"bundled", "plugin"}:
         return None
     base_dir = getattr(skill, "base_dir", None)
     if not base_dir:
         return None
     try:
         source_dir = Path(str(base_dir)).expanduser().resolve()
-        source_dir.relative_to(BUNDLED_SKILL_CONTENT_ROOT.resolve())
     except (OSError, RuntimeError, ValueError):
         return None
-    return sandbox_skill_dir(context, skill)
+    roots = [BUNDLED_SKILL_CONTENT_ROOT]
+    if source == "plugin":
+        roots = [BUNDLED_PLUGIN_CONTENT_ROOT]
+    for root in roots:
+        try:
+            source_dir.relative_to(root.resolve())
+            return sandbox_skill_dir(context, skill)
+        except (OSError, RuntimeError, ValueError):
+            continue
+    return None
 
 
 async def ensure_skill_installed_in_sandbox(context: ToolExecutionContext, skill: Any) -> str:
