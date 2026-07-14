@@ -213,6 +213,7 @@ Deliver the artifact that matches the selected route: Mermaid source for Mermaid
 ## Reference map
 
 - `references/providers/capability-matrix.md`：仅在需要选模型时读取。
+- `references/quality-checklist.md`：lightweight pass/fail check。
 - `references/providers/*.md`：provider-specific 参数、尺寸、失败重试和安全边界。
 - `references/providers/specs/*.json`：runtime 使用的机器可读 provider spec，必须与 Markdown 同步。
 - `references/image-api.md`：GPT Image 在 `imagegen_cli` 下的参数速查。
