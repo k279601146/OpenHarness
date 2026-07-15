@@ -1,377 +1,128 @@
 ---
-name: "imagegen"
-description: "Generate or edit raster images when the task benefits from AI-created bitmap visuals such as photos, illustrations, textures, sprites, mockups, or transparent-background cutouts. Use when Codex should create a brand-new image, transform an existing image, or derive visual variants from references, and the output should be a bitmap asset rather than repo-native code or vector. Do not use when the task is better handled by editing existing SVG/vector/code-native assets, extending an established icon or logo system, or building the visual directly in HTML/CSS/canvas."
+name: imagegen
+description: "Generate, edit, restore, or vary raster images through the SaaS image generation service. Use when Codex should create a brand-new bitmap image, transform an existing image, derive visual variants from references, produce product/marketing/UI mockup/transparent assets, or restore an image. Do not use when the task is better handled by Mermaid, deterministic charts, editing existing SVG/vector/code-native assets, extending an established icon or logo system, or building the visual directly in HTML/CSS/canvas."
+
 ---
 
-# Image Generation Skill
+# ImageGen
 
-Generates or edits images for the current project (for example website assets, game assets, UI mockups, product mockups, wireframes, logo design, photorealistic images, or infographics).
+Use this skill to decide the correct production route for visual deliverables. A correct visual is not merely attractive; it must fit the user's intended medium, purpose, constraints, hierarchy, and acceptance criteria.
 
-## Bahew runtime rules
+This skill is the thinking layer, not the execution layer. After deciding that AI bitmap generation or editing is the right route, call the `generate_image` tool with a high-level request brief. Do not run local scripts, call provider APIs directly, read provider keys, choose upstream base URLs, or call `deliver_artifact` for generated image outputs. The SaaS backend performs model routing, billing reservation, gateway execution, image validation, artifact registration, and `agent_artifact` delivery.
 
-These rules are authoritative in the Bahew agent runtime.
+## Core Principle
 
-- Loading this skill is not image generation. After reading these instructions, you must call `imagegen_cli` before claiming that an image was generated.
-- In Bahew, `imagegen_cli` is the only image generation/editing tool. It routes GPT Image, Nano Banana/Gemini, Doubao Seedream, and Kolors models through the bundled provider registry, runs on the host, and publishes artifacts to the UI.
-- Do not call legacy media tools such as `gen_creative_image`, `edit_image`, or `image_from_reference`.
-- If the user names a model, pass that exact model id to `imagegen_cli.model` and read the matching provider notes directly.
-- If the UI selected an image model and `is_model_auto_mode=false`, omit `model` and let the runtime use the selected preference, but still read the matching provider notes directly. Do not read `references/providers/capability-matrix.md` first in this case.
-- Read `references/providers/capability-matrix.md` only when you need to choose a model because the user did not specify one and the UI is in auto mode or has no clear preference.
-- When the provider is known, read only the provider-specific file needed for that model. Prefer the sandbox directory printed by the `skill` tool and read the exact path directly. Only use `glob` if that direct read fails or the sandbox directory was not provided.
-  - `gpt-image-2`, `gpt-image-*`: `<skill-sandbox>/references/providers/gpt-image.md`
-  - `nano-banana`, `nano-banana-pro`, Gemini image models: `<skill-sandbox>/references/providers/nano-banana.md`
-  - `doubao-seedream-*`, Seedream image models: `<skill-sandbox>/references/providers/doubao-seedream.md`
-  - `kolors`, Kwai-Kolors: `<skill-sandbox>/references/providers/kolors.md`
-- Billing is handled by the SaaS server before and after `imagegen_cli` execution using trusted output count and billing size tier rules. Do not reduce creative choices to fit billing preflight; choose parameters from the provider references and let `imagegen_cli`/the provider adapter validate execution compatibility.
-- If the user explicitly asks for an image size or aspect ratio, translate it into the provider-recommended explicit parameter from the provider notes when possible. For example, Kolors 9:16 should use `size="720x1280"` or `aspect_ratio="9:16"` so the runtime derives `image_size="720x1280"`.
-- For text-to-image requests, call `imagegen_cli` with `command="generate"`, a detailed `prompt`, and an `out` path under `output/imagegen/`.
-- For editing an existing image or using reference images, call `imagegen_cli` with `command="edit"`, `images=[...]`, a detailed `prompt`, and an `out` path under `output/imagegen/`.
-- Only set `imagegen_cli.background` to `transparent`, `opaque`, or `auto`. Do not put visual scene/background descriptions there; put them in `prompt` or `scene`.
-- Do not use `bash` to run `scripts/image_gen.py` in Bahew; `bash` runs in E2B and may not have the host Python dependencies.
-- Do not claim success unless `imagegen_cli` reports success and returns artifact path(s). If the script, dependencies, API key, or output file is missing, tell the user the exact failure instead.
-- After `imagegen_cli` succeeds, do not add sandbox links, download links, or a separate "generated files" delivery section in the final response. The Bahew UI already receives and renders the image through the artifact event.
-- If `imagegen_cli` returns `delivery_required=false` or `do_not_deliver_artifact=true`, do not call `deliver_artifact` for that output path as a standalone file. The Bahew UI already receives the published artifact. In SaaS, generated media is not automatically copied into E2B; reuse prior artifacts through the stable artifact reference supplied by the runtime, and only use a sandbox path that the tool/runtime explicitly materialized for the current task. Continue with other tools only when the user request requires additional editing, transformation, packaging, analysis, or project/code changes.
+Identify the image's **job** before choosing a tool or style. Optimize for conversion, explanation, brand recognition, product accuracy, game usability, UI credibility, readable text, precise data mapping, or edit fidelity as appropriate.
 
-## Top-level modes and rules
+Do not start by asking about model names, API parameters, or internal generation settings. Ask the user only for missing user-facing constraints that affect correctness, such as final medium, aspect ratio, exact text, language, brand colors, reference style, product constraints, transparency, or preservation requirements.
 
-This skill has two execution contexts:
+## Scenario Classification
 
-- **Bahew CLI mode (preferred in SaaS):** call `imagegen_cli` for normal image generation and editing. It wraps this skill's bundled `scripts/image_gen.py`, uses host-side dependencies, and receives provider credentials from the configured SaaS media model gateway.
-- **Codex host built-in mode:** use the built-in `image_gen` tool only in Codex host runtimes where that tool is actually available. It is not available in the Bahew agent runtime.
+Assign one primary scenario and any secondary scenario before prompting or editing.
 
-The CLI exposes three subcommands:
+| Scenario | Use when the visual is for | Success criterion |
+| --- | --- | --- |
+| Website or landing page | Hero images, section visuals, blog covers, page visuals | Layout fit, whitespace, brand tone, text-safe area |
+| Product or commerce | Product renders, packaging shots, marketplace images | Product accuracy, material credibility, clean presentation |
+| Marketing or social | Ads, posters, campaign visuals, thumbnails | Strong focal point, emotional clarity, readable hierarchy |
+| UI or app mockup | App screens, dashboards, interface concepts | Plausible layout, consistent controls, legible structure |
+| Logo or icon | Brand marks, app icons, favicons, symbolic assets | Simplicity, recognizability, scalability |
+| Game or asset pack | Sprites, props, tiles, characters, backgrounds | Reusable silhouette, consistent perspective, clean edges |
+| Character or portrait | People, mascots, avatars, recurring characters | Identity consistency, natural anatomy, intended mood |
+| Diagram or infographic | Explainers, conceptual visuals, structured visuals | Correct structure, readable labels, low ambiguity |
+| Transparent asset | Cutouts, stickers, overlays, compositing assets | Clean alpha, complete subject, no unwanted background |
+| Precise image edit | Modification of an existing image | Change only requested regions; preserve everything else |
+| Image upscale or restore | Upscaling, restoring, or enhancing resolution of an existing image | Higher resolution and clarity while strictly preserving original content, style, and identity |
 
-- `generate`
-- `edit`
-- `generate-batch`
+Read `references/scene-decision-matrix.md` when scenario tradeoffs are unclear or when a request spans multiple media.
 
-Rules:
-- In Bahew, use `imagegen_cli` by default for normal image generation and editing requests.
-- Do not call legacy media tools as a substitute for this skill.
-- If the user explicitly asks for a transparent image/background, use `imagegen_cli` first with a flat removable chroma-key background, then remove it locally with the installed helper at `$CODEX_HOME/skills/.system/imagegen/scripts/remove_chroma_key.py` only if local post-processing is available.
-- Never silently switch from CLI `gpt-image-2` to CLI `gpt-image-1.5`. Treat this as a model/path downgrade and ask the user before doing it, unless the user has already explicitly requested `gpt-image-1.5`.
-- If a transparent request appears too complex for clean chroma-key removal, asks for true/native transparency, or local removal fails validation, explain that true transparency requires CLI `gpt-image-1.5 --background transparent --output-format png` because `gpt-image-2` does not support `background=transparent`, then ask whether to proceed. Run the model downgrade only after the user confirms.
-- The word `batch` by itself does not mean `generate-batch`. If the user asks for many assets or says to batch-generate assets without explicitly asking for JSONL/API/model controls, run one `generate` command per requested asset or variant.
-- If the CLI fails or is unavailable, tell the user the exact failure. Do not fall back to legacy media tools.
-- If the user explicitly asks for CLI/API/model controls, use the bundled `scripts/image_gen.py` workflow. Do not create one-off SDK runners.
-- Never modify `scripts/image_gen.py`. If something is missing, ask the user before doing anything else.
+## Cross-Cutting Policies
 
-Bahew CLI save-path policy:
-- Write generated outputs under `output/imagegen/` unless the user names a destination.
-- After generation, rely on `imagegen_cli` to verify that the file exists and publish it as an artifact event.
-- Do not overwrite an existing asset unless the user explicitly asked for replacement; otherwise create a sibling versioned filename such as `hero-v2.png` or `item-icon-edited.png`.
+### UI images
 
-Shared prompt guidance for both modes lives in `references/prompting.md` and `references/sample-prompts.md`.
+Default UI-related image requests to direct image generation as visual mockups. Do not create HTML/CSS/React, render a webpage, and screenshot it merely because the image resembles an interface. Use code, web/app development, or screenshot workflows only when the user explicitly asks for source code, editable front-end files, interactivity, deployment, a working prototype, or deterministic layout output.
 
-CLI docs/resources:
-- `references/cli.md`
-- `references/image-api.md`
-- `references/codex-network.md`
-- `scripts/image_gen.py`
+When prompting UI images, specify screen type, navigation, information architecture, component hierarchy, realistic spacing, device or browser frame, light/dark mode, brand palette, and exact UI labels or sample data. Describe the output as a visual mockup; do not imply functional software.
 
-Local post-processing helper:
-- `$CODEX_HOME/skills/.system/imagegen/scripts/remove_chroma_key.py`: removes a flat chroma-key background from a generated image and writes a PNG/WebP with alpha. Prefer auto-key sampling, soft matte, and despill for antialiased edges.
+### Text-bearing visuals
 
-## When to use
-- Generate a new image (concept art, product shot, cover, website hero)
-- Generate a new image using one or more reference images for style, composition, or mood
-- Edit an existing image (inpainting, lighting or weather transformations, background replacement, object removal, compositing, transparent background)
-- Produce many assets or variants for one task
+Default text-bearing visual image requests to direct generation of the complete final image, with the text rendered by the image generation model itself. Treat Chinese, English, Japanese, Korean, Arabic, and other writing systems as first-class generation targets; do not assume non-English or dense copy requires a separate text overlay workflow. Text presence, language, or amount of copy is never a reason to generate a blank/background-only image and then add text with Python, scripts, canvas, HTML, SVG, PIL, or manual compositing.
 
-## When not to use
-- Extending or matching an existing SVG/vector icon set, logo system, or illustration library inside the repo
-- Creating simple shapes, diagrams, wireframes, or icons that are better produced directly in SVG, HTML/CSS, or canvas
-- Making a small project-local asset edit when the source file already exists in an editable native format
-- Any task where the user clearly wants deterministic code-native output instead of a generated bitmap
+Strictly forbidden: do not create a poster, menu, infographic, UI mockup, card, flyer, banner, or other text-bearing image by first generating an empty background and then overlaying the required text programmatically. This prohibition applies especially to Chinese text and multilingual layouts. Use deterministic layout or post-processing only when the user explicitly asks for editable source/layout files, pixel-perfect corporate typography, print-production files, legally exact fine print, exact long tables, machine-readable diagrams, or source-controlled design assets; even then, do not present that route as a workaround for Chinese or non-English text generation.
 
-## Decision tree
+Before prompting, organize meaningful copy into title, subtitle, sections, labels, callouts, CTA, footnotes, and UI labels as appropriate. Preserve exact proper nouns, prices, dates, numbers, Chinese characters, punctuation, and required terminology. Reduce redundant wording only when it harms visual readability and is not user-required.
 
-Think about two separate questions:
+Verify generated text against the user-stated requirements: required wording, language, hierarchy, placement, omissions, duplications, and critical numbers/dates/names. Do not run a separate generic garbled-text audit. If one or two targeted generations still fail critical text accuracy and exactness is required, regenerate with a narrower text block, reduce visual density, or ask the user whether exact editable layout/source files are required; do not fall back to Python/scripted text overlay as the default correction path.
 
-1. **Intent:** is this a new image or an edit of an existing image?
-2. **Execution strategy:** is this one asset or many assets/variants?
+### Static layout/code screenshot
 
-Intent:
-- If the user wants to modify an existing image while preserving parts of it, treat the request as **edit**.
-- If the user provides images only as references for style, composition, mood, or subject guidance, treat the request as **generate**.
-- If the user provides no images, treat the request as **generate**.
+Use a static layout or code screenshot workflow only when the user explicitly needs deterministic static visual layout, exact typography or placement, reproducible image composition, editable layout/source files, or source-controlled design assets, but does not need functional software, deployment, data interactivity, or editable application source. Do not use this route merely because the visual resembles a UI, contains Chinese/non-English text, or contains a lot of text.
 
-Bahew CLI edit semantics:
-- Use `scripts/image_gen.py edit` for image edits.
-- Pass each source image with `--image <path>`.
-- If a source image is missing or inaccessible, report that exact failure.
-- For edits, preserve invariants aggressively and save non-destructively by default.
+### Multi-item visual sets
 
-Execution strategy:
-- In the Bahew CLI path, produce many assets or variants by issuing one `imagegen_cli` call per requested asset or variant.
-- Use the CLI `generate-batch` subcommand only when the user explicitly needs JSONL/API/model controls for many prompts/assets.
-- For many distinct assets, do not use `n` as a substitute for separate prompts. `n` is for variants of one prompt; distinct assets need distinct CLI calls or `generate-batch` jobs.
+For card decks, icon packs, sticker packs, poster sets, product image sets, game asset packs, or similar requests, deliver **one standalone final image per requested item** by default. Do not deliver process images, raw subject-only illustrations, contact sheets, stitched previews, A4 sheets, PDFs, or combined boards unless explicitly requested. Archives may supplement many files, but must not replace direct access to final individual images when the user asked for images.
 
-Assume the user wants a new image unless they clearly ask to change an existing one.
+### Image edits and references
 
-## Workflow
-1. Decide the top-level mode: Bahew CLI by default in SaaS; Codex built-in only in host runtimes where `image_gen` is actually available.
-2. Decide the intent: `generate` or `edit`.
-3. Decide whether the output is preview-only or meant to be consumed by the current project.
-4. Decide the execution strategy: single asset vs repeated CLI `generate` calls vs CLI `generate-batch`.
-5. Collect inputs up front: prompt(s), exact text (verbatim), constraints/avoid list, and any input images.
-6. For every input image, label its role explicitly:
-   - reference image
-   - edit target
-   - supporting insert/style/compositing input
-7. If the edit target is only on the local filesystem, make sure the CLI can access it before running `edit`.
-8. If the user asked for a photo, illustration, sprite, product image, banner, or other explicitly raster-style asset, use `imagegen_cli` rather than substituting SVG/HTML/CSS placeholders. If the request is for an icon, logo, or UI graphic that should match existing repo-native SVG/vector/code assets, prefer editing those directly instead.
-9. Augment the prompt based on specificity:
-   - If the user's prompt is already specific and detailed, normalize it into a clear spec without adding creative requirements.
-   - If the user's prompt is generic, add tasteful augmentation only when it materially improves output quality.
-10. Use the Bahew CLI path by default.
-11. For transparent-output requests, follow the transparent image guidance below: generate with `imagegen_cli` on a flat chroma-key background, copy the selected output into the workspace or `tmp/imagegen/` if post-processing is needed, run the installed `$CODEX_HOME/skills/.system/imagegen/scripts/remove_chroma_key.py` helper when available, and validate the alpha result before using it. If this path looks unsuitable or fails, ask before switching to CLI `gpt-image-1.5`.
-12. Inspect outputs and validate: subject, style, composition, text accuracy, and invariants/avoid items.
-13. Iterate with a single targeted change, then re-check.
-14. For preview-only work, render the image inline; the underlying file may remain at the default `$CODEX_HOME/generated_images/...` path.
-15. For project-bound work, move or copy the selected artifact into the workspace and update any consuming code or references. Never leave a project-referenced asset only at the default `$CODEX_HOME/generated_images/...` path.
-16. For batches or multi-asset requests, persist every requested deliverable final in the workspace unless the user explicitly asked to keep outputs preview-only. Discarded variants do not need to be kept unless requested.
-17. Use the CLI docs for model, quality, size, `input_fidelity`, masks, output format, output paths, and network setup.
-18. Always report the final saved path(s), plus the final prompt or prompt set and whether Bahew CLI mode or Codex host built-in mode was used.
+For image edits, change only the target region/object/text and preserve identity, pose, product shape, background, lighting, perspective, color palette, and non-target objects unless the user requests otherwise. When the user says “use this as reference,” match only the relevant dimension: identity, style, composition, color, or product form.
 
-## Transparent image requests
+### Scenario-specific guardrails
 
-Transparent-image requests still use `imagegen_cli` first. Because the default CLI path does not expose true transparency with `gpt-image-2`, create a removable chroma-key source image and then convert the key color to alpha locally when post-processing is available.
+| Scenario | Guardrail |
+| --- | --- |
+| Logo/icon | Start with a simple symbol or mark. Do not rely on generated typography for precise brand wordmarks unless the user accepts concept-only output. |
+| Product image | Preserve product shape, labels, proportions, materials, and legally sensitive marks. Do not invent branding unless requested. |
+| Transparent asset | Require a true transparent background, complete subject, clean alpha, and no colored fringe or unwanted shadow. |
+| Character | Define stable identity anchors: age, face shape, hair, outfit, silhouette, palette, and style. |
+| Precise chart | Never use AI image generation for the quantitative plot itself. |
 
-Default sequence:
-1. Use `imagegen_cli` to generate the requested subject on a perfectly flat solid chroma-key background.
-2. Choose a key color that is unlikely to appear in the subject: default `#00ff00`, use `#ff00ff` for green subjects, and avoid `#0000ff` for blue subjects.
-3. After generation, move or copy the selected source image from `$CODEX_HOME/generated_images/...` into the workspace or `tmp/imagegen/`.
-4. Run the installed helper path, not a project-relative script path:
-   ```bash
-   python "${CODEX_HOME:-$HOME/.codex}/skills/.system/imagegen/scripts/remove_chroma_key.py" \
-     --input <source> \
-     --out <final.png> \
-     --auto-key border \
-     --soft-matte \
-     --transparent-threshold 12 \
-     --opaque-threshold 220 \
-     --despill
-   ```
-5. Validate that the output has an alpha channel, transparent corners, plausible subject coverage, and no obvious key-color fringe. If a thin fringe remains, retry once with `--edge-contract 1`; use `--edge-feather 0.25` only when the edge is visibly stair-stepped and the subject is not shiny or reflective.
-6. Save the final alpha PNG/WebP in the project if the asset is project-bound. Never leave a project-referenced transparent asset only under `$CODEX_HOME/*`.
+## Production Brief Workflow
 
-Prompt transparent requests like this:
+Build a short internal brief before generating or editing.
+
+| Brief field | Determine |
+| --- | --- |
+| Purpose | What the visual must accomplish |
+| Medium | Website, app, ad, marketplace, slide, game, print, social, or asset library |
+| Subject | Main object, person, environment, interface, product, or concept |
+| Composition | Orientation, framing, whitespace, safe area, hierarchy, camera angle, screen/device context |
+| Style | Photographic, vector, 3D, editorial, flat, pixel art, brand style, or reference-matched |
+| Text/content | Exact wording, language, hierarchy, labels, UI copy, callouts, or “no text” |
+| Constraints | Aspect ratio, dimensions, transparency, brand colors, preservation requirements, excluded objects |
+| Acceptance risks | Errors that would make the result unusable |
+
+Ask only for missing essential information. If nonessential details are unspecified, make a reasonable assumption and proceed.
+
+Use this prompt structure for new visuals:
 
 ```text
-Create the requested subject on a perfectly flat solid #00ff00 chroma-key background for background removal.
-The background must be one uniform color with no shadows, gradients, texture, reflections, floor plane, or lighting variation.
-Keep the subject fully separated from the background with crisp edges and generous padding.
-Do not use #00ff00 anywhere in the subject.
-No cast shadow, no contact shadow, no reflection, no watermark, and no text unless explicitly requested.
+Create [image type] for [use case and audience].
+Subject: [specific subject, interface, product, scene, or concept].
+Composition: [framing, orientation, focal point, safe area, background depth, screen/device layout if relevant].
+Style: [visual style, lighting, material, color palette, brand tone].
+Text/content to render: [organized exact content block, UI labels, section labels, CTA, or “no text”].
+Constraints: [aspect ratio, transparency, text handling, elements to include/exclude].
+Avoid: [scenario-specific failure modes].
 ```
 
-Do not automatically use CLI `gpt-image-1.5 --background transparent --output-format png` instead of chroma keying. Ask the user first when the user asks for true/native transparency, when local removal fails validation, or when the requested image is complex: hair, fur, feathers, smoke, glass, liquids, translucent materials, reflective objects, soft shadows, realistic product grounding, or subject colors that conflict with all practical key colors.
-
-Use a concise confirmation like:
+Use this prompt structure for edits:
 
 ```text
-This likely needs true native transparency. The default Bahew CLI path uses a chroma-key background plus local removal, but true transparency requires gpt-image-1.5 because gpt-image-2 does not support background=transparent. It also requires an enabled media model gateway for the selected image model. Should I proceed with that model downgrade?
+Edit the provided image. Change only [target region/object/text].
+Preserve [identity, pose, product shape, background, lighting, perspective, color palette, other objects].
+New result should [desired outcome].
+Text/content to render if relevant: [exact replacement text and location].
+Avoid: [unwanted changes, artifacts, text errors, style drift].
 ```
 
-## Prompt augmentation
+Read `references/prompt-recipes.md` for scenario-specific prompt structures.
 
-Reformat user prompts into a structured, production-oriented spec. Make the user's goal clearer and more actionable, but do not blindly add detail.
+## Lightweight Validation and Delivery
 
-Treat this as prompt-shaping guidance, not a closed schema. Use only the lines that help, and add a short extra labeled line when it materially improves clarity.
+Do a **lightweight pass/fail check** before delivery, not an open-ended audit. Confirm only that the result satisfies the user's explicit request, the selected route is correct, and there is no obvious fatal defect that would make the artifact unusable. Do not perform forensic inspection, crop local regions for preview, run scripts to locate labels, search fonts, create masks, compare tiny details, or repeatedly re-open intermediate files unless the user requested that workflow or a visible critical failure blocks delivery.
 
-### Specificity policy
+If a critical requirement fails, correct only the single most important failure with one focused edit/regeneration or an appropriate route change. Do not keep refining for subjective polish, minor crop preferences, tiny spacing issues, uncertain text micro-errors, or speculative improvements. For text-bearing visuals, a quick visual check of requested headline/labels/numbers is enough; do not run a generic garbled-text audit or build a scripted correction pipeline.
 
-Use the user's prompt specificity to decide how much augmentation is appropriate:
+Use deterministic image processing for operations where no new visual content is needed: downscaling, trimming, format conversion, or compression. When a resize or crop implies a new aspect ratio, default to preserving all content unless the user explicitly accepts edge loss; use AI editing to reconstruct or adapt the image when content must not be lost.
 
-- If the prompt is already specific and detailed, preserve that specificity and only normalize/structure it.
-- If the prompt is generic, you may add tasteful augmentation when it will materially improve the result.
-
-Allowed augmentations:
-- composition or framing hints
-- polish level or intended-use hints
-- practical layout guidance
-- reasonable scene concreteness that supports the stated request
-
-Not allowed augmentations:
-- extra characters or objects that are not implied by the request
-- brand names, slogans, palettes, or narrative beats that are not implied
-- arbitrary side-specific placement unless the surrounding layout supports it
-
-## Use-case taxonomy (exact slugs)
-
-Classify each request into one of these buckets and keep the slug consistent across prompts and references.
-
-Generate:
-- photorealistic-natural — candid/editorial lifestyle scenes with real texture and natural lighting.
-- product-mockup — product/packaging shots, catalog imagery, merch concepts.
-- ui-mockup — app/web interface mockups and wireframes; specify the desired fidelity.
-- infographic-diagram — diagrams/infographics with structured layout and text.
-- scientific-educational — classroom explainers, scientific diagrams, and learning visuals with required labels and accuracy constraints.
-- ads-marketing — campaign concepts and ad creatives with audience, brand position, scene, and exact tagline/copy.
-- productivity-visual — slide, chart, workflow, and data-heavy business visuals.
-- logo-brand — logo/mark exploration, vector-friendly.
-- illustration-story — comics, children’s book art, narrative scenes.
-- stylized-concept — style-driven concept art, 3D/stylized renders.
-- historical-scene — period-accurate/world-knowledge scenes.
-
-Edit:
-- text-localization — translate/replace in-image text, preserve layout.
-- identity-preserve — try-on, person-in-scene; lock face/body/pose.
-- precise-object-edit — remove/replace a specific element (including interior swaps).
-- lighting-weather — time-of-day/season/atmosphere changes only.
-- background-extraction — transparent background / clean cutout. Use `imagegen_cli` with chroma-key removal first for simple opaque subjects; ask before using CLI true transparency for complex subjects.
-- style-transfer — apply reference style while changing subject/scene.
-- compositing — multi-image insert/merge with matched lighting/perspective.
-- sketch-to-render — drawing/line art to photoreal render.
-
-## Shared prompt schema
-
-Use the following labeled spec as shared prompt scaffolding for both top-level modes:
-
-```text
-Use case: <taxonomy slug>
-Asset type: <where the asset will be used>
-Primary request: <user's main prompt>
-Input images: <Image 1: role; Image 2: role> (optional)
-Scene/backdrop: <environment>
-Subject: <main subject>
-Style/medium: <photo/illustration/3D/etc>
-Composition/framing: <wide/close/top-down; placement>
-Lighting/mood: <lighting + mood>
-Color palette: <palette notes>
-Materials/textures: <surface details>
-Text (verbatim): "<exact text>"
-Constraints: <must keep/must avoid>
-Avoid: <negative constraints>
-```
-
-Notes:
-- `Asset type` and `Input images` are prompt scaffolding, not dedicated CLI flags.
-- `Scene/backdrop` refers to the visual setting. It is not the same as the fallback CLI `background` parameter, which controls output transparency behavior.
-- CLI execution notes such as `Quality:`, `Input fidelity:`, masks, output format, and output paths belong in the CLI path only. Do not treat them as built-in `image_gen` tool arguments.
-
-Augmentation rules:
-- Keep it short.
-- Add only the details needed to improve the prompt materially.
-- For edits, explicitly list invariants (`change only X; keep Y unchanged`).
-- If any critical detail is missing and blocks success, ask a question; otherwise proceed.
-
-## Examples
-
-### Generation example (hero image)
-```text
-Use case: product-mockup
-Asset type: landing page hero
-Primary request: a minimal hero image of a ceramic coffee mug
-Style/medium: clean product photography
-Composition/framing: wide composition with usable negative space for page copy if needed
-Lighting/mood: soft studio lighting
-Constraints: no logos, no text, no watermark
-```
-
-### Edit example (invariants)
-```text
-Use case: precise-object-edit
-Asset type: product photo background replacement
-Primary request: replace only the background with a warm sunset gradient
-Constraints: change only the background; keep the product and its edges unchanged; no text; no watermark
-```
-
-## Prompting best practices
-- Structure prompt as scene/backdrop -> subject -> details -> constraints.
-- Include intended use (ad, UI mock, infographic) to set the mode and polish level.
-- Use camera/composition language for photorealism.
-- Only use SVG/vector stand-ins when the user explicitly asked for vector output or a non-image placeholder.
-- Quote exact text and specify typography + placement.
-- For tricky words, spell them letter-by-letter and require verbatim rendering.
-- For multi-image inputs, reference images by index and describe how they should be used.
-- For edits, repeat invariants every iteration to reduce drift.
-- Iterate with single-change follow-ups.
-- If the prompt is generic, add only the extra detail that will materially help.
-- If the prompt is already detailed, normalize it instead of expanding it.
-- For CLI details, see `references/cli.md` and `references/image-api.md` for model, `quality`, `input_fidelity`, masks, output format, and output-path guidance.
-- For transparent images, use the Bahew CLI chroma-key workflow unless the request is complex enough to need true CLI transparency; ask before switching to CLI `gpt-image-1.5`.
-
-More principles shared by both modes: `references/prompting.md`.
-Copy/paste specs shared by both modes: `references/sample-prompts.md`.
-
-## Guidance by asset type
-Asset-type templates (website assets, game assets, wireframes, logo) are consolidated in `references/sample-prompts.md`.
-
-## gpt-image-2 guidance for CLI mode
-
-The CLI defaults to `gpt-image-2`.
-
-- Use `gpt-image-2` for new CLI/API workflows unless the request needs true model-native transparent output.
-- If a transparent request may need true transparency, ask before using `gpt-image-1.5` unless the user already explicitly requested `gpt-image-1.5`. Explain that the Bahew CLI chroma-key path is the default, but true transparency requires `gpt-image-1.5` because `gpt-image-2` does not support `background=transparent`.
-- `gpt-image-2` always uses high fidelity for image inputs; do not set `input_fidelity` with this model.
-- `gpt-image-2` supports `quality` values `low`, `medium`, `high`, and `auto`.
-- Use `quality low` for fast drafts, thumbnails, and quick iterations. Use `medium`, `high`, or `auto` for final assets, dense text, diagrams, identity-sensitive edits, or high-resolution outputs.
-- Square images are typically fastest to generate. Use `1024x1024` for fast square drafts.
-- If the user asks for 4K-style output, use `3840x2160` for landscape or `2160x3840` for portrait.
-- `gpt-image-2` size may be `auto` or `WIDTHxHEIGHT` if all constraints hold: max edge `<= 3840px`, both edges multiples of `16px`, long-to-short ratio `<= 3:1`, total pixels between `655,360` and `8,294,400`.
-- Keep aspect ratio and resolution separate in UI/client flows. Common `gpt-image-2` aspect-ratio presets are `1:1`, `3:2`, `2:3`, `4:3`, `3:4`, `5:4`, `4:5`, `16:9`, `9:16`, `2:1`, `1:2`, `21:9`, and `9:21`.
-
-Popular `gpt-image-2` sizes:
-- `1024x1024` square
-- `1536x1024` landscape
-- `1024x1536` portrait
-- `2048x2048` 2K square
-- `2048x1152` 2K landscape
-- `3840x2160` 4K landscape
-- `2160x3840` 4K portrait
-- `auto`
-
-## CLI mode details
-
-### Temp and output conventions
-These conventions apply to Bahew CLI mode.
-- Use `tmp/imagegen/` for intermediate files (for example JSONL batches); delete them when done.
-- Write final artifacts under `output/imagegen/`.
-- Use `--out` or `--out-dir` to control output paths; keep filenames stable and descriptive.
-
-### Dependencies
-Prefer `uv` for dependency management in this repo.
-
-Required Python package:
-```bash
-uv pip install openai
-```
-
-Required for local chroma-key removal and optional downscaling:
-```bash
-uv pip install pillow
-```
-
-Portability note:
-- If you are using the installed skill outside this repo, install dependencies into that environment with its package manager.
-- In uv-managed environments, `uv pip install ...` remains the preferred path.
-
-### Environment
-- Live API calls require an enabled SaaS media model gateway for the selected image model.
-- The runtime injects `OPENHARNESS_MEDIA_GATEWAY_API_KEY`, `OPENHARNESS_MEDIA_GATEWAY_BASE_URL`, and `OPENHARNESS_MEDIA_GATEWAY_MODEL_ID` for the selected gateway.
-- Do not ask the user to set legacy provider-specific environment variables; media credentials must be configured through the SaaS admin media model gateway.
-- Never ask the user to paste the full key in chat. Ask them to configure the media model gateway in the admin console and confirm when ready.
-
-If the gateway key is missing, give the user these steps:
-1. Create or obtain the provider API key for the selected image model.
-2. Configure it in the SaaS admin media model gateway.
-3. Enable a gateway mapping for the selected image model.
-4. Retry the image generation task.
-
-If installation is not possible in this environment, tell the user which dependency is missing and how to install it into their active environment.
-
-### Script-mode notes
-- CLI commands + examples: `references/cli.md`
-- API parameter quick reference: `references/image-api.md`
-- Network approvals / sandbox settings for CLI mode: `references/codex-network.md`
-
-## Reference map
-- `references/prompting.md`: shared prompting principles for both modes.
-- `references/sample-prompts.md`: shared copy/paste prompt recipes for both modes.
-- `references/cli.md`: CLI usage via `scripts/image_gen.py`.
-- `references/image-api.md`: API/CLI parameter reference.
-- `references/codex-network.md`: network/sandbox troubleshooting for CLI mode.
-- `scripts/image_gen.py`: CLI implementation. Do not modify it unless the user explicitly asks.
-- `$CODEX_HOME/skills/.system/imagegen/scripts/remove_chroma_key.py`: local post-processing helper for transparent-image requests.
+Deliver the artifact that matches the selected route: Mermaid source for Mermaid requests, chart image and source data/code as appropriate for Python plots, implementation files for code/demo/web/app requests, static layout images/source when requested, and final image files for AI generation or editing. Once the requested artifact has been delivered, **stop**. Do not continue generating extra variants, backup versions, additional fixes, or follow-up improvements after final delivery unless the user asks for them. Briefly state only essential scenario assumptions or known limitations that affect use.

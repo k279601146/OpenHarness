@@ -296,7 +296,7 @@ def _active_media_canvas_request(context: ToolExecutionContext) -> str | None:
 
 
 def _media_request_guidance(kind: str, mode: str) -> str:
-    tool_name = "videogen_cli" if kind == "video_generation" else "imagegen_cli"
+    tool_name = "videogen_cli" if kind == "video_generation" else "generate_image"
     return (
         f"当前正在处理真实 canvas_request 媒体生成任务（{kind}）。"
         f"不要递归调用 canvas_generate_{mode} 或 canvas_run_generation；"

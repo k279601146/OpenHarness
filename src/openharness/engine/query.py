@@ -1459,7 +1459,7 @@ async def _maybe_await(value: Any) -> Any:
 
 
 def _is_media_generation_tool(tool_name: str) -> bool:
-    return str(tool_name or "").lower() in {"imagegen_cli", "videogen_cli"}
+    return str(tool_name or "").lower() in {"generate_image", "videogen_cli"}
 
 
 def _media_kind_for_tool(tool_name: str) -> str:
@@ -1504,6 +1504,7 @@ def _media_subtask_input(tool_input: dict[str, object], *, index: int, kind: str
     item["n"] = 1
     if kind == "image":
         item["num_images"] = 1
+        item["output_count"] = 1
     else:
         item["num_videos"] = 1
     out = str(item.get("out") or "").strip()

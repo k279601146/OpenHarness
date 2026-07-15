@@ -96,12 +96,9 @@ beautifulsoup4>=4.12.0
 curl_cffi>=0.7.0
 
 # ─────────────────────────────────────────────────────────────
-# AI image generation tool / AI 图片生成工具 (skills/ppt-master/scripts/image_gen.py)
+# Web image search and image inspection helpers / 网页图片搜索和图片检查辅助
 # ─────────────────────────────────────────────────────────────
-# Gemini backend / Gemini 后端 (IMAGE_BACKEND=gemini)
-google-genai>=1.0.0
-# OpenAI-compatible backend uses requests from the web tooling section above.
-# OpenAI 兼容后端复用上方网页工具所需的 requests。
+# SaaS image generation runs through the backend generate_image service, not this skill.
 
 # ─────────────────────────────────────────────────────────────
 # SVG Editor / SVG 编辑器 (skills/ppt-master/scripts/svg_editor/server.py)

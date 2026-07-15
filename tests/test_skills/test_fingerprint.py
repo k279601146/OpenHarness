@@ -9,8 +9,8 @@ from openharness.tools.sandbox_workspace import _skill_source_manifest
 
 
 def test_skill_fingerprint_ignores_generated_runtime_files(tmp_path: Path) -> None:
-    skill_dir = tmp_path / "imagegen"
-    runtime_dir = skill_dir / "scripts" / "imagegen_runtime"
+    skill_dir = tmp_path / "sample-skill"
+    runtime_dir = skill_dir / "scripts" / "runtime"
     cache_dir = runtime_dir / "__pycache__"
     cache_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text("# Imagegen\n", encoding="utf-8")
@@ -23,7 +23,7 @@ def test_skill_fingerprint_ignores_generated_runtime_files(tmp_path: Path) -> No
     assert skill_source_fingerprint(skill_dir) == before
     assert sorted(path.relative_to(skill_dir).as_posix() for path in iter_skill_source_files(skill_dir)) == [
         "SKILL.md",
-        "scripts/imagegen_runtime/registry.py",
+        "scripts/runtime/registry.py",
     ]
 
 

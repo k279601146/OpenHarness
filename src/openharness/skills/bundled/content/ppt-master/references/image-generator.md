@@ -132,7 +132,7 @@ The assembled prompt is **one cohesive paragraph**, not a bulleted list of tags.
 
 ### Step 4 — Write the manifest and generate
 
-Write `project/images/image_prompts.json` per §6. Then run `image_gen.py --manifest` (§7 Path A). The CLI iterates `items[]`, writes status back, and re-renders the Markdown sidecar.
+Write `project/images/image_prompts.json` per §6. Then submit each `items[]` prompt through the SaaS `generate_image` service. After each successful artifact is saved into `project/images/<filename>`, update the row status and re-render the Markdown sidecar.
 
 ---
 
@@ -391,11 +391,11 @@ Write `project/images/image_prompts.json` with this shape:
 | `items[].type` | conditional | Step 3 per-image (only when `page_role: local`) | One of 11 internal-composition types: `infographic`, `flowchart`, `framework`, `matrix`, `cycle`, `funnel`, `pyramid`, `comparison`, `timeline`, `map`, `scene`. **Omit `type` entirely when `page_role: hero_page`** — the composition comes from §4.1 primitives written directly into the prompt, not from a type file. |
 | `items[].page_role` | yes | Step 3 per-image | `local` (default — region block on SVG page) or `hero_page` (image is page's main voice; SVG overlay minimal or empty) |
 | `items[].text_policy` | yes | Step 3 per-image | `none` (image carries no text — explicit visual rule) or `embedded` (image contains decorative lettering, designed title, hand-lettered keywords, or stable visual identifiers like axis labels / subplot letters / unit symbols). AI judges per image; no global default bias — see §5.3. |
-| `items[].aspect_ratio` | yes | Container sizing | Passed to `image_gen.py --aspect_ratio` |
+| `items[].aspect_ratio` | yes | Container sizing | Passed to the SaaS `generate_image` request |
 | `items[].prompt` | yes | §4 assembly | The full assembled paragraph |
 | `items[].image_size` | no | Container sizing | `512px` / `1K` / `2K` / `4K` |
 | `items[].alt_text` | no | Accessibility | Short caption |
-| `items[].status` | yes | CLI manages | `Pending` initially; CLI updates to `Generated` / `Failed` / `Needs-Manual` |
+| `items[].status` | yes | SaaS generation flow manages | `Pending` initially; update to `Generated` / `Failed` / `Needs-Manual` |
 
 > **Back-compat for legacy `type` values**: existing manifests using `background` / `hero` / `portrait` / `typography` (the four removed pseudo-types) remain readable. Read them as: `background` → `page_role: hero_page` + no type; `hero` → `page_role: hero_page` + no type (use §4.1 Primitive A in prompt); `portrait` → `page_role: local` + no type (use §4.1 Primitive B); `typography` → `page_role: hero_page` + `text_policy: embedded` + no type (use §4.1 Primitive C). New manifests should follow the rule above (omit `type` when `page_role: hero_page`).
 >
@@ -407,95 +407,29 @@ Write `project/images/image_prompts.json` with this shape:
 
 > Prerequisite: §3 Steps 1-3 complete; `images/image_prompts.json` exists and validates.
 
-### Path Selection (Deterministic)
+### Path Selection
 
-C (AI-generated) supports three implementation modes sharing one `image_prompts.json` source:
+C (AI-generated) uses the SaaS `generate_image` service. There is no local provider backend, provider ENV key, direct provider API, or host-native fallback path in SaaS.
 
 | Trigger | Mode | Mechanism |
 |---|---|---|
-| **Default** — `IMAGE_BACKEND` configured | **Path A**: `image_gen.py --manifest` | One command runs the whole manifest with concurrency; status writes back per item |
-| `IMAGE_BACKEND` not configured (or Path A fails) AND host has a native image tool | **Path B**: Host-native tool | Agent invokes the host's image capability; outputs land at `project/images/<filename>` |
-| **Both Path A and Path B fail/unavailable** | **Offline Manual Mode** | Manifest stays on disk; user generates externally from `items[].prompt` and places files at `project/images/<filename>` |
+| Default | SaaS image generation | Submit each manifest item through `generate_image`; backend handles model routing, billing, gateway execution and artifact delivery |
+| SaaS image generation unavailable | Offline Manual Mode | Manifest stays on disk; user generates externally from `items[].prompt` and places files at `project/images/<filename>` |
 
-**Selection logic** — monotonic A → B → C fallback chain (automatic, no user prompting):
+**Hard rule**: Step 4 is execution, not re-decision. Never present an interactive choice between routes here — image strategy was locked in Strategist Step 4 h item.
 
-1. **Try Path A** — if `IMAGE_BACKEND` is configured (env or `.env`), run `image_gen.py --manifest`. If it fails twice in a row, fall to Path B.
-2. **Try Path B** — if `IMAGE_BACKEND` was not configured (A skipped), or A failed, and the host has a native image tool (Codex / Antigravity / Claude Code / similar), the agent invokes the host's image capability directly.
-3. **Fall to C (Offline Manual)** — if B is also unavailable (no host-native tool) or fails, write prompts to `images/image_prompts.json` and hand off to the user.
+> Both modes share one output contract: file at `project/images/<filename>`. Step 6 SVG references are mode-agnostic.
 
-**User override**: If the user explicitly names Path B ("use Codex's image tool"), skip A and start at B. Explicit naming is the only way to bypass an earlier path in the chain; otherwise the chain is monotonic.
+### SaaS Image Generation
 
-**Hard rule**: Step 4 is execution, not re-decision. Never present an interactive choice between paths here — image strategy was locked in Strategist Step 4 h item.
+For each Pending/Failed row:
 
-> All three modes share one output contract: file at `project/images/<filename>`. Step 6 SVG references are mode-agnostic.
+1. Build a `generate_image` request from `items[].prompt`, requested dimensions, and any available references.
+2. Let SaaS backend perform model routing, billing reservation, media gateway execution, image validation and artifact publication.
+3. Save the resulting artifact into `project/images/<filename-from-resource-list>` if the PPT project needs a local file reference.
+4. Set the row `status` to `Generated`; on failure record `last_error` and keep the row resumable.
 
-### Path A — `image_gen.py --manifest` (Default)
-
-```bash
-python3 scripts/image_gen.py \
-  --manifest project/images/image_prompts.json \
-  --output project/images
-```
-
-The CLI iterates `items[]` with adaptive concurrency, writes `status` back per item, and is **idempotent**: re-running only re-processes entries whose status is `Pending` or `Failed`.
-
-**Parameters**:
-
-| Parameter | Short | Description | Default |
-|---|---|---|---|
-| `--manifest` | - | Path to `image_prompts.json` | — |
-| `--concurrency` | - | Max concurrent requests; halves on rate-limit, min 1 | `IMAGE_CONCURRENCY` env or `3` |
-| `--image_size` | - | Default size (`512px`/`1K`/`2K`/`4K`); per-item `image_size` wins | `1K` |
-| `--output` | `-o` | Output directory | Manifest's parent dir |
-| `--backend` | `-b` | Override `IMAGE_BACKEND` for this run | env |
-| `--model` | `-m` | Default model; per-item `model` wins | Backend default |
-| `--list-backends` | - | Print support tiers and exit | — |
-
-> The single-image form `image_gen.py "prompt" --filename ...` is preserved for ad-hoc one-offs (re-rolling a single image) but is no longer the primary path.
-
-**Configuration sources**:
-- Current process environment variables
-- First `.env` found in this order: current working directory, skill directory (e.g. `~/.agents/skills/ppt-master/.env`), clone repo root, `~/.ppt-master/.env`
-
-Precedence:
-- Current process environment wins
-- `.env` fills missing values only
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `IMAGE_BACKEND` | Required | Backend identifier; run `image_gen.py --list-backends` for the current set |
-| `IMAGE_CONCURRENCY` | Optional | Manifest-mode default concurrency (CLI `--concurrency` wins) |
-| `{PROVIDER}_API_KEY` | Required | Provider-specific API key, e.g. `GEMINI_API_KEY`, `ZHIPU_API_KEY` |
-| `{PROVIDER}_BASE_URL` | Optional | Provider-specific custom endpoint |
-| `{PROVIDER}_MODEL` | Optional | Provider-specific model override |
-| `OPENAI_SIZE_PRESET` | Optional | OpenAI-compatible size mapping: `auto`, `legacy`, `gpt-image`, `gpt-image-2`, `dall-e-2` |
-| `OPENAI_RESPONSE_FORMAT` | Optional | OpenAI-compatible response field: `auto`, `b64_json`, `url`, `omit` |
-| `OPENAI_QUALITY` | Optional | OpenAI-compatible quality field: `auto`, `omit`, `low`, `medium`, `high`, `standard`, `hd` |
-
-> Use provider-specific names only (e.g. `GEMINI_API_KEY`, `OPENAI_API_KEY`). See `.env.example` in clone mode or `${SKILL_DIR}/.env.example` in skill-install mode for the full set per backend.
-
-> Note: OpenAI-compatible platforms that reject OpenAI-specific fields stay under `IMAGE_BACKEND=openai`; configure the `OPENAI_*` compatibility knobs instead of adding a provider-specific backend.
-
-> `IMAGE_API_KEY`, `IMAGE_MODEL`, and `IMAGE_BASE_URL` are intentionally unsupported.
-
-> If `.env` or the current environment contains multiple provider configs, `IMAGE_BACKEND` explicitly selects the active one.
-
-**Support tiers (recommended usage)**: Core / Extended / Experimental. Run `image_gen.py --list-backends` for the current assignments.
-
-**Concurrency (manifest mode)**:
-- Default 3 concurrent requests, halves on the first rate-limit response, minimum 1 (= serial fallback)
-- Rate-limited items requeue automatically; per-item failures are recorded with `last_error` and skipped
-- Interrupting mid-run is safe — completed items keep `status: Generated` and are skipped on re-run
-- On normal completion the Markdown sidecar is re-rendered automatically; if the run is interrupted, run `--render-md` manually to refresh the sidecar
-
-### Path B — Host-Native Image Tool
-
-Triggered automatically when `IMAGE_BACKEND` is not configured (or Path A fails) **and** the host provides a native image generation tool (Codex, Antigravity, Claude Code's image tool, and similar). No user prompting required — the agent detects the host capability and proceeds. The user may also explicitly name this path ("use Codex's image tool") to force it even when `IMAGE_BACKEND` is configured.
-
-- Agent invokes the host's native image tool directly; prompts come from `items[].prompt`
-- Outputs **must** land at `project/images/<filename-from-resource-list>` with dimensions matching the Image Resource List
-- After each placement, set the corresponding item's `status` to `Generated` in the manifest
-- Executor downstream is path-agnostic — no spec change required between Path A and Path B
+Do not read provider keys, configure provider ENV variables, choose upstream base URLs, or run local image generation scripts from this skill.
 
 ### Offline Manual Mode (C's third implementation mode)
 
@@ -518,10 +452,10 @@ Triggered automatically when `IMAGE_BACKEND` is not configured (or Path A fails)
 
 #### AI-specific Failure Handling (extends image-base.md §6)
 
-If Path A's backend fails twice in a row:
+If SaaS image generation fails:
 
-1. Do not halt. Automatically attempt to fall back to **Path B (Host-Native Tool)**.
-2. If Path B also fails or is unavailable, mark the row `Needs-Manual`.
+1. Do not retry through local scripts or provider APIs.
+2. Mark the row `Needs-Manual` when the failure is not immediately recoverable.
 3. Report to user: filename, prompt used, error message.
 4. Fall through to **Offline Manual Mode** above.
 
@@ -573,7 +507,7 @@ Diagnose the failure category, adjust the **one specific dimension** responsible
 **Variant workflow**:
 
 1. Set the unsatisfactory item's `status` back to `Pending` and update its `prompt` in place
-2. Re-run `image_gen.py --manifest` — only that item is re-processed
+2. Re-submit only that item through `generate_image`
 3. To try multiple stylistic approaches, append additional items with distinct filenames (e.g. `cover_bg_v2.png`) rather than overwriting
 
 ---

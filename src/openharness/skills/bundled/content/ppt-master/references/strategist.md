@@ -286,15 +286,14 @@ The script renders PNGs into `images/`, trying `codecogs`, `quicklatex`, `mathpa
 | **D** | Web-sourced | Real-world reference imagery, editorial support, stock-style needs (no API key required for default providers) |
 | **E** | Placeholders | Images to be added later |
 
-**When recommending C** — surface its three implementation modes so the user knows "no API key" is a supported state:
+**When recommending C** — surface its two implementation modes:
 
 | Mode | Trigger | Mechanism |
 |---|---|---|
-| **Path A** | `IMAGE_BACKEND` configured (default) | `image_gen.py` runs in Step 5 |
-| **Path B** | `IMAGE_BACKEND` not configured AND host has a native image tool (Codex / Antigravity / Claude Code / similar) — auto-selected, no user prompting needed | Host-native generation |
-| **Offline Manual** | `IMAGE_BACKEND` not configured AND host has no native image tool | Prompts written to `images/image_prompts.json`; user generates externally and places files in `project/images/` |
+| **SaaS generation** | Default | Step 5 submits prompts through `generate_image`; SaaS handles routing, billing, gateway execution and artifact delivery |
+| **Offline Manual** | SaaS generation unavailable | Prompts written to `images/image_prompts.json`; user generates externally and places files in `project/images/` |
 
-Selection is automatic in Step 5 (A → B → Manual). Detailed contract: [`image-generator.md`](./image-generator.md) §3.2.
+Selection is automatic in Step 5. Detailed contract: [`image-generator.md`](./image-generator.md) §3.2.
 
 Selections may be mixed at the row level — e.g. a deck can use C for hero illustrations while sourcing D for supporting team photos.
 
