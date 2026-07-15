@@ -10,6 +10,8 @@ Use this skill to decide the correct production route for visual deliverables. A
 
 This skill is the thinking layer, not the execution layer. After deciding that AI bitmap generation or editing is the right route, call the `generate_image` tool with a high-level request brief. Do not run local scripts, call provider APIs directly, read provider keys, choose upstream base URLs, or call `deliver_artifact` for generated image outputs. The SaaS backend performs model routing, billing reservation, gateway execution, image validation, artifact registration, and `agent_artifact` delivery.
 
+Use the tool as a canonical intent protocol. Express what the user wants; do not express how a provider API should be called. Prefer `scenario`, `brief`, `output`, `edit_policy`, and `text_policy` over provider-style fields. The backend adapter derives provider payload fields such as `size`, `n`, `batch_size`, `responseModalities`, safety defaults, and fixed technical switches.
+
 ## Core Principle
 
 Identify the image's **job** before choosing a tool or style. Optimize for conversion, explanation, brand recognition, product accuracy, game usability, UI credibility, readable text, precise data mapping, or edit fidelity as appropriate.
@@ -116,6 +118,12 @@ Avoid: [unwanted changes, artifacts, text errors, style drift].
 ```
 
 Read `references/prompt-recipes.md` for scenario-specific prompt structures.
+
+## Tool Boundary
+
+When calling `generate_image`, express the final prompt, scenario, production brief, output intent, edit/text policy, and stable references that matter to the user's result. Use `model_id` only when the user explicitly selected a logical image model.
+
+Do not include provider names, upstream model IDs, base URLs, API keys, provider-specific field names, seeds, safety switches, raw HTTP payload fragments, local scripts, or host paths. The tool schema and validation errors are the interface contract; this skill only guides image reasoning.
 
 ## Lightweight Validation and Delivery
 

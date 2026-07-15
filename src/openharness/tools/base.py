@@ -39,6 +39,8 @@ class BaseTool(ABC):
     name: str
     description: str
     input_model: type[BaseModel]
+    display_name: str | None = None
+    default_start_message: str | None = None
     
     # [Optimize] 显式标记工具是否必须在沙箱中运行
     # False: 默认在宿主机执行（节省资源）
@@ -54,23 +56,17 @@ class BaseTool(ABC):
         del arguments
         return False
 
+    def display_label(self) -> str:
+        """Return a user-facing tool label without changing the input schema."""
+        return self.display_name or self.name.replace("_", " ")
+
+    def start_message(self) -> str:
+        """Return a user-facing start message without changing the input schema."""
+        return self.default_start_message or f"正在执行工具 {self.name}..."
+
     def to_api_schema(self) -> dict[str, Any]:
-        """Return the tool schema expected by the Messages API with global reasoning injection."""
+        """Return the tool schema expected by the Messages API."""
         schema = self.input_model.model_json_schema()
-        
-        # ====== 全局意图注入 (Manus/Loveart 级架构) ======
-        # 强制所有工具都具备 purpose 字段，让模型每次调用工具都必须向用户解释动作目的
-        if "properties" in schema:
-            schema["properties"]["purpose"] = {
-                "type": "string",
-                "description": "对该具体操作的功能及其用途进行对话式说明（默认使用中文）。此文本将直接展示给用户。"
-            }
-            # 强迫大模型必须输出该字段，否则不合法
-            if "required" not in schema:
-                schema["required"] = []
-            if "purpose" not in schema["required"]:
-                schema["required"].append("purpose")
-                
         return {
             "name": self.name,
             "description": self.description,

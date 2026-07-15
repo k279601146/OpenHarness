@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 from uuid import uuid4
 
+from pydantic import ValidationError
+
 from openharness.api.client import (
     ApiMessageCompleteEvent,
     ApiMessageRequest,
@@ -47,7 +49,7 @@ from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
 from openharness.services.tool_outputs import tool_output_inline_chars, tool_output_preview_chars
 from openharness.tools.ask_user_question_tool import AskUserQuestionPaused
-from openharness.tools.base import ToolExecutionContext, ToolResult
+from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.tools.base import ToolRegistry
 from openharness.utils.paths import normalize_host_path
 
@@ -70,6 +72,26 @@ MAX_TRACKED_USER_GOALS = 5
 MAX_TRACKED_ACTIVE_ARTIFACTS = 8
 MAX_TRACKED_VERIFIED_WORK = 10
 AGENT_PROGRESS_HEARTBEAT_SECONDS = 8.0
+
+
+def _format_tool_validation_error(tool_name: str, exc: ValidationError) -> str:
+    reasons: list[str] = []
+    for error in exc.errors():
+        loc = ".".join(str(part) for part in error.get("loc", ()) if part != "__root__") or "input"
+        error_type = str(error.get("type") or "")
+        message = str(error.get("msg") or "invalid value")
+        if error_type == "extra_forbidden":
+            reasons.append(f"unexpected field `{loc}`")
+        elif error_type == "model_type":
+            reasons.append(f"`{loc}` must be an object")
+        elif error_type.startswith("literal_error"):
+            reasons.append(f"`{loc}` has an unsupported value")
+        else:
+            reasons.append(f"`{loc}`: {message}")
+    detail = "; ".join(reasons[:6]) or "input does not match the tool schema"
+    if len(reasons) > 6:
+        detail += f"; plus {len(reasons) - 6} more issue(s)"
+    return f"invalid_canonical_request: {tool_name} input does not match its tool schema. {detail}."
 
 
 def _progress_event(
@@ -150,6 +172,85 @@ def _tool_schemas_for_context(context: QueryContext) -> list[dict[str, Any]]:
         for tool in context.tool_registry.list_tools()
         if _tool_available_for_context(tool.name, context)
     ]
+
+
+_TOOL_RATIONALE_FIELDS = ("rationale", "purpose", "thought")
+
+
+@dataclass(frozen=True)
+class _PreparedToolCall:
+    tool_name: str
+    tool_use_id: str
+    tool_input: dict[str, Any]
+    rationale: str | None
+    display_name: str | None
+    start_message: str | None
+
+
+def _tool_input_fields(tool: BaseTool) -> set[str]:
+    fields = getattr(tool.input_model, "model_fields", None)
+    if isinstance(fields, dict):
+        return set(fields)
+    legacy_fields = getattr(tool.input_model, "__fields__", None)
+    if isinstance(legacy_fields, dict):
+        return set(legacy_fields)
+    return set()
+
+
+def _split_tool_display_context(
+    tool: BaseTool | None,
+    raw_input: dict[str, Any],
+) -> tuple[dict[str, Any], str | None, str | None, str | None]:
+    clean_input = dict(raw_input)
+    if tool is None:
+        return clean_input, None, None, None
+
+    input_fields = _tool_input_fields(tool)
+    rationale: str | None = None
+    for field_name in _TOOL_RATIONALE_FIELDS:
+        if field_name in input_fields:
+            value = clean_input.get(field_name)
+            if rationale is None and isinstance(value, str) and value.strip():
+                rationale = value.strip()
+            continue
+        value = clean_input.pop(field_name, None)
+        if rationale is None and isinstance(value, str) and value.strip():
+            rationale = value.strip()
+
+    return clean_input, rationale, tool.display_label(), tool.start_message()
+
+
+def _prepare_tool_call(
+    context: QueryContext,
+    tool_call: Any,
+    *,
+    rationale_fallback: str | None = None,
+) -> _PreparedToolCall:
+    tool = context.tool_registry.get(tool_call.name)
+    raw_input = tool_call.input if isinstance(tool_call.input, dict) else {}
+    clean_input, rationale, display_name, start_message = _split_tool_display_context(tool, raw_input)
+    if rationale is None and isinstance(rationale_fallback, str) and rationale_fallback.strip():
+        rationale = rationale_fallback.strip()[:800]
+    if tool is not None:
+        tool_call.input = clean_input
+    return _PreparedToolCall(
+        tool_name=tool_call.name,
+        tool_use_id=tool_call.id,
+        tool_input=clean_input,
+        rationale=rationale,
+        display_name=display_name,
+        start_message=start_message,
+    )
+
+
+def _clean_tool_input_for_execution(
+    context: QueryContext,
+    tool_name: str,
+    tool_input: dict[str, object],
+) -> dict[str, object]:
+    tool = context.tool_registry.get(tool_name)
+    clean_input, _, _, _ = _split_tool_display_context(tool, dict(tool_input))
+    return clean_input
 
 
 def _extract_completion_token_limit(exc: Exception) -> int | None:
@@ -995,125 +1096,161 @@ async def run_query(
             return
 
         tool_calls = final_message.tool_uses
+        tool_rationale_fallback = final_message.text.strip()
 
         if len(tool_calls) == 1:
             # Single tool: sequential (stream events immediately)
             tc = tool_calls[0]
+            prepared = _prepare_tool_call(context, tc, rationale_fallback=tool_rationale_fallback)
             result: ToolResultBlock | None = None
-            yield ToolExecutionStarted(tool_name=tc.name, tool_input=tc.input, tool_use_id=tc.id), None
+            yield ToolExecutionStarted(
+                tool_name=prepared.tool_name,
+                tool_input=prepared.tool_input,
+                tool_use_id=prepared.tool_use_id,
+                rationale=prepared.rationale,
+                display_name=prepared.display_name,
+                start_message=prepared.start_message,
+            ), None
             yield _progress_event(
                 "tool_start",
-                f"正在执行工具 {tc.name}...",
-                tool_name=tc.name,
-                tool_use_id=tc.id,
+                prepared.start_message or f"正在执行工具 {prepared.tool_name}...",
+                tool_name=prepared.tool_name,
+                tool_use_id=prepared.tool_use_id,
                 workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                metadata={
+                    key: value
+                    for key, value in {
+                        "rationale": prepared.rationale,
+                        "display_name": prepared.display_name,
+                    }.items()
+                    if value
+                },
             ), None
             try:
-                async for progress_event, result in _run_tool_with_progress(context, tc.name, tc.id, tc.input):
+                async for progress_event, result in _run_tool_with_progress(context, prepared.tool_name, prepared.tool_use_id, prepared.tool_input):
                     if progress_event is not None:
                         yield progress_event, None
             except AskUserQuestionPaused:
                 raise
             except Exception as exc:
-                log.exception("tool execution raised: name=%s id=%s", tc.name, tc.id)
+                log.exception("tool execution raised: name=%s id=%s", prepared.tool_name, prepared.tool_use_id)
                 result = ToolResultBlock(
-                    tool_use_id=tc.id,
-                    content=f"Tool {tc.name} failed: {type(exc).__name__}: {exc}",
+                    tool_use_id=prepared.tool_use_id,
+                    content=f"Tool {prepared.tool_name} failed: {type(exc).__name__}: {exc}",
                     is_error=True,
                 )
             if result is None:
                 result = ToolResultBlock(
-                    tool_use_id=tc.id,
-                    content=f"Tool {tc.name} failed: missing execution result",
+                    tool_use_id=prepared.tool_use_id,
+                    content=f"Tool {prepared.tool_name} failed: missing execution result",
                     is_error=True,
                 )
             yield ToolExecutionCompleted(
-                tool_name=tc.name,
+                tool_name=prepared.tool_name,
                 output=result.content,
                 is_error=result.is_error,
                 metadata=result.result_metadata,
-                tool_use_id=tc.id,
+                tool_use_id=prepared.tool_use_id,
             ), None
             yield _progress_event(
                 "tool_complete",
-                f"工具 {tc.name} 执行{'失败' if result.is_error else '完成'}",
+                f"工具 {prepared.tool_name} 执行{'失败' if result.is_error else '完成'}",
                 status="error" if result.is_error else "success",
-                tool_name=tc.name,
-                tool_use_id=tc.id,
+                tool_name=prepared.tool_name,
+                tool_use_id=prepared.tool_use_id,
                 workspace=str((result.result_metadata or {}).get("workspace") or (context.tool_metadata or {}).get("workspace_backend") or ""),
                 metadata=result.result_metadata,
             ), None
             tool_results = [result]
         else:
             # Multiple tools: execute concurrently, emit events after
-            for tc in tool_calls:
-                yield ToolExecutionStarted(tool_name=tc.name, tool_input=tc.input, tool_use_id=tc.id), None
+            prepared_calls = [
+                _prepare_tool_call(context, tc, rationale_fallback=tool_rationale_fallback)
+                for tc in tool_calls
+            ]
+            for prepared in prepared_calls:
+                yield ToolExecutionStarted(
+                    tool_name=prepared.tool_name,
+                    tool_input=prepared.tool_input,
+                    tool_use_id=prepared.tool_use_id,
+                    rationale=prepared.rationale,
+                    display_name=prepared.display_name,
+                    start_message=prepared.start_message,
+                ), None
                 yield _progress_event(
                     "tool_start",
-                    f"正在执行工具 {tc.name}...",
-                    tool_name=tc.name,
-                    tool_use_id=tc.id,
+                    prepared.start_message or f"正在执行工具 {prepared.tool_name}...",
+                    tool_name=prepared.tool_name,
+                    tool_use_id=prepared.tool_use_id,
                     workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                    metadata={
+                        key: value
+                        for key, value in {
+                            "rationale": prepared.rationale,
+                            "display_name": prepared.display_name,
+                        }.items()
+                        if value
+                    },
                 ), None
 
-            result_queue: asyncio.Queue[tuple[Any, AgentProgressEvent | None, ToolResultBlock | BaseException | None]] = asyncio.Queue()
+            result_queue: asyncio.Queue[tuple[_PreparedToolCall, AgentProgressEvent | None, ToolResultBlock | BaseException | None]] = asyncio.Queue()
 
-            async def _run(tc):
+            async def _run(prepared: _PreparedToolCall):
                 try:
-                    async for progress_event, result in _run_tool_with_progress(context, tc.name, tc.id, tc.input):
-                        await result_queue.put((tc, progress_event, result))
+                    async for progress_event, result in _run_tool_with_progress(context, prepared.tool_name, prepared.tool_use_id, prepared.tool_input):
+                        await result_queue.put((prepared, progress_event, result))
                 except BaseException as exc:
-                    await result_queue.put((tc, None, exc))
+                    await result_queue.put((prepared, None, exc))
 
-            tasks = [asyncio.create_task(_run(tc)) for tc in tool_calls]
+            tasks = [asyncio.create_task(_run(prepared)) for prepared in prepared_calls]
             raw_results_by_id: dict[str, ToolResultBlock | BaseException] = {}
             while len(raw_results_by_id) < len(tool_calls):
-                tc, progress_event, result = await result_queue.get()
+                prepared, progress_event, result = await result_queue.get()
                 if progress_event is not None:
                     yield progress_event, None
                 if result is not None:
-                    raw_results_by_id[tc.id] = result
+                    raw_results_by_id[prepared.tool_use_id] = result
 
             await asyncio.gather(*tasks, return_exceptions=True)
             tool_results = []
-            for tc in tool_calls:
-                result = raw_results_by_id.get(tc.id)
+            for prepared in prepared_calls:
+                result = raw_results_by_id.get(prepared.tool_use_id)
                 if isinstance(result, AskUserQuestionPaused):
                     raise result
                 if isinstance(result, BaseException):
                     log.exception(
                         "tool execution raised: name=%s id=%s",
-                        tc.name,
-                        tc.id,
+                        prepared.tool_name,
+                        prepared.tool_use_id,
                         exc_info=result,
                     )
                     result = ToolResultBlock(
-                        tool_use_id=tc.id,
-                        content=f"Tool {tc.name} failed: {type(result).__name__}: {result}",
+                        tool_use_id=prepared.tool_use_id,
+                        content=f"Tool {prepared.tool_name} failed: {type(result).__name__}: {result}",
                         is_error=True,
                     )
                 if result is None:
                     result = ToolResultBlock(
-                        tool_use_id=tc.id,
-                        content=f"Tool {tc.name} failed: missing execution result",
+                        tool_use_id=prepared.tool_use_id,
+                        content=f"Tool {prepared.tool_name} failed: missing execution result",
                         is_error=True,
                     )
                 tool_results.append(result)
 
-            for tc, result in zip(tool_calls, tool_results):
+            for prepared, result in zip(prepared_calls, tool_results):
                 yield ToolExecutionCompleted(
-                    tool_name=tc.name,
+                    tool_name=prepared.tool_name,
                     output=result.content,
                     is_error=result.is_error,
                     metadata=result.result_metadata,
-                    tool_use_id=tc.id,
+                    tool_use_id=prepared.tool_use_id,
                 ), None
                 yield _progress_event(
                     "tool_complete",
-                    f"工具 {tc.name} 执行{'失败' if result.is_error else '完成'}",
+                    f"工具 {prepared.tool_name} 执行{'失败' if result.is_error else '完成'}",
                     status="error" if result.is_error else "success",
-                    tool_name=tc.name,
-                    tool_use_id=tc.id,
+                    tool_name=prepared.tool_name,
+                    tool_use_id=prepared.tool_use_id,
                     workspace=str((result.result_metadata or {}).get("workspace") or (context.tool_metadata or {}).get("workspace_backend") or ""),
                     metadata=result.result_metadata,
                 ), None
@@ -1134,6 +1271,7 @@ async def _execute_tool_call(
     *,
     allow_media_split: bool = True,
 ) -> ToolResultBlock:
+    tool_input = _clean_tool_input_for_execution(context, tool_name, tool_input)
     if allow_media_split and _is_media_generation_tool(tool_name):
         output_count = _media_output_count(tool_input)
         if output_count > 1:
@@ -1181,12 +1319,21 @@ async def _execute_tool_call(
 
     try:
         parsed_input = tool.input_model.model_validate(tool_input)
+    except ValidationError as exc:
+        log.warning("invalid input for %s: %s", tool_name, exc)
+        return ToolResultBlock(
+            tool_use_id=tool_use_id,
+            content=_format_tool_validation_error(tool_name, exc),
+            is_error=True,
+            result_metadata={"error_code": "invalid_canonical_request", "tool_name": tool_name},
+        )
     except Exception as exc:
         log.warning("invalid input for %s: %s", tool_name, exc)
         return ToolResultBlock(
             tool_use_id=tool_use_id,
-            content=f"Invalid input for {tool_name}: {exc}",
+            content=f"invalid_canonical_request: {tool_name} input could not be validated.",
             is_error=True,
+            result_metadata={"error_code": "invalid_canonical_request", "tool_name": tool_name},
         )
 
     # Normalize common tool inputs before permission checks so path rules apply

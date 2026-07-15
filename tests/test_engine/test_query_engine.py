@@ -48,6 +48,7 @@ from openharness.engine.query import (
     QueryContext,
     _execute_tool_call,
     _is_prompt_too_long_error,
+    _prepare_tool_call,
     _resolve_permission_file_path,
 )
 
@@ -314,6 +315,128 @@ async def test_query_engine_maps_provider_hosted_tool_events(tmp_path: Path, mon
     assert completed.metadata == {"result_count": 2}
     assert isinstance(events[-1], AssistantTurnComplete)
     assert events[-1].message.text == "done"
+
+
+@pytest.mark.asyncio
+async def test_query_engine_splits_tool_rationale_from_undeclared_input(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    tool_call = ToolUseBlock(
+        id="tool_image_1",
+        name="generate_image",
+        input={
+            "purpose": "我会生成一张 3:4 的小猫图片，方便你查看生成结果。",
+            "prompt": "Create a cute kitten photo.",
+            "output": {"aspect_ratio": "3:4", "count": 1},
+        },
+    )
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[tool_call]),
+                    usage=UsageSnapshot(input_tokens=10, output_tokens=5),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[TextBlock(text="done")]),
+                    usage=UsageSnapshot(input_tokens=10, output_tokens=5),
+                ),
+            ]
+        ),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("draw kitten")]
+
+    started = next(event for event in events if isinstance(event, ToolExecutionStarted) and event.tool_name == "generate_image")
+    completed = next(event for event in events if isinstance(event, ToolExecutionCompleted) and event.tool_name == "generate_image")
+    saved_tool_call = engine.messages[1].tool_uses[0]
+
+    assert started.rationale == "我会生成一张 3:4 的小猫图片，方便你查看生成结果。"
+    assert "purpose" not in started.tool_input
+    assert "purpose" not in saved_tool_call.input
+    assert "invalid_canonical_request" not in completed.output
+
+
+@pytest.mark.asyncio
+async def test_query_engine_uses_assistant_text_as_tool_rationale(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    tool_call = ToolUseBlock(
+        id="tool_image_2",
+        name="generate_image",
+        input={
+            "prompt": "Create a product hero image.",
+            "output": {"aspect_ratio": "16:9", "count": 1},
+        },
+    )
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            TextBlock(text="我会生成一张产品主视觉图，方便你直接预览构图和风格。"),
+                            tool_call,
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=10, output_tokens=5),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[TextBlock(text="done")]),
+                    usage=UsageSnapshot(input_tokens=10, output_tokens=5),
+                ),
+            ]
+        ),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("draw product hero")]
+
+    started = next(event for event in events if isinstance(event, ToolExecutionStarted) and event.tool_name == "generate_image")
+
+    assert started.rationale == "我会生成一张产品主视觉图，方便你直接预览构图和风格。"
+    assert "purpose" not in started.tool_input
+
+
+def test_tool_rationale_split_preserves_declared_purpose_field(tmp_path: Path):
+    class PurposeInput(BaseModel):
+        purpose: str
+
+    class PurposeTool(BaseTool):
+        name = "purpose_tool"
+        description = "Tool with a real purpose input."
+        input_model = PurposeInput
+
+        async def execute(self, arguments, context):
+            del context
+            return ToolResult(arguments.purpose)
+
+    registry = ToolRegistry()
+    registry.register(PurposeTool())
+    context = QueryContext(
+        api_client=StaticApiClient("done"),
+        tool_registry=registry,
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        max_tokens=1024,
+    )
+    tool_call = ToolUseBlock(name="purpose_tool", input={"purpose": "business value"})
+
+    prepared = _prepare_tool_call(context, tool_call)
+
+    assert prepared.rationale == "business value"
+    assert prepared.tool_input == {"purpose": "business value"}
+    assert tool_call.input == {"purpose": "business value"}
 
 
 @pytest.mark.asyncio

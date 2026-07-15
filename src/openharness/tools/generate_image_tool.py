@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
 
 class ImageGenerationBrief(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     purpose: str | None = None
     medium: str | None = None
     subject: str | None = None
@@ -24,6 +26,8 @@ class ImageGenerationBrief(BaseModel):
 
 
 class ImageGenerationReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     input_ref: str = Field(description="Stable artifact/upload/public image reference.")
     role: Literal["edit_target", "style", "identity", "product", "composition", "mask"] = "style"
 
@@ -36,20 +40,59 @@ class ImageGenerationReference(BaseModel):
         return text
 
 
+class ImageGenerationOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    aspect_ratio: str | None = None
+    size_tier: Literal["512px", "1K", "2K", "4K"] | None = None
+    width: int | None = Field(default=None, ge=1)
+    height: int | None = Field(default=None, ge=1)
+    quality_goal: Literal["draft", "balanced", "high_quality", "text_accuracy"] | None = None
+    count: int | None = Field(default=None, ge=1, le=10)
+    transparent_background: bool | None = None
+
+
+class ImageGenerationEditPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    preserve_identity: bool = True
+    preserve_composition: bool = True
+    allow_crop: bool = False
+    allow_outpaint: bool = True
+
+
+class ImageGenerationTextPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["none", "embedded", "exact", "avoid_text"] | None = None
+    exact_text: str | None = None
+    language: str | None = None
+    text_accuracy_required: bool = False
+
+
 class GenerateImageInput(BaseModel):
     """High-level image request extracted from the imagegen skill."""
 
+    model_config = ConfigDict(extra="forbid")
+
     intent: Literal["generate", "edit", "restore", "variation"] = "generate"
+    scenario: Literal[
+        "poster",
+        "product",
+        "ui_mockup",
+        "transparent_asset",
+        "edit",
+        "restore",
+        "infographic",
+        "general",
+    ] = "general"
     prompt: str = Field(description="Final image prompt or edit instruction.")
     brief: ImageGenerationBrief = Field(default_factory=ImageGenerationBrief)
+    output: ImageGenerationOutput = Field(default_factory=ImageGenerationOutput)
+    edit_policy: ImageGenerationEditPolicy = Field(default_factory=ImageGenerationEditPolicy)
+    text_policy: ImageGenerationTextPolicy = Field(default_factory=ImageGenerationTextPolicy)
     model_id: str | None = Field(default=None, description="Optional logical image model id.")
     references: list[ImageGenerationReference] = Field(default_factory=list)
-    aspect_ratio: str | None = None
-    size: str | None = None
-    resolution: str | None = None
-    quality: str | None = None
-    transparent_background: bool = False
-    output_count: int = Field(default=1, ge=1, le=10)
 
     @field_validator("prompt")
     @classmethod
@@ -67,9 +110,8 @@ class GenerateImageTool(BaseTool):
 
     name = "generate_image"
     description = (
-        "Generate, edit, restore, or vary raster images from a high-level creative brief. "
-        "Use after loading the imagegen skill. This tool does not call providers directly; "
-        "the SaaS backend handles model routing, billing, media gateways, and artifact delivery."
+        "Generate, edit, restore, or vary raster images from high-level image intent. "
+        "The SaaS backend handles model routing, billing, provider execution, validation, and artifact delivery."
     )
     input_model = GenerateImageInput
     requires_sandbox = False

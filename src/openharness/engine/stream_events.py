@@ -38,6 +38,9 @@ class ToolExecutionStarted:
     tool_name: str
     tool_input: dict[str, Any]
     tool_use_id: str | None = None
+    rationale: str | None = None
+    display_name: str | None = None
+    start_message: str | None = None
 
 
 @dataclass(frozen=True)
