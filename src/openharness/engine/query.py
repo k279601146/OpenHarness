@@ -76,6 +76,7 @@ AGENT_PROGRESS_HEARTBEAT_SECONDS = 8.0
 
 def _format_tool_validation_error(tool_name: str, exc: ValidationError) -> str:
     reasons: list[str] = []
+    object_string_fields: list[str] = []
     for error in exc.errors():
         loc = ".".join(str(part) for part in error.get("loc", ()) if part != "__root__") or "input"
         error_type = str(error.get("type") or "")
@@ -83,15 +84,29 @@ def _format_tool_validation_error(tool_name: str, exc: ValidationError) -> str:
         if error_type == "extra_forbidden":
             reasons.append(f"unexpected field `{loc}`")
         elif error_type == "model_type":
-            reasons.append(f"`{loc}` must be an object")
+            if isinstance(error.get("input"), str):
+                reasons.append(f"`{loc}` must be an object, not a JSON string")
+                object_string_fields.append(loc)
+            else:
+                reasons.append(f"`{loc}` must be an object")
         elif error_type.startswith("literal_error"):
             reasons.append(f"`{loc}` has an unsupported value")
+        elif error_type == "missing":
+            if tool_name == "generate_image" and loc in {"brief", "output", "edit_policy", "text_policy"}:
+                reasons.append(f"`{loc}` is required and must be an object")
+                object_string_fields.append(loc)
+            else:
+                reasons.append(f"`{loc}` is required")
         else:
             reasons.append(f"`{loc}`: {message}")
     detail = "; ".join(reasons[:6]) or "input does not match the tool schema"
     if len(reasons) > 6:
         detail += f"; plus {len(reasons) - 6} more issue(s)"
-    return f"invalid_canonical_request: {tool_name} input does not match its tool schema. {detail}."
+    retry_hint = ""
+    if tool_name == "generate_image" and object_string_fields:
+        fields = ", ".join(f"`{field}`" for field in object_string_fields[:4])
+        retry_hint = f" Retry by calling generate_image again with {fields} as nested object values, using {{}} when empty, not quoted JSON."
+    return f"invalid_canonical_request: {tool_name} input does not match its tool schema. {detail}.{retry_hint}"
 
 
 def _progress_event(

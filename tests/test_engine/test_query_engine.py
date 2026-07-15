@@ -133,6 +133,15 @@ class HostedToolThenSuccessApiClient:
         )
 
 
+class _ImageGenerationHook:
+    async def generate_image(self, request: dict, context_metadata: dict) -> dict:
+        del request, context_metadata
+        return {
+            "media_billing_status": "recorded",
+            "artifact_payloads": [{"artifact_id": "artifact-1", "url": "/artifacts/thread/image.png"}],
+        }
+
+
 class PromptTooLongThenSuccessApiClient:
     def __init__(self) -> None:
         self._calls = 0
@@ -326,7 +335,10 @@ async def test_query_engine_splits_tool_rationale_from_undeclared_input(tmp_path
         input={
             "purpose": "我会生成一张 3:4 的小猫图片，方便你查看生成结果。",
             "prompt": "Create a cute kitten photo.",
+            "brief": {},
             "output": {"aspect_ratio": "3:4", "count": 1},
+            "edit_policy": {},
+            "text_policy": {},
         },
     )
     engine = QueryEngine(
@@ -369,7 +381,10 @@ async def test_query_engine_uses_assistant_text_as_tool_rationale(tmp_path: Path
         name="generate_image",
         input={
             "prompt": "Create a product hero image.",
+            "brief": {},
             "output": {"aspect_ratio": "16:9", "count": 1},
+            "edit_policy": {},
+            "text_policy": {},
         },
     )
     engine = QueryEngine(
@@ -437,6 +452,70 @@ def test_tool_rationale_split_preserves_declared_purpose_field(tmp_path: Path):
     assert prepared.rationale == "business value"
     assert prepared.tool_input == {"purpose": "business value"}
     assert tool_call.input == {"purpose": "business value"}
+
+
+@pytest.mark.asyncio
+async def test_query_engine_allows_generate_image_retry_after_canonical_object_error(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    bad_tool_call = ToolUseBlock(
+        id="tool_image_bad",
+        name="generate_image",
+        input={
+            "prompt": "Create a Facebook fan page banner.",
+            "scenario": "marketing_or_social",
+            "brief": {},
+            "output": '{"width": 1200, "height": 628}',
+            "edit_policy": {},
+            "text_policy": '{"mode": "exact", "exact_text": "大航海时代"}',
+        },
+    )
+    repaired_tool_call = ToolUseBlock(
+        id="tool_image_fixed",
+        name="generate_image",
+        input={
+            "prompt": "Create a Facebook fan page banner.",
+            "scenario": "marketing_or_social",
+            "brief": {},
+            "output": {"width": 1200, "height": 628},
+            "edit_policy": {},
+            "text_policy": {"mode": "exact", "exact_text": "大航海时代"},
+        },
+    )
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[bad_tool_call]),
+                    usage=UsageSnapshot(input_tokens=10, output_tokens=5),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[repaired_tool_call]),
+                    usage=UsageSnapshot(input_tokens=10, output_tokens=5),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[TextBlock(text="done")]),
+                    usage=UsageSnapshot(input_tokens=10, output_tokens=5),
+                ),
+            ]
+        ),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        tool_metadata={"hook": _ImageGenerationHook()},
+    )
+
+    events = [event async for event in engine.submit_message("draw banner")]
+
+    completed = [event for event in events if isinstance(event, ToolExecutionCompleted) and event.tool_name == "generate_image"]
+    assert len(completed) == 2
+    assert completed[0].is_error is True
+    assert "`output` must be an object, not a JSON string" in completed[0].output
+    assert "Retry by calling generate_image again" in completed[0].output
+    assert completed[1].is_error is False
+    assert isinstance(events[-1], AssistantTurnComplete)
+    assert events[-1].message.text == "done"
 
 
 @pytest.mark.asyncio

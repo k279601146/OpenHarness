@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
+from copy import deepcopy
 from typing import Any, Awaitable, Callable
 from typing import TYPE_CHECKING
 
@@ -66,12 +67,37 @@ class BaseTool(ABC):
 
     def to_api_schema(self) -> dict[str, Any]:
         """Return the tool schema expected by the Messages API."""
-        schema = self.input_model.model_json_schema()
+        schema = _inline_local_json_schema_refs(self.input_model.model_json_schema())
         return {
             "name": self.name,
             "description": self.description,
             "input_schema": schema,
         }
+
+
+def _inline_local_json_schema_refs(schema: dict[str, Any]) -> dict[str, Any]:
+    """Inline local $defs refs for model/tool APIs with weak $ref support."""
+    definitions = schema.get("$defs") if isinstance(schema.get("$defs"), dict) else {}
+    if not definitions:
+        return schema
+
+    def resolve(value: Any, stack: tuple[str, ...] = ()) -> Any:
+        if isinstance(value, list):
+            return [resolve(item, stack) for item in value]
+        if not isinstance(value, dict):
+            return value
+        ref = value.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/$defs/"):
+            name = ref.rsplit("/", 1)[-1]
+            if name in definitions and name not in stack:
+                resolved = resolve(deepcopy(definitions[name]), (*stack, name))
+                siblings = {key: item for key, item in value.items() if key != "$ref"}
+                if siblings and isinstance(resolved, dict):
+                    resolved.update(resolve(siblings, stack))
+                return resolved
+        return {key: resolve(item, stack) for key, item in value.items() if key != "$defs"}
+
+    return resolve(schema)
 
 
 class ToolRegistry:

@@ -77,6 +77,16 @@ class GenerateImageInput(BaseModel):
 
     intent: Literal["generate", "edit", "restore", "variation"] = "generate"
     scenario: Literal[
+        "website_or_landing_page",
+        "product_or_commerce",
+        "marketing_or_social",
+        "ui_or_app_mockup",
+        "logo_or_icon",
+        "game_or_asset_pack",
+        "character_or_portrait",
+        "diagram_or_infographic",
+        "precise_image_edit",
+        "image_upscale_or_restore",
         "poster",
         "product",
         "ui_mockup",
@@ -87,10 +97,18 @@ class GenerateImageInput(BaseModel):
         "general",
     ] = "general"
     prompt: str = Field(description="Final image prompt or edit instruction.")
-    brief: ImageGenerationBrief = Field(default_factory=ImageGenerationBrief)
-    output: ImageGenerationOutput = Field(default_factory=ImageGenerationOutput)
-    edit_policy: ImageGenerationEditPolicy = Field(default_factory=ImageGenerationEditPolicy)
-    text_policy: ImageGenerationTextPolicy = Field(default_factory=ImageGenerationTextPolicy)
+    brief: ImageGenerationBrief = Field(
+        description='Required production brief object. Pass as {"purpose": "..."} or {}, never as a quoted JSON string.',
+    )
+    output: ImageGenerationOutput = Field(
+        description='Required output intent object such as {"width": 1200, "height": 628, "count": 1} or {}. Never pass a quoted JSON string.',
+    )
+    edit_policy: ImageGenerationEditPolicy = Field(
+        description='Required edit behavior object such as {"allow_crop": false} or {}. Never pass a quoted JSON string.',
+    )
+    text_policy: ImageGenerationTextPolicy = Field(
+        description='Required text rendering policy object such as {"mode": "avoid_text"} or {}. Never pass a quoted JSON string.',
+    )
     model_id: str | None = Field(default=None, description="Optional logical image model id.")
     references: list[ImageGenerationReference] = Field(default_factory=list)
 
@@ -111,9 +129,13 @@ class GenerateImageTool(BaseTool):
     name = "generate_image"
     description = (
         "Generate, edit, restore, or vary raster images from high-level image intent. "
-        "The SaaS backend handles model routing, billing, provider execution, validation, and artifact delivery."
+        "The SaaS backend handles model routing, billing, provider execution, validation, and artifact delivery. "
+        "Required nested fields brief, output, edit_policy, and text_policy must be passed as objects. "
+        "Use empty objects when there is no detail; never quote nested JSON."
     )
     input_model = GenerateImageInput
+    display_name = "图片生成"
+    default_start_message = "正在生成图片..."
     requires_sandbox = False
 
     async def execute(self, arguments: GenerateImageInput, context: ToolExecutionContext) -> ToolResult:
