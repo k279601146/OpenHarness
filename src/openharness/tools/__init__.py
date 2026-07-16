@@ -44,6 +44,7 @@ from openharness.tools.file_write_tool import FileWriteTool
 from openharness.tools.glob_tool import GlobTool
 from openharness.tools.grep_tool import GrepTool
 from openharness.tools.generate_image_tool import GenerateImageTool
+from openharness.tools.generate_video_tool import GenerateVideoTool
 from openharness.tools.image_to_text_tool import ImageToTextTool
 from openharness.tools.list_mcp_resources_tool import ListMcpResourcesTool
 from openharness.tools.mcp_auth_tool import McpAuthTool
@@ -64,7 +65,6 @@ from openharness.tools.team_create_tool import TeamCreateTool
 from openharness.tools.team_delete_tool import TeamDeleteTool
 from openharness.tools.todo_write_tool import TodoWriteTool
 from openharness.tools.tool_search_tool import ToolSearchTool
-from openharness.tools.videogen_cli_tool import VideogenCliTool
 from openharness.tools.web_fetch_tool import WebFetchTool
 from openharness.tools.web_search_tool import WebSearchTool
 
@@ -83,7 +83,7 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         GrepTool(),
         ImageToTextTool(),
         GenerateImageTool(),
-        VideogenCliTool(),
+        GenerateVideoTool(),
         SkillTool(),
         ToolSearchTool(),
         WebFetchTool(),

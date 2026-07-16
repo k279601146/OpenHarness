@@ -11,7 +11,7 @@ MEDIA_REF_GUIDANCE = (
     "This turn already includes stable media artifact reference(s). "
     "Do not search sandbox roots for old media filenames, do not download `/artifacts/...`, "
     "and do not treat public URLs as filesystem paths. Pass the `artifact:<id>` input_ref "
-    "directly to generate_image/videogen_cli so the SaaS artifact materializer can prepare "
+    "directly to generate_image/generate_video so the SaaS artifact materializer can prepare "
     "a current sandbox input."
 )
 

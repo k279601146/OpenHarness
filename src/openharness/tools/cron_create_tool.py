@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from openharness.services.cron import upsert_cron_job, validate_cron_expression, validate_timezone
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.tools.cron_policy import scheduled_run_cron_block_result
 
 
 DEFAULT_TIMEZONE = "Asia/Shanghai"
@@ -248,6 +249,9 @@ class CronCreateTool(BaseTool):
         arguments: CronCreateToolInput,
         context: ToolExecutionContext,
     ) -> ToolResult:
+        blocked = scheduled_run_cron_block_result(context.metadata)
+        if blocked is not None:
+            return blocked
         if not validate_cron_expression(arguments.schedule):
             return ToolResult(
                 output=(

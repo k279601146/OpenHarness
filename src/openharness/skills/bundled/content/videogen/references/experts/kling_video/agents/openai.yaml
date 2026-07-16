@@ -1,8 +1,0 @@
-interface:
-  display_name: "Kling Video Expert"
-  short_description: "Professional Kling/keling video prompting"
-  brand_color: "#111827"
-  default_prompt: "Use $kling-video to turn this video idea into a production-ready Kling/keling prompt with mode selection, multi-shot planning, element references, audio direction, and source-gated model constraints."
-
-policy:
-  allow_implicit_invocation: true

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from openharness.services.cron import delete_cron_job
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.tools.cron_policy import scheduled_run_cron_block_result
 
 
 class CronDeleteToolInput(BaseModel):
@@ -26,7 +27,9 @@ class CronDeleteTool(BaseTool):
         arguments: CronDeleteToolInput,
         context: ToolExecutionContext,
     ) -> ToolResult:
-        del context
+        blocked = scheduled_run_cron_block_result(context.metadata)
+        if blocked is not None:
+            return blocked
         if not delete_cron_job(arguments.name):
             return ToolResult(output=f"Cron job not found: {arguments.name}", is_error=True)
         return ToolResult(output=f"Deleted cron job {arguments.name}")

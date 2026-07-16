@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from openharness.services.cron import load_cron_jobs
 from openharness.services.cron_scheduler import is_scheduler_running
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.tools.cron_policy import scheduled_run_cron_block_result
 
 
 class CronListToolInput(BaseModel):
@@ -29,7 +30,10 @@ class CronListTool(BaseTool):
         arguments: CronListToolInput,
         context: ToolExecutionContext,
     ) -> ToolResult:
-        del arguments, context
+        del arguments
+        blocked = scheduled_run_cron_block_result(context.metadata)
+        if blocked is not None:
+            return blocked
         jobs = load_cron_jobs()
         if not jobs:
             return ToolResult(output="No cron jobs configured.")

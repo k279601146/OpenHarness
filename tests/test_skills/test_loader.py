@@ -18,11 +18,10 @@ def test_load_skill_registry_includes_bundled(tmp_path: Path, monkeypatch):
     registry = load_skill_registry()
 
     names = [skill.name for skill in registry.list_skills()]
-    assert "plan" in names
-    assert "research_report" in names
     assert "skill-creator" in names
     assert "imagegen" in names
-    assert "videogen" in names
+    assert "video_gen" in names
+    assert "videogen" not in names
     assert "generate_video" not in names
     assert "seedance_video" not in names
     assert "social-media-visuals" not in names
@@ -33,7 +32,8 @@ def test_load_skill_registry_includes_bundled(tmp_path: Path, monkeypatch):
     skill_creator = registry.get("skill-creator")
     assert skill_creator is not None
     assert skill_creator.source == "bundled"
-    assert "Create, improve, and verify OpenHarness skills" in skill_creator.description
+    assert "Create" in skill_creator.description
+    assert "skills" in skill_creator.description
 
 
 

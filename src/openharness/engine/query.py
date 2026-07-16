@@ -51,6 +51,11 @@ from openharness.services.tool_outputs import tool_output_inline_chars, tool_out
 from openharness.tools.ask_user_question_tool import AskUserQuestionPaused
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.tools.base import ToolRegistry
+from openharness.tools.cron_policy import (
+    SCHEDULE_MANAGEMENT_TOOL_NAMES,
+    SCHEDULED_RUN_CRON_BLOCK_MESSAGE,
+    is_schedule_management_blocked,
+)
 from openharness.utils.paths import normalize_host_path
 
 AUTO_COMPACT_STATUS_MESSAGE = "Auto-compacting conversation memory to keep things fast and focused."
@@ -92,7 +97,7 @@ def _format_tool_validation_error(tool_name: str, exc: ValidationError) -> str:
         elif error_type.startswith("literal_error"):
             reasons.append(f"`{loc}` has an unsupported value")
         elif error_type == "missing":
-            if tool_name == "generate_image" and loc in {"brief", "output", "edit_policy", "text_policy"}:
+            if tool_name in {"generate_image", "generate_video"} and loc in {"brief", "output", "edit_policy", "text_policy"}:
                 reasons.append(f"`{loc}` is required and must be an object")
                 object_string_fields.append(loc)
             else:
@@ -103,9 +108,9 @@ def _format_tool_validation_error(tool_name: str, exc: ValidationError) -> str:
     if len(reasons) > 6:
         detail += f"; plus {len(reasons) - 6} more issue(s)"
     retry_hint = ""
-    if tool_name == "generate_image" and object_string_fields:
+    if tool_name in {"generate_image", "generate_video"} and object_string_fields:
         fields = ", ".join(f"`{field}`" for field in object_string_fields[:4])
-        retry_hint = f" Retry by calling generate_image again with {fields} as nested object values, using {{}} when empty, not quoted JSON."
+        retry_hint = f" Retry by calling {tool_name} again with {fields} as nested object values, using {{}} when empty, not quoted JSON."
     return f"invalid_canonical_request: {tool_name} input does not match its tool schema. {detail}.{retry_hint}"
 
 
@@ -176,9 +181,26 @@ def _bounded_completion_tokens(max_tokens: int, context_window_tokens: int | Non
 
 
 def _tool_available_for_context(tool_name: str, context: QueryContext) -> bool:
+    if (
+        tool_name in SCHEDULE_MANAGEMENT_TOOL_NAMES
+        and is_schedule_management_blocked(context.tool_metadata)
+    ):
+        return False
     if tool_name == "image_to_text" and is_model_multimodal(context.model):
         return False
     return True
+
+
+def _tool_unavailable_message(tool_name: str, context: QueryContext) -> str:
+    if (
+        tool_name in SCHEDULE_MANAGEMENT_TOOL_NAMES
+        and is_schedule_management_blocked(context.tool_metadata)
+    ):
+        return SCHEDULED_RUN_CRON_BLOCK_MESSAGE
+    return (
+        f"{tool_name} is not available for the active model. "
+        "Use the model's native image understanding instead."
+    )
 
 
 def _tool_schemas_for_context(context: QueryContext) -> list[dict[str, Any]]:
@@ -232,7 +254,9 @@ def _split_tool_display_context(
         if rationale is None and isinstance(value, str) and value.strip():
             rationale = value.strip()
 
-    return clean_input, rationale, tool.display_label(), tool.start_message()
+    display_label = tool.display_label() if callable(getattr(tool, "display_label", None)) else None
+    start_message = tool.start_message() if callable(getattr(tool, "start_message", None)) else None
+    return clean_input, rationale, display_label, start_message
 
 
 def _prepare_tool_call(
@@ -1288,7 +1312,7 @@ async def _execute_tool_call(
 ) -> ToolResultBlock:
     tool_input = _clean_tool_input_for_execution(context, tool_name, tool_input)
     if allow_media_split and _is_media_generation_tool(tool_name):
-        output_count = _media_output_count(tool_input)
+        output_count = _media_output_count(tool_name, tool_input)
         if output_count > 1:
             return await _execute_media_generation_batch(
                 context,
@@ -1325,10 +1349,7 @@ async def _execute_tool_call(
     if not _tool_available_for_context(tool_name, context):
         return ToolResultBlock(
             tool_use_id=tool_use_id,
-            content=(
-                f"{tool_name} is not available for the active model. "
-                "Use the model's native image understanding instead."
-            ),
+            content=_tool_unavailable_message(tool_name, context),
             is_error=True,
         )
 
@@ -1621,20 +1642,27 @@ async def _maybe_await(value: Any) -> Any:
 
 
 def _is_media_generation_tool(tool_name: str) -> bool:
-    return str(tool_name or "").lower() in {"generate_image", "videogen_cli"}
+    return str(tool_name or "").lower() in {"generate_image", "generate_video"}
 
 
 def _media_kind_for_tool(tool_name: str) -> str:
-    return "video" if str(tool_name or "").lower() == "videogen_cli" else "image"
+    return "video" if str(tool_name or "").lower() == "generate_video" else "image"
 
 
-def _media_output_count(tool_input: dict[str, object]) -> int:
+def _media_output_count(tool_name: str, tool_input: dict[str, object]) -> int:
+    kind = _media_kind_for_tool(tool_name)
     count = 1
-    for key in ("outputCount", "output_count", "num_images", "num_videos", "count", "n", "batch_size", "batchSize"):
-        try:
-            count = max(count, int(tool_input.get(key) or 0))
-        except (TypeError, ValueError):
-            continue
+    output = tool_input.get("output") if isinstance(tool_input.get("output"), dict) else {}
+    try:
+        count = max(count, int(output.get("count") or 0))
+    except (TypeError, ValueError):
+        pass
+    if kind != "video":
+        for key in ("outputCount", "output_count", "num_images", "num_videos", "count", "n", "batch_size", "batchSize"):
+            try:
+                count = max(count, int(tool_input.get(key) or 0))
+            except (TypeError, ValueError):
+                continue
     sequential_options = tool_input.get("sequential_image_generation_options")
     if isinstance(sequential_options, dict):
         try:
@@ -1658,26 +1686,21 @@ def _bounded_media_int(raw: object, *, default: int, minimum: int, maximum: int)
     return max(minimum, min(maximum, value))
 
 
-def _media_subtask_input(tool_input: dict[str, object], *, index: int, kind: str) -> dict[str, object]:
+def _media_subtask_input(tool_input: dict[str, object], *, index: int, kind: str, allowed_fields: set[str] | None = None) -> dict[str, object]:
     item = dict(tool_input)
-    for key in ("outputCount", "output_count", "count", "num_images", "num_videos", "batch_size", "batchSize"):
-        item.pop(key, None)
-    item.pop("sequential_image_generation_options", None)
-    item["n"] = 1
-    if kind == "image":
-        item["num_images"] = 1
-        item["output_count"] = 1
-    else:
-        item["num_videos"] = 1
-    out = str(item.get("out") or "").strip()
-    if out:
-        path = Path(out)
-        suffix = path.suffix or (".mp4" if kind == "video" else ".png")
-        item["out"] = str(path.with_name(f"{path.stem}-{index}{suffix}"))
-    elif kind == "video":
-        item["out"] = f"output/videogen/output-{index}.mp4"
-    else:
-        item["out"] = f"output/imagegen/output-{index}.png"
+    if kind != "video":
+        for key in ("outputCount", "output_count", "count", "n", "num_images", "num_videos", "batch_size", "batchSize"):
+            if key in tool_input and (allowed_fields is None or key in allowed_fields):
+                item[key] = 1
+            else:
+                item.pop(key, None)
+        item.pop("sequential_image_generation_options", None)
+    output = dict(item.get("output") if isinstance(item.get("output"), dict) else {})
+    output["count"] = 1
+    item["output"] = output
+    if kind != "video":
+        item.pop("out", None)
+        item.pop("out_dir", None)
     return item
 
 
@@ -1723,14 +1746,32 @@ async def _execute_media_generation_batch(
     concurrency = _media_batch_concurrency(kind)
     semaphore = asyncio.Semaphore(concurrency)
     hook = (context.tool_metadata or {}).get("hook")
+    tool_lookup = getattr(context.tool_registry, "get", None)
+    tool = tool_lookup(tool_name) if callable(tool_lookup) else None
     results: list[ToolResultBlock | None] = [None] * output_count
 
     async def run_one(index: int) -> None:
         sub_tool_use_id = f"{tool_use_id}:{kind}:{index}"
-        sub_input = _media_subtask_input(tool_input, index=index, kind=kind)
+        sub_input = _media_subtask_input(
+            tool_input,
+            index=index,
+            kind=kind,
+            allowed_fields=_tool_input_fields(tool) if tool is not None else None,
+        )
         artifact_metadata = _media_subtask_artifact_metadata(context, index=index, output_count=output_count)
         reservation: dict[str, Any] | None = None
         async with semaphore:
+            if tool is not None:
+                try:
+                    tool.input_model.model_validate(sub_input)
+                except ValidationError as exc:
+                    results[index - 1] = ToolResultBlock(
+                        tool_use_id=sub_tool_use_id,
+                        content=_format_tool_validation_error(tool_name, exc),
+                        is_error=True,
+                        result_metadata={"error_code": "invalid_canonical_request", "tool_name": tool_name, **artifact_metadata},
+                    )
+                    return
             if progress_callback is not None:
                 await progress_callback(
                     {

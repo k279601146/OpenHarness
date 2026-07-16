@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from openharness.services.cron import set_job_enabled
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.tools.cron_policy import scheduled_run_cron_block_result
 
 
 class CronToggleToolInput(BaseModel):
@@ -27,7 +28,9 @@ class CronToggleTool(BaseTool):
         arguments: CronToggleToolInput,
         context: ToolExecutionContext,
     ) -> ToolResult:
-        del context
+        blocked = scheduled_run_cron_block_result(context.metadata)
+        if blocked is not None:
+            return blocked
         if not set_job_enabled(arguments.name, arguments.enabled):
             return ToolResult(
                 output=f"Cron job not found: {arguments.name}",
