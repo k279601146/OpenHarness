@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import inspect
 import json
 import os
 import posixpath
@@ -133,7 +134,25 @@ async def get_e2b_task_session(context: ToolExecutionContext):
         )
     if session is None or not session.is_running:
         raise SandboxUnavailableError("E2B task workspace is not running")
+    await _ensure_sandbox_inputs(context, session)
     return session
+
+
+async def _ensure_sandbox_inputs(context: ToolExecutionContext, session: Any) -> None:
+    metadata = context.metadata or {}
+    if metadata.get("_sandbox_inputs_ensured"):
+        return
+    ensure = metadata.get("ensure_sandbox_inputs")
+    if not callable(ensure):
+        metadata["_sandbox_inputs_ensured"] = True
+        return
+    try:
+        result = ensure(session)
+        if inspect.isawaitable(result):
+            await result
+    except Exception as exc:
+        raise SandboxUnavailableError("Failed to prepare sandbox input files") from exc
+    metadata["_sandbox_inputs_ensured"] = True
 
 
 def to_sandbox_path(

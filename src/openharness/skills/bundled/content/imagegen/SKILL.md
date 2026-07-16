@@ -68,6 +68,10 @@ For card decks, icon packs, sticker packs, poster sets, product image sets, game
 
 For image edits, change only the target region/object/text and preserve identity, pose, product shape, background, lighting, perspective, color palette, and non-target objects unless the user requests otherwise. When the user says “use this as reference,” match only the relevant dimension: identity, style, composition, color, or product form.
 
+When a user gives a web page or app-store URL for image generation, use hosted web search for supplemental understanding when useful, but rely on `web_fetch` image candidates for page-structured image references. `web_fetch` image candidates are third-party URLs and are not stable image references. Select only the 1-2 candidates that are clearly relevant, call `prepare_web_image_reference` for each selected URL, then pass the returned stable `input_ref` values to `generate_image` as references. If no candidate is clearly relevant, proceed from page text only instead of downloading every image.
+
+When the current request is a transformation of an existing visual result rather than an independent new image, set the tool intent to `edit` or `restore` and use the available stable media input reference as the edit target. Do not regenerate from text alone for continuity-preserving transformations.
+
 ### Scenario-specific guardrails
 
 | Scenario | Guardrail |

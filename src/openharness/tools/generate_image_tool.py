@@ -110,7 +110,10 @@ class GenerateImageInput(BaseModel):
         description='Required text rendering policy object such as {"mode": "avoid_text"} or {}. Never pass a quoted JSON string.',
     )
     model_id: str | None = Field(default=None, description="Optional logical image model id.")
-    references: list[ImageGenerationReference] = Field(default_factory=list)
+    references: list[ImageGenerationReference] = Field(
+        default_factory=list,
+        description="Stable image references. Provide an edit_target reference for edit/restore requests when one is available in media context.",
+    )
 
     @field_validator("prompt")
     @classmethod
@@ -130,6 +133,7 @@ class GenerateImageTool(BaseTool):
     description = (
         "Generate, edit, restore, or vary raster images from high-level image intent. "
         "The SaaS backend handles model routing, billing, provider execution, validation, and artifact delivery. "
+        "Set intent to edit or restore when transforming an existing image. "
         "Required nested fields brief, output, edit_policy, and text_policy must be passed as objects. "
         "Use empty objects when there is no detail; never quote nested JSON."
     )

@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from openharness.sandbox import SandboxUnavailableError
 from openharness.tools.artifact_reference_guard import artifact_lookup_guard_result
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
-from openharness.tools.sandbox_workspace import sandbox_primary_workspace, uses_e2b_task_workspace
+from openharness.tools.sandbox_workspace import get_e2b_task_session, sandbox_primary_workspace, uses_e2b_task_workspace
 from openharness.utils.shell import create_shell_subprocess
 
 
@@ -44,6 +44,10 @@ class BashTool(BaseTool):
         cwd = context.cwd
         uses_e2b = uses_e2b_task_workspace(context)
         if uses_e2b:
+            try:
+                await get_e2b_task_session(context)
+            except SandboxUnavailableError as exc:
+                return ToolResult(output=str(exc), is_error=True)
             cwd = _normalize_e2b_cwd(arguments.cwd, host_cwd=context.cwd, default_cwd=sandbox_primary_workspace(context))
         elif arguments.cwd:
             cwd = Path(arguments.cwd).expanduser()

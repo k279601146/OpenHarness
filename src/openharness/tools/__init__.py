@@ -49,6 +49,7 @@ from openharness.tools.image_to_text_tool import ImageToTextTool
 from openharness.tools.list_mcp_resources_tool import ListMcpResourcesTool
 from openharness.tools.mcp_auth_tool import McpAuthTool
 from openharness.tools.mcp_tool import McpToolAdapter
+from openharness.tools.prepare_web_image_reference_tool import PrepareWebImageReferenceTool
 from openharness.tools.read_mcp_resource_tool import ReadMcpResourceTool
 from openharness.tools.remote_trigger_tool import RemoteTriggerTool
 from openharness.tools.query_memory_tool import QueryMemoryTool
@@ -88,6 +89,7 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         ToolSearchTool(),
         WebFetchTool(),
         WebSearchTool(),
+        PrepareWebImageReferenceTool(),
         CreateFolderTool(),
         BriefTool(),
         CanvasGetStateTool(),
