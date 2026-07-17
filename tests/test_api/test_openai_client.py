@@ -113,7 +113,7 @@ class TestConvertToolsToOpenai:
             "anyOf": [{"required": ["image_data"]}, {"required": ["image_path"]}],
             "oneOf": [{"required": ["image_data"]}, {"required": ["image_path"]}],
         }
-        tools = [{"name": "image_to_text", "description": "Describe image", "input_schema": input_schema}]
+        tools = [{"name": "union_input_tool", "description": "Test root union cleanup", "input_schema": input_schema}]
 
         chat_result = _convert_tools_to_openai(tools)
         responses_result = _convert_tools_to_responses(tools)

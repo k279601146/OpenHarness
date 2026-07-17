@@ -91,33 +91,6 @@ def _resolve_image_generation_config(settings) -> dict[str, str]:
     return resolved
 
 
-def _resolve_vision_config(settings) -> dict[str, str]:
-    """Resolve the vision model configuration from settings or environment.
-
-    Priority: settings.vision fields > environment variables > empty.
-    """
-    from openharness.config.settings import VisionModelConfig
-
-    cfg = settings.vision
-    if cfg.is_configured:
-        return {
-            "model": cfg.model,
-            "api_key": cfg.api_key,
-            "base_url": cfg.base_url,
-        }
-
-    # Fall back to environment variables
-    env_cfg = VisionModelConfig.from_env()
-    if env_cfg.is_configured:
-        return {
-            "model": env_cfg.model,
-            "api_key": env_cfg.api_key,
-            "base_url": env_cfg.base_url,
-        }
-
-    return {}
-
-
 @dataclass
 class RuntimeBundle:
     """Shared runtime objects for one interactive session."""
@@ -399,7 +372,6 @@ async def build_runtime(
             "extra_plugin_roots": normalized_plugin_roots,
             "session_id": session_id,
             "edit_approval_prompt": edit_approval_prompt,
-            "vision_model_config": _resolve_vision_config(settings),
             "image_generation_config": _resolve_image_generation_config(settings),
             **restored_metadata,
         },

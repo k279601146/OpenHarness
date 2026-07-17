@@ -243,7 +243,7 @@ async def test_sensitive_control_plane_commands_are_local_only(tmp_path: Path, m
 
 
 @pytest.mark.asyncio
-async def test_config_show_redacts_nested_mcp_and_vision_secrets(tmp_path: Path, monkeypatch):
+async def test_config_show_redacts_nested_mcp_secrets(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     settings = Settings(
         api_key="TOP_LEVEL_FAKE_SECRET",
@@ -264,11 +264,6 @@ async def test_config_show_redacts_nested_mcp_and_vision_secrets(tmp_path: Path,
                 },
             ),
         },
-        vision={
-            "model": "vision-test",
-            "api_key": "VISION_FAKE_SECRET",
-            "base_url": "https://vision.example",
-        },
     )
     monkeypatch.setattr(registry_module, "load_settings", lambda: settings)
 
@@ -283,7 +278,6 @@ async def test_config_show_redacts_nested_mcp_and_vision_secrets(tmp_path: Path,
         "MCP_FAKE_SECRET",
         "RAW_FAKE_TOKEN",
         "STDIO_FAKE_SECRET",
-        "VISION_FAKE_SECRET",
     ):
         assert secret not in result.message
     assert "[REDACTED]" in result.message

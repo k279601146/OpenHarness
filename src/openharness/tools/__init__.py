@@ -45,7 +45,6 @@ from openharness.tools.glob_tool import GlobTool
 from openharness.tools.grep_tool import GrepTool
 from openharness.tools.generate_image_tool import GenerateImageTool
 from openharness.tools.generate_video_tool import GenerateVideoTool
-from openharness.tools.image_to_text_tool import ImageToTextTool
 from openharness.tools.list_mcp_resources_tool import ListMcpResourcesTool
 from openharness.tools.mcp_auth_tool import McpAuthTool
 from openharness.tools.mcp_tool import McpToolAdapter
@@ -82,7 +81,6 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         McpAuthTool(),
         GlobTool(),
         GrepTool(),
-        ImageToTextTool(),
         GenerateImageTool(),
         GenerateVideoTool(),
         SkillTool(),

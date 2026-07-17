@@ -177,8 +177,8 @@ def is_model_multimodal(model: str) -> bool:
     """Return True when the model name indicates multimodal (vision) capability.
 
     This is a heuristic based on known model naming conventions.  It errs on
-    the side of returning False for unknown models so that the image-to-text
-    fallback tool is used rather than silently failing.
+    the side of returning False for unknown models so callers can decide
+    whether native image input is supported.
     """
     normalized = model.strip().lower()
     # Strip provider prefix like "anthropic/" or "openai/"

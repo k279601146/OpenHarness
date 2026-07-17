@@ -1157,7 +1157,6 @@ async def test_runtime_pool_blocks_registered_config_show_without_leaking_secret
                 "headers": {"Authorization": "Bearer MCP_FAKE_SECRET"},
             },
         },
-        vision={"model": "vision-test", "api_key": "VISION_FAKE_SECRET"},
     )
 
     async def fake_build_runtime(**kwargs):
@@ -1199,7 +1198,6 @@ async def test_runtime_pool_blocks_registered_config_show_without_leaking_secret
     assert updates[-1].kind == "final"
     assert updates[-1].text == "/config is only available in the local OpenHarness UI."
     assert "MCP_FAKE_SECRET" not in updates[-1].text
-    assert "VISION_FAKE_SECRET" not in updates[-1].text
 
 
 @pytest.mark.asyncio

@@ -19,7 +19,7 @@ from openharness.api.client import (
 from openharness.api.errors import RequestFailure
 from openharness.api.usage import UsageSnapshot
 from openharness.config.settings import PermissionSettings, Settings
-from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolUseBlock
+from openharness.engine.messages import ConversationMessage, TextBlock, ToolUseBlock
 from openharness.engine.query_engine import QueryEngine
 from openharness.prompts.context import build_runtime_system_prompt
 from openharness.engine.stream_events import (
@@ -536,65 +536,6 @@ async def test_query_engine_clamps_oversized_max_tokens_before_request(tmp_path:
 
     assert client.requests[0].max_tokens == 128_000
     assert any(isinstance(event, StatusEvent) and "safe per-request output cap" in event.message for event in events)
-    assert isinstance(events[-1], AssistantTurnComplete)
-
-
-@pytest.mark.asyncio
-async def test_query_engine_hides_image_to_text_for_multimodal_models(tmp_path: Path, monkeypatch):
-    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
-    client = RecordingApiClient()
-    engine = QueryEngine(
-        api_client=client,
-        tool_registry=create_default_tool_registry(),
-        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
-        cwd=tmp_path,
-        model="gpt-4o",
-        system_prompt="system",
-    )
-
-    engine.load_messages(
-        [
-            ConversationMessage(
-                role="user",
-                content=[
-                    TextBlock(text="What is in this image?"),
-                    ImageBlock(media_type="image/png", data="iVBORw0KGgo="),
-                ],
-            )
-        ]
-    )
-
-    events = [event async for event in engine.submit_message("please answer directly")]
-
-    tool_names = {tool["name"] for tool in client.requests[0].tools}
-    assert "image_to_text" not in tool_names
-    request_image_blocks = [
-        block
-        for message in client.requests[0].messages
-        for block in message.content
-        if isinstance(block, ImageBlock)
-    ]
-    assert len(request_image_blocks) == 1
-    assert isinstance(events[-1], AssistantTurnComplete)
-
-
-@pytest.mark.asyncio
-async def test_query_engine_keeps_image_to_text_for_text_only_models(tmp_path: Path, monkeypatch):
-    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
-    client = RecordingApiClient()
-    engine = QueryEngine(
-        api_client=client,
-        tool_registry=create_default_tool_registry(),
-        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
-        cwd=tmp_path,
-        model="gpt-4",
-        system_prompt="system",
-    )
-
-    events = [event async for event in engine.submit_message("hello")]
-
-    tool_names = {tool["name"] for tool in client.requests[0].tools}
-    assert "image_to_text" in tool_names
     assert isinstance(events[-1], AssistantTurnComplete)
 
 
