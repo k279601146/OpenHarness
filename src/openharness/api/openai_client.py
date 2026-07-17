@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import hashlib
 import inspect
 import json
@@ -388,10 +389,24 @@ def _convert_tools_to_openai(tools: list[dict[str, Any]]) -> list[dict[str, Any]
             "function": {
                 "name": tool["name"],
                 "description": tool.get("description", ""),
-                "parameters": tool.get("input_schema", {}),
+                "parameters": _openai_compatible_tool_parameters(tool.get("input_schema", {})),
             },
         })
     return result
+
+
+def _openai_compatible_tool_parameters(schema: Any) -> dict[str, Any]:
+    """Return an object-root tool schema accepted by OpenAI-compatible providers."""
+    if not isinstance(schema, dict):
+        return {}
+
+    parameters = deepcopy(schema)
+    if parameters.get("type") == "object" or isinstance(parameters.get("properties"), dict):
+        # Grok-compatible Responses rejects root anyOf/oneOf even when OpenAI accepts it.
+        parameters["type"] = "object"
+        parameters.pop("anyOf", None)
+        parameters.pop("oneOf", None)
+    return parameters
 
 
 def _convert_tools_to_responses(
@@ -411,7 +426,7 @@ def _convert_tools_to_responses(
             "type": "function",
             "name": tool["name"],
             "description": tool.get("description", ""),
-            "parameters": tool.get("input_schema", {}),
+            "parameters": _openai_compatible_tool_parameters(tool.get("input_schema", {})),
         })
     return result
 

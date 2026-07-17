@@ -103,6 +103,33 @@ class TestConvertToolsToOpenai:
             }
         ]
 
+    def test_openai_tool_schema_removes_root_unions_for_compatible_providers(self):
+        input_schema = {
+            "type": "object",
+            "properties": {
+                "image_data": {"type": "string"},
+                "image_path": {"type": "string"},
+            },
+            "anyOf": [{"required": ["image_data"]}, {"required": ["image_path"]}],
+            "oneOf": [{"required": ["image_data"]}, {"required": ["image_path"]}],
+        }
+        tools = [{"name": "image_to_text", "description": "Describe image", "input_schema": input_schema}]
+
+        chat_result = _convert_tools_to_openai(tools)
+        responses_result = _convert_tools_to_responses(tools)
+
+        chat_parameters = chat_result[0]["function"]["parameters"]
+        responses_parameters = responses_result[0]["parameters"]
+        for parameters in (chat_parameters, responses_parameters):
+            assert parameters["type"] == "object"
+            assert "anyOf" not in parameters
+            assert "oneOf" not in parameters
+            assert parameters["properties"]["image_data"]["type"] == "string"
+            assert parameters["properties"]["image_path"]["type"] == "string"
+
+        assert "anyOf" in input_schema
+        assert "oneOf" in input_schema
+
     def test_responses_hosted_web_search_tool_config(self):
         result = _convert_tools_to_responses(
             [{"name": "web_search", "description": "Search", "input_schema": {"type": "object"}}],
