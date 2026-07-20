@@ -15,6 +15,7 @@ _DEFAULT_PORTS = {
     "http": 80,
     "https": 443,
 }
+_WEB_FETCH_GATEWAY_MAX_BYTES = 2 * 1024 * 1024
 _IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
 
@@ -64,7 +65,15 @@ async def fetch_public_http_response(
     current_url = url
     current_params = params
 
+    gateway_url = os.environ.get("OPENHARNESS_WEB_FETCH_GATEWAY_URL")
+    gateway_token = os.environ.get("OPENHARNESS_WEB_FETCH_GATEWAY_TOKEN")
     resolved_proxy = proxy if proxy is not None else os.environ.get("OPENHARNESS_WEB_PROXY")
+    if gateway_url and resolved_proxy:
+        raise NetworkGuardError("OPENHARNESS_WEB_FETCH_GATEWAY_URL and OPENHARNESS_WEB_PROXY cannot be used together")
+    if gateway_url:
+        validate_http_url(gateway_url)
+        if not gateway_token or len(gateway_token) < 24:
+            raise NetworkGuardError("OPENHARNESS_WEB_FETCH_GATEWAY_TOKEN is missing or too short")
     if resolved_proxy:
         validate_http_url(resolved_proxy)
 
@@ -74,13 +83,25 @@ async def fetch_public_http_response(
         trust_env=False,
         proxy=resolved_proxy,
     ) as client:
+        if gateway_url:
+            await ensure_public_http_url(gateway_url)
         for redirect_count in range(max_redirects + 1):
             await ensure_public_http_url(current_url)
-            response = await client.get(
-                current_url,
-                params=current_params,
-                headers=headers,
-            )
+            request_url = str(httpx.URL(current_url, params=current_params)) if current_params else current_url
+            if gateway_url:
+                response = await _fetch_via_web_fetch_gateway(
+                    client,
+                    gateway_url=gateway_url,
+                    gateway_token=str(gateway_token),
+                    target_url=request_url,
+                    headers=headers,
+                )
+            else:
+                response = await client.get(
+                    current_url,
+                    params=current_params,
+                    headers=headers,
+                )
             if not response.has_redirect_location:
                 return response
 
@@ -94,6 +115,62 @@ async def fetch_public_http_response(
             current_params = None
 
     raise NetworkGuardError("request failed before receiving a response")
+
+
+async def _fetch_via_web_fetch_gateway(
+    client: httpx.AsyncClient,
+    *,
+    gateway_url: str,
+    gateway_token: str,
+    target_url: str,
+    headers: dict[str, str] | None,
+) -> httpx.Response:
+    response = await client.post(
+        gateway_url,
+        headers={
+            "Authorization": f"Bearer {gateway_token}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "url": target_url,
+            "method": "GET",
+            "followRedirects": False,
+            "maxBytes": _WEB_FETCH_GATEWAY_MAX_BYTES,
+            "userAgent": (headers or {}).get("User-Agent", ""),
+        },
+    )
+    if response.status_code in {401, 403}:
+        raise NetworkGuardError("web fetch gateway authorization failed")
+    if response.status_code >= 400:
+        raise NetworkGuardError(f"web fetch gateway failed with status {response.status_code}")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise NetworkGuardError("web fetch gateway returned invalid JSON") from exc
+
+    status_code = _gateway_int(payload.get("status"), "status")
+    body = str(payload.get("body") or "")
+    response_headers = {}
+    content_type = str(payload.get("contentType") or "")
+    if content_type:
+        response_headers["content-type"] = content_type
+    location = str(payload.get("location") or "")
+    if location:
+        response_headers["location"] = location
+    final_url = str(payload.get("url") or target_url)
+    validate_http_url(final_url)
+    request = httpx.Request("GET", final_url, headers=headers)
+    return httpx.Response(status_code, text=body, headers=response_headers, request=request)
+
+
+def _gateway_int(value: object, field: str) -> int:
+    try:
+        parsed = int(str(value))
+    except (TypeError, ValueError) as exc:
+        raise NetworkGuardError(f"web fetch gateway returned invalid {field}") from exc
+    if parsed < 100 or parsed > 599:
+        raise NetworkGuardError(f"web fetch gateway returned invalid {field}")
+    return parsed
 
 
 async def _resolve_host_addresses(host: str, port: int) -> set[_IPAddress]:

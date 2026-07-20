@@ -11,7 +11,7 @@ from openharness.tools.base import ToolExecutionContext
 from openharness.tools.prepare_web_image_reference_tool import PrepareWebImageReferenceInput, PrepareWebImageReferenceTool
 from openharness.tools.web_fetch_tool import WebFetchTool, WebFetchToolInput, _html_to_text
 from openharness.tools.web_search_tool import WebSearchTool, WebSearchToolInput
-from openharness.utils.network_guard import fetch_public_http_response
+from openharness.utils.network_guard import NetworkGuardError, fetch_public_http_response
 
 
 @pytest.mark.asyncio
@@ -279,6 +279,129 @@ async def test_fetch_public_http_response_rejects_credentialed_proxy(monkeypatch
     monkeypatch.setenv("OPENHARNESS_WEB_PROXY", "http://user:pass@proxy.example.com:7890")
 
     with pytest.raises(ValueError, match="embedded credentials"):
+        await fetch_public_http_response("https://example.com/")
+
+
+@pytest.mark.asyncio
+async def test_fetch_public_http_response_uses_web_fetch_gateway(monkeypatch):
+    seen = {}
+
+    class FakeClient:
+        def __init__(self, **kwargs: object) -> None:
+            seen["client"] = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url: str, **kwargs: object) -> httpx.Response:
+            seen["post_url"] = url
+            seen["post_kwargs"] = kwargs
+            request = httpx.Request("POST", url)
+            return httpx.Response(
+                200,
+                json={
+                    "url": kwargs["json"]["url"],
+                    "status": 200,
+                    "contentType": "text/plain",
+                    "body": "gateway ok",
+                },
+                request=request,
+            )
+
+    checked_urls: list[str] = []
+
+    async def fake_ensure_public_http_url(url: str) -> None:
+        checked_urls.append(url)
+
+    monkeypatch.setenv("OPENHARNESS_WEB_FETCH_GATEWAY_URL", "https://gateway.example.com/")
+    monkeypatch.setenv("OPENHARNESS_WEB_FETCH_GATEWAY_TOKEN", "x" * 32)
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr("openharness.utils.network_guard.ensure_public_http_url", fake_ensure_public_http_url)
+
+    response = await fetch_public_http_response("https://example.com/path", params={"q": "openharness"})
+
+    assert response.status_code == 200
+    assert response.text == "gateway ok"
+    assert seen["client"]["trust_env"] is False
+    assert seen["client"]["proxy"] is None
+    assert seen["post_url"] == "https://gateway.example.com/"
+    assert seen["post_kwargs"]["json"]["url"] == "https://example.com/path?q=openharness"
+    assert seen["post_kwargs"]["json"]["followRedirects"] is False
+    assert seen["post_kwargs"]["headers"]["Authorization"].startswith("Bearer ")
+    assert checked_urls == ["https://gateway.example.com/", "https://example.com/path"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_public_http_response_gateway_validates_redirect_hops(monkeypatch):
+    calls = []
+
+    class FakeClient:
+        def __init__(self, **_: object) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url: str, **kwargs: object) -> httpx.Response:
+            calls.append(kwargs["json"]["url"])
+            request = httpx.Request("POST", url)
+            if len(calls) == 1:
+                return httpx.Response(
+                    200,
+                    json={
+                        "url": kwargs["json"]["url"],
+                        "status": 302,
+                        "contentType": "",
+                        "location": "https://next.example.com/final",
+                        "body": "",
+                    },
+                    request=request,
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "url": kwargs["json"]["url"],
+                    "status": 200,
+                    "contentType": "text/plain",
+                    "body": "redirect ok",
+                },
+                request=request,
+            )
+
+    checked_urls: list[str] = []
+
+    async def fake_ensure_public_http_url(url: str) -> None:
+        checked_urls.append(url)
+
+    monkeypatch.setenv("OPENHARNESS_WEB_FETCH_GATEWAY_URL", "https://gateway.example.com/")
+    monkeypatch.setenv("OPENHARNESS_WEB_FETCH_GATEWAY_TOKEN", "x" * 32)
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr("openharness.utils.network_guard.ensure_public_http_url", fake_ensure_public_http_url)
+
+    response = await fetch_public_http_response("https://example.com/start")
+
+    assert response.status_code == 200
+    assert response.text == "redirect ok"
+    assert calls == ["https://example.com/start", "https://next.example.com/final"]
+    assert checked_urls == [
+        "https://gateway.example.com/",
+        "https://example.com/start",
+        "https://next.example.com/final",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fetch_public_http_response_gateway_requires_token(monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_WEB_FETCH_GATEWAY_URL", "https://gateway.example.com/")
+    monkeypatch.delenv("OPENHARNESS_WEB_FETCH_GATEWAY_TOKEN", raising=False)
+
+    with pytest.raises(NetworkGuardError, match="TOKEN"):
         await fetch_public_http_response("https://example.com/")
 
 

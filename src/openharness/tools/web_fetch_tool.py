@@ -42,10 +42,11 @@ class WebFetchTool(BaseTool):
 
     name = "web_fetch"
     description = (
-        "Fetch a specific user-provided HTTP or HTTPS URL and return compact readable text. "
-        "Prefer this over web_search when the user provides a direct URL to read exactly. "
-        "For HTML pages, it also returns safe image URL candidates found in the page without downloading them."
+        "Fallback webpage fetch tool. Use only when model/provider-native hosted tools are unavailable, "
+        "or when an image-generation task needs safe image URL candidates from a webpage as reference images. "
+        "Otherwise prefer model/provider-native hosted tools."
     )
+    description = "Fetch one web page and return compact readable text and images."
     input_model = WebFetchToolInput
 
     async def execute(self, arguments: WebFetchToolInput, context: ToolExecutionContext) -> ToolResult:
