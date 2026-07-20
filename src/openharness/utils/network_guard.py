@@ -86,7 +86,10 @@ async def fetch_public_http_response(
         if gateway_url:
             await ensure_public_http_url(gateway_url)
         for redirect_count in range(max_redirects + 1):
-            await ensure_public_http_url(current_url)
+            if gateway_url:
+                _ensure_gateway_public_http_url(current_url)
+            else:
+                await ensure_public_http_url(current_url)
             request_url = str(httpx.URL(current_url, params=current_params)) if current_params else current_url
             if gateway_url:
                 response = await _fetch_via_web_fetch_gateway(
@@ -171,6 +174,21 @@ def _gateway_int(value: object, field: str) -> int:
     if parsed < 100 or parsed > 599:
         raise NetworkGuardError(f"web fetch gateway returned invalid {field}")
     return parsed
+
+
+def _ensure_gateway_public_http_url(url: str) -> None:
+    """Validate targets whose network egress and DNS validation happen in the fetch gateway."""
+    validate_http_url(url)
+    parsed = urlparse(url)
+    assert parsed.hostname is not None  # covered by validate_http_url
+    normalized_host = parsed.hostname.strip().lower().strip("[]")
+    if not normalized_host or normalized_host in {"localhost", "localhost.localdomain"}:
+        raise NetworkGuardError("URL must include a public host")
+    if normalized_host.endswith((".local", ".internal", ".localhost", ".lan", ".home")):
+        raise NetworkGuardError("target host is not public")
+    literal = _parse_ip_literal(normalized_host)
+    if literal is not None and not literal.is_global:
+        raise NetworkGuardError("target resolves to non-public address(es): IP literal")
 
 
 async def _resolve_host_addresses(host: str, port: int) -> set[_IPAddress]:

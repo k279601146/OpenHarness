@@ -313,13 +313,17 @@ async def test_fetch_public_http_response_uses_web_fetch_gateway(monkeypatch):
 
     checked_urls: list[str] = []
 
-    async def fake_ensure_public_http_url(url: str) -> None:
+    def fake_ensure_gateway_public_http_url(url: str) -> None:
         checked_urls.append(url)
+
+    async def fake_ensure_public_http_url(url: str) -> None:
+        assert url == "https://gateway.example.com/"
 
     monkeypatch.setenv("OPENHARNESS_WEB_FETCH_GATEWAY_URL", "https://gateway.example.com/")
     monkeypatch.setenv("OPENHARNESS_WEB_FETCH_GATEWAY_TOKEN", "x" * 32)
     monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
     monkeypatch.setattr("openharness.utils.network_guard.ensure_public_http_url", fake_ensure_public_http_url)
+    monkeypatch.setattr("openharness.utils.network_guard._ensure_gateway_public_http_url", fake_ensure_gateway_public_http_url)
 
     response = await fetch_public_http_response("https://example.com/path", params={"q": "openharness"})
 
@@ -331,7 +335,7 @@ async def test_fetch_public_http_response_uses_web_fetch_gateway(monkeypatch):
     assert seen["post_kwargs"]["json"]["url"] == "https://example.com/path?q=openharness"
     assert seen["post_kwargs"]["json"]["followRedirects"] is False
     assert seen["post_kwargs"]["headers"]["Authorization"].startswith("Bearer ")
-    assert checked_urls == ["https://gateway.example.com/", "https://example.com/path"]
+    assert checked_urls == ["https://example.com/path"]
 
 
 @pytest.mark.asyncio
@@ -376,13 +380,17 @@ async def test_fetch_public_http_response_gateway_validates_redirect_hops(monkey
 
     checked_urls: list[str] = []
 
-    async def fake_ensure_public_http_url(url: str) -> None:
+    def fake_ensure_gateway_public_http_url(url: str) -> None:
         checked_urls.append(url)
+
+    async def fake_ensure_public_http_url(url: str) -> None:
+        assert url == "https://gateway.example.com/"
 
     monkeypatch.setenv("OPENHARNESS_WEB_FETCH_GATEWAY_URL", "https://gateway.example.com/")
     monkeypatch.setenv("OPENHARNESS_WEB_FETCH_GATEWAY_TOKEN", "x" * 32)
     monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
     monkeypatch.setattr("openharness.utils.network_guard.ensure_public_http_url", fake_ensure_public_http_url)
+    monkeypatch.setattr("openharness.utils.network_guard._ensure_gateway_public_http_url", fake_ensure_gateway_public_http_url)
 
     response = await fetch_public_http_response("https://example.com/start")
 
@@ -390,7 +398,6 @@ async def test_fetch_public_http_response_gateway_validates_redirect_hops(monkey
     assert response.text == "redirect ok"
     assert calls == ["https://example.com/start", "https://next.example.com/final"]
     assert checked_urls == [
-        "https://gateway.example.com/",
         "https://example.com/start",
         "https://next.example.com/final",
     ]
