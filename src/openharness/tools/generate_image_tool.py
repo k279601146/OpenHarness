@@ -23,6 +23,10 @@ class ImageGenerationBrief(BaseModel):
     style: str | None = None
     text: str | None = None
     constraints: str | None = None
+    variants: list[str] | None = Field(
+        default=None,
+        description="Optional per-image differences for multi-image requests. Put the total count in output.count, not in the prompt.",
+    )
 
 
 class ImageGenerationReference(BaseModel):
@@ -135,6 +139,8 @@ class GenerateImageTool(BaseTool):
         "The SaaS backend handles model routing, billing, provider execution, validation, and artifact delivery. "
         "Set intent to edit or restore when transforming an existing image. "
         "Required nested fields brief, output, edit_policy, and text_policy must be passed as objects. "
+        "Use output.count for the requested number of images; keep the prompt as a single-image shared requirement. "
+        "Put per-image differences in brief.variants, one string per image. "
         "Use empty objects when there is no detail; never quote nested JSON."
     )
     input_model = GenerateImageInput

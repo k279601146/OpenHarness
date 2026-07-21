@@ -95,6 +95,7 @@ Build a short internal brief before generating or editing.
 | Style | Photographic, vector, 3D, editorial, flat, pixel art, brand style, or reference-matched |
 | Text/content | Exact wording, language, hierarchy, labels, UI copy, callouts, or “no text” |
 | Constraints | Aspect ratio, dimensions, transparency, brand colors, preservation requirements, excluded objects |
+| Variants | Optional per-image differences for multi-image requests, one string per requested image |
 | Acceptance risks | Errors that would make the result unusable |
 
 Ask only for missing essential information. If nonessential details are unspecified, make a reasonable assumption and proceed.
@@ -126,6 +127,8 @@ Read `references/prompt-recipes.md` for scenario-specific prompt structures.
 ## Tool Boundary
 
 When calling `generate_image`, express the final prompt, scenario, production brief, output intent, edit/text policy, and stable references that matter to the user's result. Use `model_id` only when the user explicitly selected a logical image model.
+
+For multi-image requests, put the requested number only in `output.count`. Keep `prompt` focused on the shared single-image requirement and do not write "generate 4 images" or similar count instructions into the prompt. If each image needs a different concept, write those differences in `brief.variants` as one string per image; otherwise omit `brief.variants` and let the backend create natural single-image variants.
 
 Do not include provider names, upstream model IDs, base URLs, API keys, provider-specific field names, seeds, safety switches, raw HTTP payload fragments, local scripts, or host paths. The tool schema and validation errors are the interface contract; this skill only guides image reasoning.
 

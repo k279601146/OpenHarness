@@ -60,6 +60,7 @@ def test_generate_image_schema_uses_high_level_fields() -> None:
     assert "Never pass a quoted JSON string" in schema["text_policy"]["description"]
     assert "width" in schema["output"]["properties"]
     assert schema["brief"]["type"] == "object"
+    assert "variants" in schema["brief"]["properties"]
 
 
 def test_generate_image_schema_rejects_provider_execution_fields() -> None:
@@ -112,6 +113,19 @@ def test_generate_image_rejects_json_string_brief() -> None:
             edit_policy={},
             text_policy={},
         )
+
+
+def test_generate_image_accepts_structured_variants() -> None:
+    value = GenerateImageInput(
+        prompt="Create one poster with the shared brand layout.",
+        brief={"purpose": "poster", "variants": ["red launch angle", "blue retention angle"]},
+        output={"count": 2},
+        edit_policy={},
+        text_policy={},
+    )
+
+    assert value.output.count == 2
+    assert value.brief.variants == ["red launch angle", "blue retention angle"]
 
 
 def test_generate_image_validation_error_is_canonical() -> None:

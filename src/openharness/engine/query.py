@@ -1600,7 +1600,34 @@ def _bounded_media_int(raw: object, *, default: int, minimum: int, maximum: int)
     return max(minimum, min(maximum, value))
 
 
-def _media_subtask_input(tool_input: dict[str, object], *, index: int, kind: str, allowed_fields: set[str] | None = None) -> dict[str, object]:
+def _image_subtask_variant(tool_input: dict[str, object], index: int) -> str:
+    brief = tool_input.get("brief") if isinstance(tool_input.get("brief"), dict) else {}
+    variants = brief.get("variants") if isinstance(brief, dict) else None
+    if not isinstance(variants, list) or len(variants) < index:
+        return ""
+    return str(variants[index - 1] or "").strip()
+
+
+def _image_subtask_prompt(prompt: object, *, index: int, output_count: int, variant: str) -> str:
+    base_prompt = str(prompt or "").strip()
+    slot_instruction = (
+        f"This is image {index} of {output_count}. Generate exactly one standalone image for this slot. "
+        "Do not create a collage, grid, contact sheet, split-screen, comparison layout, or multiple variants inside one image."
+    )
+    parts = [base_prompt, slot_instruction]
+    if variant:
+        parts.append(f"Variant for this image: {variant}")
+    return "\n\n".join(part for part in parts if part)
+
+
+def _media_subtask_input(
+    tool_input: dict[str, object],
+    *,
+    index: int,
+    kind: str,
+    allowed_fields: set[str] | None = None,
+    output_count: int | None = None,
+) -> dict[str, object]:
     item = dict(tool_input)
     if kind != "video":
         for key in ("outputCount", "output_count", "count", "n", "num_images", "num_videos", "batch_size", "batchSize"):
@@ -1615,6 +1642,19 @@ def _media_subtask_input(tool_input: dict[str, object], *, index: int, kind: str
     if kind != "video":
         item.pop("out", None)
         item.pop("out_dir", None)
+        variant = _image_subtask_variant(tool_input, index)
+        item["prompt"] = _image_subtask_prompt(
+            item.get("prompt"),
+            index=index,
+            output_count=max(1, int(output_count or 1)),
+            variant=variant,
+        )
+        brief = dict(item.get("brief") if isinstance(item.get("brief"), dict) else {})
+        if variant:
+            brief["variants"] = [variant]
+        else:
+            brief.pop("variants", None)
+        item["brief"] = brief
     return item
 
 
@@ -1671,6 +1711,7 @@ async def _execute_media_generation_batch(
             index=index,
             kind=kind,
             allowed_fields=_tool_input_fields(tool) if tool is not None else None,
+            output_count=output_count,
         )
         artifact_metadata = _media_subtask_artifact_metadata(context, index=index, output_count=output_count)
         reservation: dict[str, Any] | None = None
