@@ -51,7 +51,17 @@ class ImageGenerationOutput(BaseModel):
     size_tier: Literal["512px", "1K", "2K", "4K"] | None = None
     width: int | None = Field(default=None, ge=1)
     height: int | None = Field(default=None, ge=1)
-    quality_goal: Literal["draft", "balanced", "high_quality", "text_accuracy"] | None = None
+    quality_goal: Literal["auto", "draft", "balanced", "high_quality", "text_accuracy"] | None = None
+    output_format: Literal["png", "jpeg", "webp"] | None = Field(
+        default=None,
+        description="Desired image output format. Compression is only valid for jpeg and webp.",
+    )
+    output_compression: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Compression level for jpeg/webp outputs, from 0 to 100.",
+    )
     count: int | None = Field(default=None, ge=1, le=10)
     transparent_background: bool | None = None
 

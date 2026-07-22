@@ -59,6 +59,8 @@ def test_generate_image_schema_uses_high_level_fields() -> None:
     assert "Never pass a quoted JSON string" in schema["output"]["description"]
     assert "Never pass a quoted JSON string" in schema["text_policy"]["description"]
     assert "width" in schema["output"]["properties"]
+    assert "output_format" in schema["output"]["properties"]
+    assert "output_compression" in schema["output"]["properties"]
     assert schema["brief"]["type"] == "object"
     assert "variants" in schema["brief"]["properties"]
 
@@ -126,6 +128,20 @@ def test_generate_image_accepts_structured_variants() -> None:
 
     assert value.output.count == 2
     assert value.brief.variants == ["red launch angle", "blue retention angle"]
+
+
+def test_generate_image_accepts_gpt_image_output_format_controls() -> None:
+    value = GenerateImageInput(
+        prompt="Create one product image.",
+        brief={},
+        output={"quality_goal": "auto", "output_format": "webp", "output_compression": 50},
+        edit_policy={},
+        text_policy={},
+    )
+
+    assert value.output.quality_goal == "auto"
+    assert value.output.output_format == "webp"
+    assert value.output.output_compression == 50
 
 
 def test_generate_image_validation_error_is_canonical() -> None:
