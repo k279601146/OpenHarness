@@ -80,6 +80,12 @@ AGENT_PROGRESS_HEARTBEAT_SECONDS = 8.0
 def _format_tool_validation_error(tool_name: str, exc: ValidationError) -> str:
     reasons: list[str] = []
     object_string_fields: list[str] = []
+    object_fields_by_tool = {
+        "generate_image": {"brief", "output", "edit_policy", "text_policy"},
+        "generate_video": {"brief", "output"},
+        "create_handdraw_story_video": {"output", "caption_policy", "bgm"},
+    }
+    object_fields = object_fields_by_tool.get(tool_name, set())
     for error in exc.errors():
         loc = ".".join(str(part) for part in error.get("loc", ()) if part != "__root__") or "input"
         error_type = str(error.get("type") or "")
@@ -95,7 +101,7 @@ def _format_tool_validation_error(tool_name: str, exc: ValidationError) -> str:
         elif error_type.startswith("literal_error"):
             reasons.append(f"`{loc}` has an unsupported value")
         elif error_type == "missing":
-            if tool_name in {"generate_image", "generate_video"} and loc in {"brief", "output", "edit_policy", "text_policy"}:
+            if loc in object_fields:
                 reasons.append(f"`{loc}` is required and must be an object")
                 object_string_fields.append(loc)
             else:
@@ -106,7 +112,7 @@ def _format_tool_validation_error(tool_name: str, exc: ValidationError) -> str:
     if len(reasons) > 6:
         detail += f"; plus {len(reasons) - 6} more issue(s)"
     retry_hint = ""
-    if tool_name in {"generate_image", "generate_video"} and object_string_fields:
+    if object_string_fields:
         fields = ", ".join(f"`{field}`" for field in object_string_fields[:4])
         retry_hint = f" Retry by calling {tool_name} again with {fields} as nested object values, using {{}} when empty, not quoted JSON."
     return f"invalid_canonical_request: {tool_name} input does not match its tool schema. {detail}.{retry_hint}"

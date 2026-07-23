@@ -31,6 +31,7 @@ from openharness.tools.canvas_ops_tool import (
     CanvasUpdateNodeTool,
 )
 from openharness.tools.create_folder_tool import CreateFolderTool
+from openharness.tools.create_handdraw_story_video_tool import CreateHanddrawStoryVideoTool
 from openharness.tools.cron_create_tool import CronCreateTool
 from openharness.tools.cron_delete_tool import CronDeleteTool
 from openharness.tools.cron_list_tool import CronListTool
@@ -83,6 +84,7 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         GrepTool(),
         GenerateImageTool(),
         GenerateVideoTool(),
+        CreateHanddrawStoryVideoTool(),
         SkillTool(),
         ToolSearchTool(),
         WebFetchTool(),

@@ -1,4 +1,4 @@
 interface:
   display_name: "Workflow Composer"
-  short_description: "组合技能与连接器，直接完成复杂任务交付"
-  default_prompt: "Use $workflow-composer to coordinate the needed skills/connectors and deliver this complex task end to end."
+  short_description: "按执行型 SOP 组合技能与连接器，交付复杂任务结果"
+  default_prompt: "Use $workflow-composer to follow the execution SOP and deliver a usable result, request confirmation, or report a concrete blocker."

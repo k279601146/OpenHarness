@@ -120,7 +120,11 @@ async def get_e2b_task_session(context: ToolExecutionContext):
     if metadata.get("settings") is None:
         raise SandboxUnavailableError("E2B workspace requires sandbox settings")
 
-    from openharness.sandbox.session import get_active_sandbox, get_or_start_sandbox
+    from openharness.sandbox.session import (
+        get_active_sandbox,
+        get_or_start_sandbox,
+        touch_task_auto_sync_baseline,
+    )
 
     user_id = int(metadata["user_id"])
     thread_id = str(metadata["thread_id"])
@@ -134,6 +138,12 @@ async def get_e2b_task_session(context: ToolExecutionContext):
         )
     if session is None or not session.is_running:
         raise SandboxUnavailableError("E2B task workspace is not running")
+    if not metadata.get("auto_sync_baseline_path"):
+        metadata["auto_sync_baseline_path"] = await touch_task_auto_sync_baseline(
+            session,
+            thread_id,
+            marker_id=str(metadata.get("turn_id") or "turn"),
+        )
     await _ensure_sandbox_inputs(context, session)
     return session
 

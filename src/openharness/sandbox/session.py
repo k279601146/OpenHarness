@@ -537,6 +537,42 @@ def _task_manifest_path(thread_id: str) -> str:
     return f"{_task_workspace(thread_id)}/{TASK_MANIFEST_NAME}"
 
 
+def _task_auto_sync_baseline_path(thread_id: str, marker_id: str | None = None) -> str:
+    raw_marker = str(marker_id or "turn").strip()
+    safe_marker = (
+        "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in raw_marker)[:96]
+        or uuid.uuid4().hex
+    )
+    return f"{_task_workspace(thread_id)}/.openharness-auto-sync-baseline-{safe_marker}"
+
+
+async def touch_task_auto_sync_baseline(
+    session: E2BSandboxSession,
+    thread_id: str,
+    *,
+    marker_id: str | None = None,
+) -> str:
+    """Create the current-turn marker used to detect fresh shared artifacts."""
+    workspace = _task_workspace(thread_id)
+    baseline_path = _task_auto_sync_baseline_path(thread_id, marker_id)
+    script = (
+        "python3 - <<'PY'\n"
+        "import os\n"
+        f"workspace = {json.dumps(workspace)}\n"
+        f"baseline_path = {json.dumps(baseline_path)}\n"
+        "os.makedirs(workspace, exist_ok=True)\n"
+        "with open(baseline_path, 'a', encoding='utf-8'):\n"
+        "    pass\n"
+        "os.utime(baseline_path, None)\n"
+        "PY"
+    )
+    try:
+        await session.exec_command(script)
+    except Exception as exc:
+        logger.warning("Failed to create auto-sync baseline for %s: %s", thread_id, exc)
+    return baseline_path
+
+
 def _utc_iso(value: datetime.datetime | None = None) -> str:
     current = value or datetime.datetime.utcnow()
     return current.replace(microsecond=0).isoformat() + "Z"
