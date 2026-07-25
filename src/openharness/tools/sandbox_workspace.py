@@ -128,7 +128,7 @@ async def get_e2b_task_session(context: ToolExecutionContext):
 
     user_id = int(metadata["user_id"])
     thread_id = str(metadata["thread_id"])
-    session = get_active_sandbox(user_id, thread_id)
+    session = get_active_sandbox(user_id, thread_id, db_session=metadata.get("db_session"))
     if session is None:
         session = await get_or_start_sandbox(
             metadata["settings"],
@@ -144,6 +144,7 @@ async def get_e2b_task_session(context: ToolExecutionContext):
             thread_id,
             marker_id=str(metadata.get("turn_id") or "turn"),
         )
+    await ensure_selected_skills_installed_in_sandbox(context, session)
     await _ensure_sandbox_inputs(context, session)
     return session
 
@@ -237,7 +238,7 @@ def sandbox_skill_dir(context: ToolExecutionContext, skill: Any) -> str:
 
 
 def preinstalled_bundled_skill_dir(context: ToolExecutionContext, skill: Any) -> str | None:
-    """Return the sandbox path for bundled skills baked into the E2B template."""
+    """Return the expected sandbox path for bundled skills in the E2B template."""
     source = getattr(skill, "source", None)
     if source not in {"bundled", "plugin"}:
         return None
@@ -265,6 +266,79 @@ async def ensure_skill_installed_in_sandbox(context: ToolExecutionContext, skill
     skill_name = str(getattr(skill, "command_name", None) or getattr(skill, "name", None) or "skill")
     await _emit_progress(context, "sandbox_start", "正在准备 E2B 沙箱...", metadata={"skill": skill_name})
     session = await get_e2b_task_session(context)
+    return await _install_skill_in_sandbox_session(context, session, skill)
+
+
+async def ensure_sandbox_skill_path(context: ToolExecutionContext, session: Any, sandbox_path: str) -> None:
+    """Install the skill package targeted by a sandbox skill path."""
+    skill_name = _skill_name_from_sandbox_path(context, sandbox_path)
+    if not skill_name:
+        return
+    await _ensure_named_skills_installed(context, session, [skill_name])
+
+
+async def ensure_selected_skills_installed_in_sandbox(context: ToolExecutionContext, session: Any) -> None:
+    """Install UI-selected skills before generic sandbox tools read their files."""
+    metadata = context.metadata or {}
+    raw_names = metadata.get("selected_skill_ids") or metadata.get("required_skill_ids") or []
+    if not isinstance(raw_names, (list, tuple, set)):
+        return
+    await _ensure_named_skills_installed(context, session, [str(name) for name in raw_names if str(name).strip()])
+
+
+async def _ensure_named_skills_installed(context: ToolExecutionContext, session: Any, names: list[str]) -> None:
+    metadata = context.metadata or {}
+    session_key = str(getattr(session, "sandbox_id", "") or id(session))
+    ensured = metadata.setdefault("_sandbox_skills_ensured", set())
+    pending = []
+    for name in names:
+        normalized = name.strip()
+        if not normalized:
+            continue
+        cache_key = f"{session_key}:{normalized}"
+        if cache_key not in ensured:
+            pending.append((normalized, cache_key))
+    if not pending:
+        return
+
+    registry = _load_context_skill_registry(context)
+    for name, cache_key in pending:
+        skill = registry.get(name)
+        if skill is None:
+            ensured.add(cache_key)
+            continue
+        await _install_skill_in_sandbox_session(context, session, skill)
+        ensured.add(cache_key)
+
+
+def _load_context_skill_registry(context: ToolExecutionContext):
+    from openharness.skills.loader import load_skill_registry
+
+    metadata = context.metadata or {}
+    return load_skill_registry(
+        context.cwd,
+        extra_skill_dirs=metadata.get("extra_skill_dirs"),
+        extra_plugin_roots=metadata.get("extra_plugin_roots"),
+        settings=metadata.get("settings"),
+        include_default_user_skills=bool(metadata.get("include_default_user_skills", True)),
+        include_default_plugin_roots=bool(metadata.get("include_default_plugin_roots", True)),
+    )
+
+
+def _skill_name_from_sandbox_path(context: ToolExecutionContext, sandbox_path: str) -> str | None:
+    skills_root = sandbox_skills_root(context).rstrip("/")
+    normalized = posixpath.normpath(str(sandbox_path or ""))
+    if normalized == skills_root:
+        return None
+    prefix = skills_root + "/"
+    if not normalized.startswith(prefix):
+        return None
+    first_part = normalized[len(prefix) :].split("/", 1)[0].strip()
+    return first_part or None
+
+
+async def _install_skill_in_sandbox_session(context: ToolExecutionContext, session: Any, skill: Any) -> str:
+    skill_name = str(getattr(skill, "command_name", None) or getattr(skill, "name", None) or "skill")
     target_root = sandbox_skill_dir(context, skill)
     base_dir = getattr(skill, "base_dir", None)
     if not base_dir:

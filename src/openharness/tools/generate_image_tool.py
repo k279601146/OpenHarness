@@ -6,11 +6,78 @@ all paid media execution to the SaaS backend hook.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+
+
+def _safe_artifact_input_ref(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text or len(text) > 160 or not text.isascii():
+        return None
+    if any(ch.isspace() for ch in text):
+        return None
+    if not all(ch.isalnum() or ch in {"_", "-", "."} for ch in text):
+        return None
+    return f"artifact:{text}"
+
+
+def _safe_public_media_ref(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text.startswith(("/artifacts/", "/uploads/")):
+        return None
+    if text.startswith("//") or "://" in text or "\\" in text:
+        return None
+    if any(ch.isspace() for ch in text):
+        return None
+    path_only = text.split("?", 1)[0].split("#", 1)[0]
+    segments = [segment for segment in path_only.split("/") if segment]
+    if any(segment in {".", ".."} for segment in segments):
+        return None
+    return text
+
+
+def _positive_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _format_generated_image_references(metadata: dict[str, Any]) -> str:
+    payloads = metadata.get("artifact_payloads")
+    if not isinstance(payloads, list):
+        return ""
+
+    lines: list[str] = []
+    reference_index = 0
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        input_ref = _safe_artifact_input_ref(payload.get("artifact_id"))
+        public_url = _safe_public_media_ref(payload.get("url")) or _safe_public_media_ref(payload.get("public_url"))
+        if not input_ref and not public_url:
+            continue
+
+        reference_index += 1
+        if input_ref:
+            lines.append(f"{reference_index}. input_ref: {input_ref}")
+            if public_url:
+                lines.append(f"   public_url: {public_url}")
+        else:
+            lines.append(f"{reference_index}. public_url: {public_url}")
+
+        width = _positive_int(payload.get("width")) or _positive_int(payload.get("actual_width"))
+        height = _positive_int(payload.get("height")) or _positive_int(payload.get("actual_height"))
+        if width and height:
+            lines.append(f"   size: {width}x{height}")
+
+    return "\n".join(lines)
 
 
 class ImageGenerationBrief(BaseModel):
@@ -199,12 +266,29 @@ class GenerateImageTool(BaseTool):
                 metadata=metadata,
             )
 
-        count = len(metadata.get("artifact_payloads") or [])
+        artifact_payloads = metadata.get("artifact_payloads")
+        count = len(artifact_payloads) if isinstance(artifact_payloads, list) else 0
+        output = (
+            f"generate_image completed and published {count} image artifact(s) to the UI. "
+            "Do not call deliver_artifact for these image artifact(s)."
+        )
+        references = _format_generated_image_references(metadata)
+        if references:
+            output = (
+                f"{output}\n\n"
+                "Generated image references:\n"
+                f"{references}\n\n"
+                "Use input_ref or public_url for follow-up media tools. Do not search E2B paths for these media artifacts; "
+                "they are materialized only on demand."
+            )
+        else:
+            output = (
+                f"{output}\n\n"
+                "No stable image reference was returned by the backend. Do not search E2B paths; "
+                "media artifacts are not copied into the sandbox by default."
+            )
         return ToolResult(
-            output=(
-                f"generate_image completed and published {count} image artifact(s) to the UI. "
-                "Do not call deliver_artifact for these image artifact(s)."
-            ),
+            output=output,
             metadata={
                 **metadata,
                 "publish_state": "published",

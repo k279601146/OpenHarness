@@ -15,8 +15,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
 
-NodeType = Literal["text", "image", "video", "audio", "config"]
+NodeType = Literal["text", "image", "video", "audio"]
 GenerationMode = Literal["text", "image", "video", "audio"]
+ContentRole = Literal["prompt", "reference_image", "reference_video", "reference_audio", "context"]
 
 
 class _CanvasModel(BaseModel):
@@ -59,6 +60,7 @@ class CanvasOp(_CanvasModel):
     all: bool | None = None
     fromNodeId: str | None = None
     toNodeId: str | None = None
+    contentRole: ContentRole | None = None
     viewport: Viewport | None = None
     nodeId: str | None = None
     mode: GenerationMode | None = None
@@ -188,6 +190,7 @@ class CanvasDeleteNodesInput(_CanvasModel):
 class ConnectionInput(_CanvasModel):
     fromNodeId: str
     toNodeId: str
+    contentRole: ContentRole | None = None
 
 
 class CanvasConnectNodesInput(_CanvasModel):
@@ -563,7 +566,16 @@ def _apply_ops_to_state(state: dict[str, Any], ops: list[dict[str, Any]]) -> dic
             )
             exists = any(isinstance(conn, dict) and conn.get("fromNodeId") == from_id and conn.get("toNodeId") == to_id for conn in connections)
             if has_nodes and not exists:
-                connections.append({"id": op.get("id") or _uid("conn"), "fromNodeId": from_id, "toNodeId": to_id})
+                connections.append(
+                    _clean_record(
+                        {
+                            "id": op.get("id") or _uid("conn"),
+                            "fromNodeId": from_id,
+                            "toNodeId": to_id,
+                            "contentRole": op.get("contentRole"),
+                        }
+                    )
+                )
         elif op_type == "set_viewport" and isinstance(op.get("viewport"), dict):
             viewport = dict(op["viewport"])
         elif op_type == "select_nodes":
@@ -639,6 +651,50 @@ def _config_node_op(node_id: str, data: dict[str, Any], x: float, y: float) -> d
     }
 
 
+def _generation_node_type(mode: GenerationMode) -> NodeType:
+    if mode == "text":
+        return "text"
+    if mode == "video":
+        return "video"
+    if mode == "audio":
+        return "audio"
+    return "image"
+
+
+def _generation_target_node_op(node_id: str, data: dict[str, Any], x: float, y: float) -> dict[str, Any]:
+    mode = _generation_mode(data.get("mode"))
+    node_type = _generation_node_type(mode)
+    prompt = str(data.get("prompt") or "")
+    return {
+        "type": "add_node",
+        "id": node_id,
+        "nodeType": node_type,
+        "title": data.get("targetTitle") or data.get("target_title") or _generation_title(mode),
+        "position": {"x": x, "y": y},
+        "width": data.get("width"),
+        "height": data.get("height"),
+        "metadata": _clean_record(
+            {
+                "generationMode": mode,
+                "prompt": prompt,
+                "status": "idle",
+                "model": data.get("model"),
+                "size": data.get("size"),
+                "quality": data.get("quality"),
+                "count": data.get("count"),
+                "seconds": data.get("seconds"),
+                "vquality": data.get("vquality"),
+                "generateAudio": data.get("generateAudio"),
+                "watermark": data.get("watermark"),
+                "audioVoice": data.get("audioVoice"),
+                "audioFormat": data.get("audioFormat"),
+                "audioSpeed": data.get("audioSpeed"),
+                "audioInstructions": data.get("audioInstructions"),
+            }
+        ),
+    }
+
+
 def _run_generation_op(node_id: str, mode: str, prompt: str | None = None) -> dict[str, Any]:
     return {"type": "run_generation", "nodeId": node_id, "mode": mode, "prompt": prompt}
 
@@ -650,25 +706,47 @@ def _flow_reference_ids(data: dict[str, Any]) -> list[str]:
     return [item for item in raw or [] if isinstance(item, str)]
 
 
+def _node_type_from_state(state: dict[str, Any], node_id: str) -> str:
+    for node in _nodes(state):
+        if isinstance(node, dict) and node.get("id") == node_id:
+            return str(node.get("type") or "")
+    return ""
+
+
+def _content_role_for_connection(state: dict[str, Any], from_node_id: str) -> ContentRole:
+    source_type = _node_type_from_state(state, from_node_id)
+    if source_type == "text":
+        return "prompt"
+    if source_type == "image":
+        return "reference_image"
+    if source_type == "video":
+        return "reference_video"
+    if source_type == "audio":
+        return "reference_audio"
+    return "context"
+
+
 def _generation_flow_ops(data: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
     mode = _generation_mode(data.get("mode"))
     prompt = str(data.get("prompt") or "")
     x = float(data.get("x") if data.get("x") is not None else _next_canvas_x(state))
     y = float(data.get("y") if data.get("y") is not None else 0)
     text_id = _uid("text")
-    config_id = _uid("config")
+    target_type = _generation_node_type(mode)
+    target_id = _uid(target_type)
     reference_ids = _flow_reference_ids(data)
-    tokens = [f"@[node:{text_id}]", *[f"@[node:{node_id}]" for node_id in reference_ids]]
-    config_data = {**data, "prompt": "\n".join(tokens)}
     ops = [
         _text_node_op({"id": text_id, "text": prompt, "title": data.get("title") or "提示词"}, x, y),
-        _config_node_op(config_id, config_data, x + NODE_DEFAULTS["text"]["width"] + 80, y),
-        {"type": "connect_nodes", "fromNodeId": text_id, "toNodeId": config_id},
-        *[{"type": "connect_nodes", "fromNodeId": node_id, "toNodeId": config_id} for node_id in reference_ids],
-        {"type": "select_nodes", "ids": [config_id]},
+        _generation_target_node_op(target_id, data, x + NODE_DEFAULTS["text"]["width"] + 80, y),
+        {"type": "connect_nodes", "fromNodeId": text_id, "toNodeId": target_id, "contentRole": "prompt"},
+        *[
+            {"type": "connect_nodes", "fromNodeId": node_id, "toNodeId": target_id, "contentRole": _content_role_for_connection(state, node_id)}
+            for node_id in reference_ids
+        ],
+        {"type": "select_nodes", "ids": [target_id]},
     ]
     if data.get("autoRun"):
-        ops.append(_run_generation_op(config_id, mode, "\n".join(tokens)))
+        ops.append(_run_generation_op(target_id, mode, prompt))
     return ops
 
 
@@ -794,7 +872,7 @@ class CanvasApplyOpsTool(BaseTool):
 
 class CanvasCreateNodeTool(BaseTool):
     name = "canvas_create_node"
-    description = "创建任意类型节点：text、image、config、video、audio。"
+    description = "创建内容节点：text、image、video、audio。"
     input_model = CanvasCreateNodeInput
 
     async def execute(self, arguments: CanvasCreateNodeInput, context: ToolExecutionContext) -> ToolResult:
@@ -802,18 +880,15 @@ class CanvasCreateNodeTool(BaseTool):
         x = arguments.x if arguments.x is not None else _next_canvas_x(state)
         y = arguments.y if arguments.y is not None else 0
         data = arguments.model_dump(exclude_none=True)
-        if arguments.nodeType == "config":
-            op = _config_node_op(_uid("config"), {**dict(arguments.metadata or {}), **data, "mode": data.get("mode") or data.get("generationMode")}, x, y)
-        else:
-            op = {
-                "type": "add_node",
-                "nodeType": arguments.nodeType,
-                "title": arguments.title,
-                "position": {"x": x, "y": y},
-                "width": arguments.width,
-                "height": arguments.height,
-                "metadata": arguments.metadata,
-            }
+        op = {
+            "type": "add_node",
+            "nodeType": arguments.nodeType,
+            "title": arguments.title,
+            "position": {"x": x, "y": y},
+            "width": arguments.width,
+            "height": arguments.height,
+            "metadata": arguments.metadata,
+        }
         return await _CanvasEmitter.emit(context, [_clean_record(op)])
 
 
@@ -869,7 +944,7 @@ class CanvasCreateConfigNodeTool(BaseTool):
 
 class CanvasCreateGenerationFlowTool(BaseTool):
     name = "canvas_create_generation_flow"
-    description = "创建通用生成流程：提示词文本节点、生成配置节点、参考节点连线，可用于文案、生图、视频或音频。"
+    description = "创建通用生成结构：提示词文本节点连接到目标内容节点，并可在目标节点上触发文本、图片、视频或音频生成。"
     input_model = GenerationFlowInput
 
     async def execute(self, arguments: GenerationFlowInput, context: ToolExecutionContext) -> ToolResult:
@@ -916,19 +991,19 @@ class CanvasGenerateTextTool(_CanvasGenerateFlowTool):
 
 class CanvasGenerateImageTool(_CanvasGenerateFlowTool):
     name = "canvas_generate_image"
-    description = "创建图片生成流程并立即触发 Bahew 图片生成请求。"
+    description = "创建提示词文本节点和目标图片节点，连接参考素材，并立即在图片节点上触发 Bahew 图片生成。"
     generation_mode = "image"
 
 
 class CanvasGenerateVideoTool(_CanvasGenerateFlowTool):
     name = "canvas_generate_video"
-    description = "创建视频生成流程并立即触发 Bahew 视频生成请求。"
+    description = "创建提示词文本节点和目标视频节点，连接参考素材，并立即在视频节点上触发 Bahew 视频生成。"
     generation_mode = "video"
 
 
 class CanvasGenerateAudioTool(CanvasCreateGenerationFlowTool):
     name = "canvas_generate_audio"
-    description = "创建音频生成占位流程；当前 Bahew 不启用真实音频生成。"
+    description = "创建提示词文本节点和目标音频节点；当前 Bahew 不启用真实音频生成。"
 
     async def execute(self, arguments: GenerationFlowInput, context: ToolExecutionContext) -> ToolResult:
         state = _state_from_context(context)
@@ -1019,7 +1094,10 @@ class CanvasConnectNodesTool(BaseTool):
             connections = [ConnectionInput(fromNodeId=arguments.from_node_id, toNodeId=arguments.to_node_id)]
         else:
             return ToolResult(output="缺少 connections 或 from_node_id/to_node_id。", is_error=True)
-        ops = [{"type": "connect_nodes", "fromNodeId": item.fromNodeId, "toNodeId": item.toNodeId} for item in connections]
+        ops = [
+            _clean_record({"type": "connect_nodes", "fromNodeId": item.fromNodeId, "toNodeId": item.toNodeId, "contentRole": item.contentRole})
+            for item in connections
+        ]
         return await _CanvasEmitter.emit(context, ops)
 
 
@@ -1043,7 +1121,7 @@ class CanvasSetViewportTool(BaseTool):
 
 class CanvasRunGenerationTool(BaseTool):
     name = "canvas_run_generation"
-    description = "触发指定节点生成，通常用于配置节点或媒体占位节点。"
+    description = "触发指定内容节点生成；节点自身承载 prompt、模型和参数，生成结果回填该节点。"
     input_model = CanvasRunGenerationInput
 
     async def execute(self, arguments: CanvasRunGenerationInput, context: ToolExecutionContext) -> ToolResult:

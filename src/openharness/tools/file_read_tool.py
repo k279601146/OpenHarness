@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from openharness.tools.artifact_reference_guard import artifact_lookup_guard_result
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.tools.sandbox_workspace import (
+    ensure_sandbox_skill_path,
     get_e2b_task_session,
     sandbox_file_size,
     sandbox_path_status,
@@ -129,6 +130,7 @@ async def _read_sandbox_file(arguments: FileReadToolInput, context: ToolExecutio
     try:
         session = await get_e2b_task_session(context)
         sandbox_path = to_sandbox_path(context, arguments.path)
+        await ensure_sandbox_skill_path(context, session, sandbox_path)
     except Exception as exc:
         return ToolResult(output=f"Sandbox workspace error: {exc}", is_error=True)
 

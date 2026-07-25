@@ -10,7 +10,13 @@ from pydantic import AliasChoices, BaseModel, Field
 
 from openharness.tools.artifact_reference_guard import artifact_lookup_guard_result
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
-from openharness.tools.sandbox_workspace import get_e2b_task_session, sandbox_glob, to_sandbox_path, uses_e2b_task_workspace
+from openharness.tools.sandbox_workspace import (
+    ensure_sandbox_skill_path,
+    get_e2b_task_session,
+    sandbox_glob,
+    to_sandbox_path,
+    uses_e2b_task_workspace,
+)
 from openharness.utils.paths import normalize_host_path
 
 
@@ -44,6 +50,7 @@ class GlobTool(BaseTool):
             try:
                 session = await get_e2b_task_session(context)
                 root = to_sandbox_path(context, arguments.root)
+                await ensure_sandbox_skill_path(context, session, root)
                 matches = await sandbox_glob(session, root, arguments.pattern, limit=arguments.limit)
             except Exception as exc:
                 return ToolResult(output=f"Sandbox workspace error: {exc}", is_error=True)

@@ -8,7 +8,6 @@ from openharness.tools.brief_tool import BriefTool
 from openharness.tools.canvas_ops_tool import (
     CanvasApplyOpsTool,
     CanvasConnectNodesTool,
-    CanvasCreateConfigNodeTool,
     CanvasCreateGenerationFlowTool,
     CanvasCreateNodeTool,
     CanvasCreateTextNodeTool,
@@ -100,7 +99,6 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         CanvasCreateNodeTool(),
         CanvasCreateTextNodeTool(),
         CanvasCreateTextNodesTool(),
-        CanvasCreateConfigNodeTool(),
         CanvasCreateGenerationFlowTool(),
         CanvasGenerateTextTool(),
         CanvasGenerateImageTool(),

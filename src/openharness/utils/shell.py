@@ -81,7 +81,7 @@ async def create_shell_subprocess(
         session = None
         if user_id is not None and thread_id:
             try:
-                session = get_active_sandbox(int(user_id), thread_id)
+                session = get_active_sandbox(int(user_id), thread_id, db_session=db_session)
             except (TypeError, ValueError):
                 session = None
         if session is None and not explicit_e2b_workspace:

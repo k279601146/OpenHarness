@@ -78,22 +78,85 @@ def _task_workspace(thread_id: str) -> str:
     return f"{SANDBOX_TASKS_ROOT}/{thread_id}"
 
 
-def get_active_sandbox(user_id: int, thread_id: str) -> E2BSandboxSession | None:
+def get_active_sandbox(user_id: int, thread_id: str, db_session=None) -> E2BSandboxSession | None:
     """Return the active sandbox currently leased by a thread."""
     thread_key = _thread_key(user_id, thread_id)
     scope_registry_key = _thread_scope_registry.get(thread_key)
     if scope_registry_key:
         session = _sandbox_registry.get(scope_registry_key)
         if session is not None and session.is_running:
-            return session
+            if _registry_key_matches_thread(scope_registry_key, user_id, thread_id, db_session):
+                return session
+            _thread_scope_registry.pop(thread_key, None)
 
     for registry_key, session in _sandbox_registry.items():
         if not registry_key.startswith(f"{user_id}:") or not session.is_running:
             continue
-        if registry_key.endswith(f":{thread_id}"):
-            _thread_scope_registry[thread_key] = registry_key
+        if _registry_key_matches_thread(
+            registry_key,
+            user_id,
+            thread_id,
+            db_session,
+            allow_unvalidated_user_scope=False,
+        ):
+            _bind_thread_scope(user_id, thread_id, registry_key)
             return session
     return None
+
+
+def _registry_key_parts(registry_key: str) -> tuple[int, str, str] | None:
+    try:
+        raw_user_id, scope_type, scope_key = registry_key.split(":", 2)
+        return int(raw_user_id), scope_type, scope_key
+    except (TypeError, ValueError):
+        return None
+
+
+def _registry_key_matches_thread(
+    registry_key: str,
+    user_id: int,
+    thread_id: str,
+    db_session=None,
+    *,
+    allow_unvalidated_user_scope: bool = True,
+) -> bool:
+    parts = _registry_key_parts(registry_key)
+    if parts is None:
+        return False
+    registry_user_id, scope_type, scope_key = parts
+    if registry_user_id != user_id:
+        return False
+    if scope_type in {THREAD_SCOPE, OVERFLOW_SCOPE}:
+        return scope_key == thread_id
+    if scope_type != USER_SCOPE:
+        return False
+    if db_session is None:
+        return allow_unvalidated_user_scope
+    try:
+        from models import SandboxSpace
+
+        space = (
+            db_session.query(SandboxSpace)
+            .filter_by(user_id=user_id, scope_type=USER_SCOPE, scope_key=scope_key)
+            .first()
+        )
+    except Exception as exc:
+        logger.warning("Failed to validate user-scope sandbox lease: %s", exc)
+        return False
+    return bool(
+        space is not None
+        and space.active_thread_id == thread_id
+        and space.status in {"created", "running", "suspended"}
+    )
+
+
+def _bind_thread_scope(user_id: int, thread_id: str, registry_key: str) -> None:
+    """Bind one thread to one registry key and clear stale aliases for that key."""
+    thread_key = _thread_key(user_id, thread_id)
+    for existing_thread_key, existing_registry_key in list(_thread_scope_registry.items()):
+        if existing_thread_key != thread_key and existing_registry_key == registry_key:
+            _thread_scope_registry.pop(existing_thread_key, None)
+    _thread_scope_registry[thread_key] = registry_key
 
 
 def is_docker_sandbox_active_for(user_id: int, thread_id: str) -> bool:
@@ -171,7 +234,7 @@ async def get_or_start_sandbox(
         return None
 
     async with _locked_registry():
-        active = get_active_sandbox(user_id, thread_id)
+        active = get_active_sandbox(user_id, thread_id, db_session=db_session)
         if active is not None:
             _touch_last_active(db_session, thread_id)
             return active
@@ -181,7 +244,7 @@ async def get_or_start_sandbox(
 
         registry_key = _registry_key(user_id, space.scope_type, space.scope_key)
         _sandbox_registry[registry_key] = session
-        _thread_scope_registry[_thread_key(user_id, thread_id)] = registry_key
+        _bind_thread_scope(user_id, thread_id, registry_key)
 
         await _ensure_remote_task_dirs(session, thread_id)
         await _sync_local_workspace_to_task_dir(session, thread_id)

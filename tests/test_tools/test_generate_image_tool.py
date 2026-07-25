@@ -19,7 +19,17 @@ class FakeImageHook:
         self.calls.append((request, context_metadata))
         return {
             "media_billing_status": "recorded",
-            "artifact_payloads": [{"artifact_id": "artifact-1", "url": "/artifacts/thread/image.png"}],
+            "artifact_payloads": [
+                {
+                    "artifact_id": "artifact-1",
+                    "url": "/artifacts/thread/image.png",
+                    "file_path": r"D:\workspace\private\image.png",
+                    "source_local_path": r"D:\workspace\private\source.png",
+                    "source_url": "https://provider.example/tmp/image.png",
+                    "actual_width": 768,
+                    "actual_height": 1024,
+                }
+            ],
         }
 
 
@@ -196,6 +206,13 @@ async def test_generate_image_delegates_to_backend_hook(tmp_path: Path) -> None:
     )
 
     assert not result.is_error
+    assert "artifact:artifact-1" in result.output
+    assert "/artifacts/thread/image.png" in result.output
+    assert "768x1024" in result.output
+    assert "file_path" not in result.output
+    assert "source_local_path" not in result.output
+    assert "D:\\workspace" not in result.output
+    assert "provider.example" not in result.output
     assert result.metadata["media_billing_status"] == "recorded"
     assert result.metadata["delivery_required"] is False
     assert len(hook.calls) == 1
