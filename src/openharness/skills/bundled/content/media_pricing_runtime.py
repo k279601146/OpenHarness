@@ -14,6 +14,8 @@ PRICING_RULES_ENV = "OPENHARNESS_MEDIA_MODEL_PRICING_RULES"
 DEFAULT_CREDITS_PER_USD = 125.0
 SUPPORTED_IMAGE_SCHEMES = {"image_size_tier_pricing"}
 SUPPORTED_VIDEO_SCHEMES = {"video_seconds_pricing", "video_unit_pricing"}
+SUPPORTED_AUDIO_SCHEMES = {"audio_tts_character_pricing", "audio_tts_unit_pricing"}
+SUPPORTED_MUSIC_SCHEMES = {"music_duration_pricing", "music_unit_pricing"}
 
 
 DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
@@ -204,6 +206,21 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "default_resolution": "1080p",
             "default_mode": "pro",
         },
+        "agnes-video-v2.0": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "video_seconds_pricing",
+            "pricing_basis": "official_public",
+            "official_model_id": "agnes-video-v2.0",
+            "allowed_upstream_model_ids": ["agnes-video-v2.0"],
+            "source_url": "https://wiki.agnes-ai.com/llms.txt",
+            "source_checked_at": "2026-07-31",
+            "cost_per_second_by_resolution": {"480p": 0.0, "720p": 0.0, "1080p": 0.0},
+            "default_duration_seconds": 5,
+            "default_resolution": "720p",
+            "default_mode": "standard",
+        },
         "veo-3.1": {
             "enabled": True,
             "currency": "USD",
@@ -292,6 +309,126 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "default_mode": "standard",
         },
     },
+    "audio": {
+        "gpt-4o-mini-tts": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "audio_tts_character_pricing",
+            "pricing_basis": "official_public",
+            "official_model_id": "gpt-4o-mini-tts",
+            "allowed_upstream_model_ids": ["gpt-4o-mini-tts"],
+            "source_url": "https://platform.openai.com/docs/pricing",
+            "source_checked_at": "2026-07-27",
+            "cost_per_1k_chars": 0.015,
+            "default_prompt_chars": 1000,
+            "max_output_count": 1,
+        },
+        "minimax-speech-2.8-hd": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "audio_tts_character_pricing",
+            "pricing_basis": "manual_contract",
+            "contract_reference": "minimax-tts-provider-contract",
+            "official_model_id": "minimax-speech-2.8-hd",
+            "allowed_upstream_model_ids": ["minimax-speech-2.8-hd"],
+            "source_url": "https://platform.minimaxi.com/document/T2A%20V2?key=673b5706a4a531a2a203d209",
+            "source_checked_at": "2026-07-27",
+            "cost_per_1k_chars": 0.04,
+            "default_prompt_chars": 1000,
+            "max_output_count": 1,
+        },
+        "minimax-speech-2.8-turbo": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "audio_tts_character_pricing",
+            "pricing_basis": "manual_contract",
+            "contract_reference": "minimax-tts-provider-contract",
+            "official_model_id": "minimax-speech-2.8-turbo",
+            "allowed_upstream_model_ids": ["minimax-speech-2.8-turbo"],
+            "source_url": "https://platform.minimaxi.com/document/T2A%20V2?key=673b5706a4a531a2a203d209",
+            "source_checked_at": "2026-07-27",
+            "cost_per_1k_chars": 0.02,
+            "default_prompt_chars": 1000,
+            "max_output_count": 1,
+        },
+        "eleven-v3": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "audio_tts_character_pricing",
+            "pricing_basis": "official_public",
+            "official_model_id": "eleven_v3",
+            "allowed_upstream_model_ids": ["eleven_v3", "eleven-v3"],
+            "source_url": "https://elevenlabs.io/docs/overview/pricing",
+            "source_checked_at": "2026-07-27",
+            "cost_per_1k_chars": 0.3,
+            "default_prompt_chars": 1000,
+            "max_output_count": 1,
+        },
+    },
+    "music": {
+        "suno-ai": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "music_unit_pricing",
+            "pricing_basis": "manual_contract",
+            "contract_reference": "sunoapi-org-commercial-gateway",
+            "official_model_id": "V5_5",
+            "allowed_upstream_model_ids": ["V5_5", "V5", "V4_5PLUS", "V4_5ALL", "V4_5", "V4"],
+            "source_url": "https://docs.sunoapi.org/cn/suno-api/generate-music",
+            "source_checked_at": "2026-07-29",
+            "unit_cost": 0.12,
+            "max_output_count": 2,
+        },
+        "seed-audio-1.0": {
+            "enabled": True,
+            "currency": "CNY",
+            "multiplier": 1.0,
+            "scheme": "music_duration_pricing",
+            "pricing_basis": "manual_contract",
+            "contract_reference": "volcengine-seed-audio-contract",
+            "official_model_id": "seed-audio-1.0",
+            "allowed_upstream_model_ids": ["seed-audio-1.0"],
+            "source_url": "https://www.volcengine.com/docs/82379",
+            "source_checked_at": "2026-07-27",
+            "cost_per_second": 0.08,
+            "default_duration_seconds": 60,
+            "max_output_count": 1,
+        },
+        "eleven-music-v3": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "music_duration_pricing",
+            "pricing_basis": "official_public",
+            "official_model_id": "eleven_music_v3",
+            "allowed_upstream_model_ids": ["eleven_music_v3", "eleven-music-v3"],
+            "source_url": "https://elevenlabs.io/docs/overview/pricing",
+            "source_checked_at": "2026-07-27",
+            "cost_per_second": 0.01,
+            "default_duration_seconds": 60,
+            "max_output_count": 1,
+        },
+        "mureka-v8": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "music_duration_pricing",
+            "pricing_basis": "manual_contract",
+            "contract_reference": "mureka-music-provider-contract",
+            "official_model_id": "mureka-v8",
+            "allowed_upstream_model_ids": ["mureka-v8"],
+            "source_url": "https://platform.mureka.ai/docs",
+            "source_checked_at": "2026-07-27",
+            "cost_per_second": 0.01,
+            "default_duration_seconds": 60,
+            "max_output_count": 1,
+        },
+    },
 }
 
 
@@ -356,9 +493,18 @@ def validate_pricing_rules(raw: Any) -> dict[str, Any]:
         "credits_per_usd": credits_per_usd,
         "image": {},
         "video": {},
+        "audio": {},
+        "music": {},
     }
-    for kind, schemes in (("image", SUPPORTED_IMAGE_SCHEMES), ("video", SUPPORTED_VIDEO_SCHEMES)):
+    for kind, schemes in (
+        ("image", SUPPORTED_IMAGE_SCHEMES),
+        ("video", SUPPORTED_VIDEO_SCHEMES),
+        ("audio", SUPPORTED_AUDIO_SCHEMES),
+        ("music", SUPPORTED_MUSIC_SCHEMES),
+    ):
         group = rules.get(kind)
+        if group is None and kind in {"audio", "music"}:
+            group = {}
         if not isinstance(group, dict):
             raise ValueError(f"media_model_pricing_rules.{kind} must be an object")
         for model_id, rule in group.items():
@@ -369,7 +515,7 @@ def validate_pricing_rules(raw: Any) -> dict[str, Any]:
     return normalized
 
 
-def model_rule(kind: Literal["image", "video"], model_id: str | None, rules: dict[str, Any] | None = None) -> dict[str, Any] | None:
+def model_rule(kind: Literal["image", "video", "audio", "music"], model_id: str | None, rules: dict[str, Any] | None = None) -> dict[str, Any] | None:
     loaded = load_pricing_rules(rules)
     group = loaded.get(kind)
     if not isinstance(group, dict):
@@ -381,7 +527,7 @@ def model_rule(kind: Literal["image", "video"], model_id: str | None, rules: dic
     return None
 
 
-def enabled_model_ids(kind: Literal["image", "video"], rules: dict[str, Any] | None = None) -> set[str]:
+def enabled_model_ids(kind: Literal["image", "video", "audio", "music"], rules: dict[str, Any] | None = None) -> set[str]:
     loaded = load_pricing_rules(rules)
     group = loaded.get(kind)
     if not isinstance(group, dict):
@@ -402,13 +548,14 @@ def estimate_image_pricing(
     reference_count: int = 0,
     rules: dict[str, Any] | None = None,
 ) -> MediaPricingResult:
-    del prompt, quality, aspect_ratio, reference_count
+    del prompt, quality, aspect_ratio
     loaded = load_pricing_rules(rules)
     rule = model_rule("image", model_id, loaded)
     if rule is None:
         raise ValueError(f"Image model pricing is not configured for {model_id}")
 
     output_count = max(int(output_count or 1), 1)
+    resolved_reference_count = _reference_count(reference_count)
     max_output_count = int(rule.get("max_output_count", 0) or 0)
     if max_output_count > 0 and output_count > max_output_count:
         raise ValueError(f"Image output_count {output_count} exceeds max_output_count {max_output_count} for {model_id}")
@@ -424,13 +571,18 @@ def estimate_image_pricing(
     unit_credits = _lookup_number(rule.get("price_by_size_tier"), resolved_tier, default=None)
     if unit_credits is None:
         raise ValueError(f"Image pricing does not include billing_size_tier {resolved_tier} for {model_id}")
-    billing_units = unit_credits * output_count
+    reference_unit_credits = _reference_unit_credits(rule)
+    reference_credits = reference_unit_credits * resolved_reference_count
+    billing_units = unit_credits * output_count + reference_credits
     official_cost = _credits_to_official_cost(loaded, rule, billing_units)
     breakdown = {
         "scheme": scheme,
         "unit_credits": unit_credits,
         "billing_size_tier": resolved_tier.upper(),
         "output_count": output_count,
+        "reference_count": resolved_reference_count,
+        "reference_unit_credits": reference_unit_credits,
+        "reference_credits": reference_credits,
         "price_unit": "credits",
     }
 
@@ -446,6 +598,7 @@ def estimate_video_pricing(
     generate_audio: bool = False,
     command: str | None = None,
     output_count: int = 1,
+    reference_count: int = 0,
     provider_usage: dict[str, Any] | None = None,
     rules: dict[str, Any] | None = None,
 ) -> MediaPricingResult:
@@ -457,10 +610,13 @@ def estimate_video_pricing(
         raise ValueError(f"Video model pricing is not configured for {model_id}")
 
     output_count = max(int(output_count or 1), 1)
+    resolved_reference_count = _reference_count(reference_count)
     resolved_duration = max(float(duration_seconds or rule.get("default_duration_seconds") or 1), 1.0)
     resolved_resolution = _normalize_key(resolution or rule.get("default_resolution") or "720p")
     resolved_mode = _normalize_key(mode or rule.get("default_mode") or "standard")
     scheme = str(rule["scheme"])
+    reference_unit_cost = _reference_unit_cost(rule)
+    reference_cost = reference_unit_cost * resolved_reference_count
 
     if scheme == "video_seconds_pricing":
         per_second_map = (
@@ -474,7 +630,7 @@ def estimate_video_pricing(
         mode_multiplier = _lookup_number(rule.get("mode_multipliers"), resolved_mode, default=1.0) or 1.0
         command_multiplier = _lookup_number(rule.get("command_multipliers"), _normalize_key(command or "generate"), default=1.0) or 1.0
         audio_multiplier = float(rule.get("audio_multiplier", 1.0) or 1.0) if generate_audio else 1.0
-        official_cost = unit_cost * resolved_duration * output_count * mode_multiplier * command_multiplier * audio_multiplier
+        official_cost = unit_cost * resolved_duration * output_count * mode_multiplier * command_multiplier * audio_multiplier + reference_cost
         breakdown = {
             "scheme": scheme,
             "cost_per_second": unit_cost,
@@ -486,11 +642,14 @@ def estimate_video_pricing(
             "command_multiplier": command_multiplier,
             "audio_multiplier": audio_multiplier,
             "output_count": output_count,
+            "reference_count": resolved_reference_count,
+            "reference_unit_cost": reference_unit_cost,
+            "reference_cost": reference_cost,
         }
     elif scheme == "video_unit_pricing":
         unit_cost = _lookup_unit_cost(rule, resolved_mode, resolved_resolution)
         duration_factor = resolved_duration / max(float(rule.get("unit_duration_seconds", resolved_duration) or resolved_duration), 1.0)
-        official_cost = unit_cost * duration_factor * output_count
+        official_cost = unit_cost * duration_factor * output_count + reference_cost
         breakdown = {
             "scheme": scheme,
             "unit_cost": unit_cost,
@@ -499,9 +658,113 @@ def estimate_video_pricing(
             "resolution": resolved_resolution,
             "mode": resolved_mode,
             "output_count": output_count,
+            "reference_count": resolved_reference_count,
+            "reference_unit_cost": reference_unit_cost,
+            "reference_cost": reference_cost,
         }
     else:
         raise ValueError(f"Unsupported video pricing scheme: {scheme}")
+
+    return _pricing_result(loaded, rule, official_cost, breakdown)
+
+
+def estimate_audio_pricing(
+    *,
+    model_id: str,
+    prompt_chars: int | None = None,
+    output_count: int = 1,
+    reference_count: int = 0,
+    rules: dict[str, Any] | None = None,
+) -> MediaPricingResult:
+    loaded = load_pricing_rules(rules)
+    rule = model_rule("audio", model_id, loaded)
+    if rule is None:
+        raise ValueError(f"Audio model pricing is not configured for {model_id}")
+
+    output_count = max(int(output_count or 1), 1)
+    _assert_output_count(rule, output_count, "Audio")
+    resolved_reference_count = _reference_count(reference_count)
+    reference_unit_cost = _reference_unit_cost(rule, "audio")
+    reference_cost = reference_unit_cost * resolved_reference_count
+    resolved_chars = max(int(prompt_chars or rule.get("default_prompt_chars") or 1), 1)
+    scheme = str(rule["scheme"])
+    if scheme == "audio_tts_character_pricing":
+        cost_per_1k_chars = _positive_float(rule.get("cost_per_1k_chars"), f"audio.{model_id}.cost_per_1k_chars", allow_zero=False)
+        official_cost = cost_per_1k_chars * (resolved_chars / 1000.0) * output_count + reference_cost
+        breakdown = {
+            "scheme": scheme,
+            "cost_per_1k_chars": cost_per_1k_chars,
+            "prompt_chars": resolved_chars,
+            "output_count": output_count,
+            "reference_count": resolved_reference_count,
+            "reference_unit_cost": reference_unit_cost,
+            "reference_cost": reference_cost,
+        }
+    elif scheme == "audio_tts_unit_pricing":
+        unit_cost = _positive_float(rule.get("unit_cost"), f"audio.{model_id}.unit_cost", allow_zero=not rule.get("enabled", True))
+        official_cost = unit_cost * output_count + reference_cost
+        breakdown = {
+            "scheme": scheme,
+            "unit_cost": unit_cost,
+            "output_count": output_count,
+            "reference_count": resolved_reference_count,
+            "reference_unit_cost": reference_unit_cost,
+            "reference_cost": reference_cost,
+        }
+    else:
+        raise ValueError(f"Unsupported audio pricing scheme: {scheme}")
+
+    return _pricing_result(loaded, rule, official_cost, breakdown)
+
+
+def estimate_music_pricing(
+    *,
+    model_id: str,
+    duration_seconds: int | float | None = None,
+    output_count: int = 1,
+    prompt_chars: int | None = None,
+    reference_count: int = 0,
+    rules: dict[str, Any] | None = None,
+) -> MediaPricingResult:
+    del prompt_chars
+    loaded = load_pricing_rules(rules)
+    rule = model_rule("music", model_id, loaded)
+    if rule is None:
+        raise ValueError(f"Music model pricing is not configured for {model_id}")
+
+    output_count = max(int(output_count or 1), 1)
+    _assert_output_count(rule, output_count, "Music")
+    resolved_reference_count = _reference_count(reference_count)
+    reference_unit_cost = _reference_unit_cost(rule, "music")
+    reference_cost = reference_unit_cost * resolved_reference_count
+    resolved_duration = max(float(duration_seconds or rule.get("default_duration_seconds") or 1), 1.0)
+    scheme = str(rule["scheme"])
+    if scheme == "music_duration_pricing":
+        cost_per_second = _positive_float(rule.get("cost_per_second"), f"music.{model_id}.cost_per_second", allow_zero=False)
+        official_cost = cost_per_second * resolved_duration * output_count + reference_cost
+        breakdown = {
+            "scheme": scheme,
+            "cost_per_second": cost_per_second,
+            "duration_seconds": resolved_duration,
+            "output_count": output_count,
+            "reference_count": resolved_reference_count,
+            "reference_unit_cost": reference_unit_cost,
+            "reference_cost": reference_cost,
+        }
+    elif scheme == "music_unit_pricing":
+        unit_cost = _positive_float(rule.get("unit_cost"), f"music.{model_id}.unit_cost", allow_zero=not rule.get("enabled", True))
+        official_cost = unit_cost * output_count + reference_cost
+        breakdown = {
+            "scheme": scheme,
+            "unit_cost": unit_cost,
+            "duration_seconds": resolved_duration,
+            "output_count": output_count,
+            "reference_count": resolved_reference_count,
+            "reference_unit_cost": reference_unit_cost,
+            "reference_cost": reference_cost,
+        }
+    else:
+        raise ValueError(f"Unsupported music pricing scheme: {scheme}")
 
     return _pricing_result(loaded, rule, official_cost, breakdown)
 
@@ -547,8 +810,12 @@ def _validate_model_rule(kind: str, model_id: str, raw: Any, schemes: set[str], 
     rule["pricing_basis"] = pricing_basis
     if kind == "image":
         _validate_image_scheme(model_id, rule)
-    else:
+    elif kind == "video":
         _validate_video_scheme(model_id, rule)
+    elif kind == "audio":
+        _validate_audio_scheme(model_id, rule)
+    else:
+        _validate_music_scheme(model_id, rule)
     return rule
 
 
@@ -568,6 +835,8 @@ def _validate_image_scheme(model_id: str, rule: dict[str, Any]) -> None:
         raise ValueError(f"image.{model_id}.default_billing_size_tier must exist in price_by_size_tier")
     rule["default_billing_size_tier"] = default_tier.upper()
     rule["max_output_count"] = int(_positive_float(rule.get("max_output_count", 1), f"image.{model_id}.max_output_count", allow_zero=False))
+    if any(key in rule and rule.get(key) is not None for key in ("reference_unit_credits", "credits_per_reference", "reference_credits")):
+        rule["reference_unit_credits"] = _reference_unit_credits(rule)
     aliases = rule.get("tier_aliases")
     if aliases is not None:
         if not isinstance(aliases, dict):
@@ -588,6 +857,66 @@ def _validate_video_scheme(model_id: str, rule: dict[str, Any]) -> None:
     elif rule["scheme"] == "video_unit_pricing":
         if not any(isinstance(rule.get(key), dict) and rule[key] for key in ("cost_by_quality_size", "cost_by_size")) and "unit_cost" not in rule:
             raise ValueError(f"video.{model_id} must define unit_cost, cost_by_size, or cost_by_quality_size")
+    if any(key in rule and rule.get(key) is not None for key in ("reference_unit_cost", "cost_per_reference", "reference_cost")):
+        rule["reference_unit_cost"] = _reference_unit_cost(rule)
+
+
+def _validate_audio_scheme(model_id: str, rule: dict[str, Any]) -> None:
+    if rule["scheme"] == "audio_tts_character_pricing":
+        rule["cost_per_1k_chars"] = _positive_float(rule.get("cost_per_1k_chars"), f"audio.{model_id}.cost_per_1k_chars", allow_zero=False)
+        rule["default_prompt_chars"] = int(_positive_float(rule.get("default_prompt_chars", 1000), f"audio.{model_id}.default_prompt_chars", allow_zero=False))
+    elif rule["scheme"] == "audio_tts_unit_pricing":
+        rule["unit_cost"] = _positive_float(rule.get("unit_cost"), f"audio.{model_id}.unit_cost", allow_zero=not rule.get("enabled", True))
+    if any(key in rule and rule.get(key) is not None for key in ("reference_unit_cost", "cost_per_reference", "reference_cost")):
+        rule["reference_unit_cost"] = _reference_unit_cost(rule, "audio")
+    rule["max_output_count"] = int(_positive_float(rule.get("max_output_count", 1), f"audio.{model_id}.max_output_count", allow_zero=False))
+
+
+def _validate_music_scheme(model_id: str, rule: dict[str, Any]) -> None:
+    if rule["scheme"] == "music_duration_pricing":
+        rule["cost_per_second"] = _positive_float(rule.get("cost_per_second"), f"music.{model_id}.cost_per_second", allow_zero=False)
+        rule["default_duration_seconds"] = int(_positive_float(rule.get("default_duration_seconds", 60), f"music.{model_id}.default_duration_seconds", allow_zero=False))
+    elif rule["scheme"] == "music_unit_pricing":
+        rule["unit_cost"] = _positive_float(rule.get("unit_cost"), f"music.{model_id}.unit_cost", allow_zero=not rule.get("enabled", True))
+    if any(key in rule and rule.get(key) is not None for key in ("reference_unit_cost", "cost_per_reference", "reference_cost")):
+        rule["reference_unit_cost"] = _reference_unit_cost(rule, "music")
+    rule["max_output_count"] = int(_positive_float(rule.get("max_output_count", 1), f"music.{model_id}.max_output_count", allow_zero=False))
+
+
+def _assert_output_count(rule: dict[str, Any], output_count: int, label: str) -> None:
+    max_output_count = int(rule.get("max_output_count", 0) or 0)
+    if max_output_count > 0 and output_count > max_output_count:
+        raise ValueError(f"{label} output_count {output_count} exceeds max_output_count {max_output_count} for {rule['model_id']}")
+
+
+def _reference_count(value: Any) -> int:
+    try:
+        return max(int(float(value or 0)), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _optional_positive_float(rule: dict[str, Any], keys: tuple[str, ...], field: str) -> float:
+    for key in keys:
+        if key in rule and rule.get(key) is not None:
+            return _positive_float(rule.get(key), field, allow_zero=True)
+    return 0.0
+
+
+def _reference_unit_credits(rule: dict[str, Any]) -> float:
+    return _optional_positive_float(
+        rule,
+        ("reference_unit_credits", "credits_per_reference", "reference_credits"),
+        f"image.{rule['model_id']}.reference_unit_credits",
+    )
+
+
+def _reference_unit_cost(rule: dict[str, Any], kind: str = "video") -> float:
+    return _optional_positive_float(
+        rule,
+        ("reference_unit_cost", "cost_per_reference", "reference_cost"),
+        f"{kind}.{rule['model_id']}.reference_unit_cost",
+    )
 
 
 def _pricing_result(loaded: dict[str, Any], rule: dict[str, Any], official_cost: float, breakdown: dict[str, Any]) -> MediaPricingResult:

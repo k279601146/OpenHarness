@@ -140,6 +140,31 @@ def test_generate_image_accepts_structured_variants() -> None:
     assert value.brief.variants == ["red launch angle", "blue retention angle"]
 
 
+def test_generate_image_reference_defaults_to_edit_target() -> None:
+    value = GenerateImageInput(
+        prompt="Use the uploaded image to create an app icon.",
+        brief={},
+        output={},
+        edit_policy={},
+        text_policy={},
+        references=[{"input_ref": "artifact:abc"}],
+    )
+
+    assert value.references[0].role == "edit_target"
+
+
+def test_generate_image_rejects_retired_reference_roles() -> None:
+    with pytest.raises(ValidationError):
+        GenerateImageInput(
+            prompt="Use the uploaded image to create an app icon.",
+            brief={},
+            output={},
+            edit_policy={},
+            text_policy={},
+            references=[{"input_ref": "artifact:abc", "role": "composition"}],
+        )
+
+
 def test_generate_image_accepts_gpt_image_output_format_controls() -> None:
     value = GenerateImageInput(
         prompt="Create one product image.",

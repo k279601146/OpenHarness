@@ -17,9 +17,12 @@ class PrepareWebImageReferenceInput(BaseModel):
     url: str = Field(description="Selected public HTTP or HTTPS image URL from web_fetch image candidates.")
     source_page_url: str | None = Field(default=None, description="Page URL where the image candidate was discovered.")
     filename: str | None = Field(default=None, description="Optional user-facing filename for the registered image artifact.")
-    role: Literal["style", "composition", "product", "identity", "edit_target"] = Field(
-        default="style",
-        description="Intended reference role for generate_image.",
+    role: Literal["edit_target", "style"] = Field(
+        default="edit_target",
+        description=(
+            "Intended generate_image reference role. Use edit_target by default; use style only when the user "
+            "explicitly asks to reference style/aesthetic only."
+        ),
     )
 
 

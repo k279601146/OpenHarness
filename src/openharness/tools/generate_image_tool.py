@@ -100,7 +100,13 @@ class ImageGenerationReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     input_ref: str = Field(description="Stable artifact/upload/public image reference.")
-    role: Literal["edit_target", "style", "identity", "product", "composition", "mask"] = "style"
+    role: Literal["edit_target", "style", "mask"] = Field(
+        default="edit_target",
+        description=(
+            "Reference role. Use edit_target by default when the user asks to use, follow, or base the result on "
+            "a reference image; use style only when the user explicitly asks to reference style/aesthetic only."
+        ),
+    )
 
     @field_validator("input_ref")
     @classmethod
@@ -193,7 +199,10 @@ class GenerateImageInput(BaseModel):
     model_id: str | None = Field(default=None, description="Optional logical image model id.")
     references: list[ImageGenerationReference] = Field(
         default_factory=list,
-        description="Stable image references. Provide an edit_target reference for edit/restore requests when one is available in media context.",
+        description=(
+            "Stable image references. Default to edit_target for uploaded, mentioned, or selected reference images; "
+            "use style only for explicit style-only reference requests."
+        ),
     )
 
     @field_validator("prompt")
@@ -218,6 +227,7 @@ class GenerateImageTool(BaseTool):
         "Required nested fields brief, output, edit_policy, and text_policy must be passed as objects. "
         "Use output.count for the requested number of images; keep the prompt as a single-image shared requirement. "
         "Put per-image differences in brief.variants, one string per image. "
+        "For reference images, default to role=edit_target; role=style is only for explicit style-only requests. "
         "Use empty objects when there is no detail; never quote nested JSON."
     )
     input_model = GenerateImageInput

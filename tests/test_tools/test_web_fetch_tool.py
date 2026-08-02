@@ -166,14 +166,14 @@ async def test_prepare_web_image_reference_delegates_to_backend(tmp_path):
     tool = PrepareWebImageReferenceTool()
     context = ToolExecutionContext(cwd=tmp_path, metadata={"hook": Hook(), "tool_use_id": "call_1"})
     result = await tool.execute(
-        PrepareWebImageReferenceInput(url="https://cdn.example.com/ref.png", source_page_url="https://example.com", role="composition"),
+        PrepareWebImageReferenceInput(url="https://cdn.example.com/ref.png", source_page_url="https://example.com", role="style"),
         context,
     )
 
     assert result.is_error is False
     assert "artifact:art_ref" in result.output
     assert calls[0][0]["url"] == "https://cdn.example.com/ref.png"
-    assert calls[0][0]["role"] == "composition"
+    assert calls[0][0]["role"] == "style"
     assert calls[0][1]["tool_use_id"] == "call_1"
 
 
