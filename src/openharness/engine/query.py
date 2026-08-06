@@ -205,11 +205,117 @@ def _tool_unavailable_message(tool_name: str, context: QueryContext) -> str:
     )
 
 
+CORE_TOOL_SCHEMA_NAMES = {
+    "ask_user_question",
+    "bash",
+    "brief",
+    "create_folder",
+    "deliver_artifact",
+    "edit_file",
+    "enter_plan_mode",
+    "exit_plan_mode",
+    "glob",
+    "grep",
+    "list_mcp_resources",
+    "mcp_auth",
+    "prepare_web_image_reference",
+    "read_file",
+    "read_mcp_resource",
+    "skill",
+    "sleep",
+    "todo_write",
+    "tool_search",
+    "web_fetch",
+    "web_search",
+    "write_file",
+}
+
+MEDIA_TOOL_SCHEMA_NAMES = {"generate_image", "generate_video", "create_handdraw_story_video"}
+TASK_TOOL_SCHEMA_NAMES = {
+    "agent",
+    "send_message",
+    "task_create",
+    "task_get",
+    "task_list",
+    "task_output",
+    "task_stop",
+    "task_update",
+    "team_create",
+    "team_delete",
+}
+SCHEDULE_TOOL_SCHEMA_NAMES = set(SCHEDULE_MANAGEMENT_TOOL_NAMES) | {"remote_trigger"}
+
+
+def _metadata_list(metadata: dict[str, object] | None, key: str) -> list[str]:
+    if not isinstance(metadata, dict):
+        return []
+    value = metadata.get(key)
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip().lower() for item in value if str(item).strip()]
+
+
+def _metadata_dict(metadata: dict[str, object] | None, key: str) -> dict[str, object]:
+    if not isinstance(metadata, dict):
+        return {}
+    value = metadata.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def _has_selected_skill(metadata: dict[str, object] | None, *needles: str) -> bool:
+    selected = _metadata_list(metadata, "selected_skill_ids") + _metadata_list(metadata, "required_skill_ids")
+    if not selected:
+        return False
+    normalized_needles = tuple(needle.lower() for needle in needles)
+    return any(any(needle in skill_id for needle in normalized_needles) for skill_id in selected)
+
+
+def _has_canvas_context(metadata: dict[str, object] | None) -> bool:
+    canvas_request = _metadata_dict(metadata, "canvas_request")
+    canvas_context = _metadata_dict(metadata, "canvas_context")
+    return bool(canvas_request or canvas_context)
+
+
+def _has_media_context(metadata: dict[str, object] | None) -> bool:
+    canvas_request = _metadata_dict(metadata, "canvas_request")
+    request_kind = str(canvas_request.get("kind") or "").lower()
+    if request_kind in {"image_generation", "video_generation", "audio_generation", "music_generation"}:
+        return True
+    if _has_selected_skill(metadata, "image", "video", "media", "drama", "visual"):
+        return True
+    return False
+
+
+def _has_schedule_context(metadata: dict[str, object] | None) -> bool:
+    scheduled_run = _metadata_dict(metadata, "scheduled_run")
+    if scheduled_run.get("scheduled_run_id"):
+        return bool(scheduled_run.get("allow_schedule_management"))
+    return _has_selected_skill(metadata, "automation", "schedule", "cron")
+
+
+def _tool_schema_selected_for_context(tool_name: str, context: QueryContext) -> bool:
+    metadata = context.tool_metadata
+    if tool_name in CORE_TOOL_SCHEMA_NAMES:
+        return True
+    if tool_name.startswith("connector__"):
+        return bool(_metadata_list(metadata, "selected_connector_ids"))
+    if tool_name.startswith("canvas_"):
+        return _has_canvas_context(metadata)
+    if tool_name in MEDIA_TOOL_SCHEMA_NAMES:
+        return _has_media_context(metadata)
+    if tool_name in SCHEDULE_TOOL_SCHEMA_NAMES:
+        return _has_schedule_context(metadata)
+    if tool_name in TASK_TOOL_SCHEMA_NAMES:
+        return _has_selected_skill(metadata, "agent", "task", "team", "project", "orchestrator")
+    return True
+
+
 def _tool_schemas_for_context(context: QueryContext) -> list[dict[str, Any]]:
     return [
         tool.to_api_schema()
         for tool in context.tool_registry.list_tools()
         if _tool_available_for_context(tool.name, context)
+        and _tool_schema_selected_for_context(tool.name, context)
     ]
 
 

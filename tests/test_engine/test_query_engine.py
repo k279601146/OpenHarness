@@ -50,6 +50,7 @@ from openharness.engine.query import (
     _is_prompt_too_long_error,
     _prepare_tool_call,
     _resolve_permission_file_path,
+    _tool_schemas_for_context,
 )
 
 
@@ -1202,7 +1203,12 @@ async def test_subagent_stop_hook_fires_when_spawned_agent_finishes(tmp_path: Pa
     assert task.status == "completed"
 
 
-def _tool_context(tmp_path: Path, registry: ToolRegistry, settings: PermissionSettings) -> QueryContext:
+def _tool_context(
+    tmp_path: Path,
+    registry: ToolRegistry,
+    settings: PermissionSettings,
+    tool_metadata: dict[str, object] | None = None,
+) -> QueryContext:
     return QueryContext(
         api_client=_NoopApiClient(),
         tool_registry=registry,
@@ -1212,7 +1218,95 @@ def _tool_context(tmp_path: Path, registry: ToolRegistry, settings: PermissionSe
         system_prompt="system",
         max_tokens=1,
         max_turns=1,
+        tool_metadata=tool_metadata,
     )
+
+
+def _schema_names_for_context(context: QueryContext) -> set[str]:
+    return {str(schema.get("name") or "") for schema in _tool_schemas_for_context(context)}
+
+
+def test_tool_schemas_for_context_prunes_heavy_default_tools(tmp_path: Path):
+    registry = create_default_tool_registry()
+    context = _tool_context(tmp_path, registry, PermissionSettings(mode=PermissionMode.DEFAULT))
+
+    names = _schema_names_for_context(context)
+
+    assert {"bash", "read_file", "write_file", "edit_file", "deliver_artifact", "skill"}.issubset(names)
+    assert "generate_image" not in names
+    assert "generate_video" not in names
+    assert "canvas_get_state" not in names
+    assert "cron_create" not in names
+    assert "task_create" not in names
+    assert "agent" not in names
+
+
+def test_tool_schemas_for_context_includes_media_for_explicit_skill(tmp_path: Path):
+    registry = create_default_tool_registry()
+    context = _tool_context(
+        tmp_path,
+        registry,
+        PermissionSettings(mode=PermissionMode.DEFAULT),
+        tool_metadata={"selected_skill_ids": ["imagegen"]},
+    )
+
+    names = _schema_names_for_context(context)
+
+    assert "generate_image" in names
+    assert "generate_video" in names
+    assert "canvas_get_state" not in names
+
+
+def test_tool_schemas_for_context_includes_connector_tools_only_when_selected(tmp_path: Path):
+    class ConnectorArgs(BaseModel):
+        value: str = ""
+
+    class ConnectorTool(BaseTool):
+        name = "connector__feishu__read_doc"
+        description = "Read a Feishu doc."
+        input_model = ConnectorArgs
+
+        async def execute(self, arguments: BaseModel, context: ToolExecutionContext) -> ToolResult:
+            return ToolResult("ok")
+
+    registry = ToolRegistry()
+    registry.register(ConnectorTool())
+
+    hidden = _schema_names_for_context(
+        _tool_context(tmp_path, registry, PermissionSettings(mode=PermissionMode.DEFAULT))
+    )
+    visible = _schema_names_for_context(
+        _tool_context(
+            tmp_path,
+            registry,
+            PermissionSettings(mode=PermissionMode.DEFAULT),
+            tool_metadata={"selected_connector_ids": ["feishu"]},
+        )
+    )
+
+    assert "connector__feishu__read_doc" not in hidden
+    assert "connector__feishu__read_doc" in visible
+
+
+def test_tool_schemas_for_context_blocks_schedule_tools_during_scheduled_run(tmp_path: Path):
+    registry = create_default_tool_registry()
+    context = _tool_context(
+        tmp_path,
+        registry,
+        PermissionSettings(mode=PermissionMode.DEFAULT),
+        tool_metadata={
+            "selected_skill_ids": ["automation-and-scheduling"],
+            "scheduled_run": {"scheduled_run_id": "run_1", "allow_schedule_management": False},
+        },
+    )
+
+    names = _schema_names_for_context(context)
+
+    assert "cron_create" not in names
+    assert "cron_list" not in names
+    assert "cron_delete" not in names
+    assert "cron_toggle" not in names
+    assert "remote_trigger" not in names
 
 
 @pytest.mark.asyncio
