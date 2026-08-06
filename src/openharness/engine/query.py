@@ -29,7 +29,6 @@ from openharness.api.usage import UsageSnapshot
 from openharness.config.paths import get_data_dir
 from openharness.engine.messages import (
     ConversationMessage,
-    TextBlock,
     ToolResultBlock,
 )
 from openharness.engine.stream_events import (
@@ -1605,6 +1604,23 @@ async def _run_tool_with_progress(
     tool_input: dict[str, object],
 ):
     progress_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    started = time.monotonic()
+    heartbeat_count = 0
+    progress_event_count = 0
+    pending_progress_count = 0
+
+    def _progress_payload_event(payload: dict[str, Any]) -> AgentProgressEvent:
+        return _progress_event(
+            str(payload.get("phase") or "tool_progress"),
+            str(payload.get("message") or f"{tool_name} 正在运行..."),
+            status=str(payload.get("status") or "running"),
+            tool_name=str(payload.get("tool_name") or tool_name),
+            tool_use_id=str(payload.get("tool_use_id") or tool_use_id),
+            workspace=str(payload.get("workspace") or (context.tool_metadata or {}).get("workspace_backend") or ""),
+            path=str(payload.get("path") or "") or None,
+            detail=str(payload.get("detail") or "") or None,
+            metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
+        )
 
     async def _progress(payload: dict[str, Any]) -> None:
         await progress_queue.put(payload)
@@ -1618,47 +1634,86 @@ async def _run_tool_with_progress(
             progress_callback=_progress,
         )
     )
-    while True:
-        try:
-            payload = await asyncio.wait_for(progress_queue.get(), timeout=AGENT_PROGRESS_HEARTBEAT_SECONDS)
-            yield _progress_event(
-                str(payload.get("phase") or "tool_progress"),
-                str(payload.get("message") or f"{tool_name} 正在运行..."),
-                status=str(payload.get("status") or "running"),
-                tool_name=str(payload.get("tool_name") or tool_name),
-                tool_use_id=str(payload.get("tool_use_id") or tool_use_id),
-                workspace=str(payload.get("workspace") or (context.tool_metadata or {}).get("workspace_backend") or ""),
-                path=str(payload.get("path") or "") or None,
-                detail=str(payload.get("detail") or "") or None,
-                metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
-            ), None
-            continue
-        except asyncio.TimeoutError:
-            if task.done():
+    progress_task: asyncio.Task[dict[str, Any]] | None = None
+    heartbeat_task: asyncio.Task[None] | None = None
+    try:
+        while not task.done():
+            if progress_task is None:
+                progress_task = asyncio.create_task(progress_queue.get())
+            if heartbeat_task is None:
+                heartbeat_task = asyncio.create_task(asyncio.sleep(AGENT_PROGRESS_HEARTBEAT_SECONDS))
+
+            wait_tasks: set[asyncio.Task[Any]] = {task, progress_task, heartbeat_task}
+            done, _ = await asyncio.wait(wait_tasks, return_when=asyncio.FIRST_COMPLETED)
+
+            if progress_task in done:
+                payload = progress_task.result()
+                progress_task = None
+                progress_event_count += 1
+                yield _progress_payload_event(payload), None
+                continue
+
+            if task in done:
                 break
-            yield _progress_event(
-                "heartbeat",
-                f"工具 {tool_name} 仍在运行...",
-                status="info",
-                tool_name=tool_name,
-                tool_use_id=tool_use_id,
-                workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
-            ), None
+
+            if heartbeat_task in done:
+                heartbeat_task = None
+                heartbeat_count += 1
+                yield _progress_event(
+                    "heartbeat",
+                    f"工具 {tool_name} 仍在运行...",
+                    status="info",
+                    tool_name=tool_name,
+                    tool_use_id=tool_use_id,
+                    workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                    metadata={
+                        "engine_elapsed_seconds": round(time.monotonic() - started, 3),
+                        "engine_heartbeat_count": heartbeat_count,
+                    },
+                ), None
+    finally:
+        pending_tasks = [
+            pending_task
+            for pending_task in (progress_task, heartbeat_task)
+            if pending_task is not None and not pending_task.done()
+        ]
+        for pending_task in pending_tasks:
+            pending_task.cancel()
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
 
     while not progress_queue.empty():
         payload = progress_queue.get_nowait()
-        yield _progress_event(
-            str(payload.get("phase") or "tool_progress"),
-            str(payload.get("message") or f"{tool_name} 正在运行..."),
-            status=str(payload.get("status") or "running"),
-            tool_name=str(payload.get("tool_name") or tool_name),
-            tool_use_id=str(payload.get("tool_use_id") or tool_use_id),
-            workspace=str(payload.get("workspace") or (context.tool_metadata or {}).get("workspace_backend") or ""),
-            path=str(payload.get("path") or "") or None,
-            detail=str(payload.get("detail") or "") or None,
-            metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
-        ), None
-    yield None, await task
+        progress_event_count += 1
+        pending_progress_count += 1
+        yield _progress_payload_event(payload), None
+    try:
+        result = await task
+    except Exception:
+        elapsed_seconds = time.monotonic() - started
+        log.debug(
+            "tool progress wait failed: name=%s id=%s elapsed=%.3fs heartbeats=%d progress_events=%d pending_progress=%d",
+            tool_name,
+            tool_use_id,
+            elapsed_seconds,
+            heartbeat_count,
+            progress_event_count,
+            pending_progress_count,
+            exc_info=True,
+        )
+        raise
+    else:
+        elapsed_seconds = time.monotonic() - started
+        log.debug(
+            "tool progress wait complete: name=%s id=%s elapsed=%.3fs heartbeats=%d progress_events=%d pending_progress=%d",
+            tool_name,
+            tool_use_id,
+            elapsed_seconds,
+            heartbeat_count,
+            progress_event_count,
+            pending_progress_count,
+        )
+    yield None, result
 
 
 async def _maybe_await(value: Any) -> Any:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -50,6 +51,7 @@ from openharness.engine.query import (
     _is_prompt_too_long_error,
     _prepare_tool_call,
     _resolve_permission_file_path,
+    _run_tool_with_progress,
     _tool_schemas_for_context,
 )
 
@@ -1224,6 +1226,101 @@ def _tool_context(
 
 def _schema_names_for_context(context: QueryContext) -> set[str]:
     return {str(schema.get("name") or "") for schema in _tool_schemas_for_context(context)}
+
+
+@pytest.mark.asyncio
+async def test_run_tool_with_progress_returns_without_waiting_for_heartbeat(tmp_path: Path, monkeypatch, caplog):
+    async def _fake_execute_tool_call(
+        context: QueryContext,
+        tool_name: str,
+        tool_use_id: str,
+        tool_input: dict[str, object],
+        *,
+        progress_callback=None,
+    ) -> ToolResultBlock:
+        del context, tool_input
+        assert progress_callback is not None
+        await progress_callback(
+            {
+                "phase": "tool_progress",
+                "message": "started",
+                "tool_name": tool_name,
+                "tool_use_id": tool_use_id,
+            }
+        )
+        await asyncio.sleep(0)
+        return ToolResultBlock(tool_use_id=tool_use_id, content="ok", is_error=False)
+
+    monkeypatch.setattr("openharness.engine.query._execute_tool_call", _fake_execute_tool_call)
+    monkeypatch.setattr("openharness.engine.query.AGENT_PROGRESS_HEARTBEAT_SECONDS", 60.0)
+    caplog.set_level(logging.DEBUG, logger="openharness.engine.query")
+
+    context = _tool_context(tmp_path, ToolRegistry(), PermissionSettings(mode=PermissionMode.FULL_AUTO))
+
+    async def _collect():
+        events = []
+        async for event, result in _run_tool_with_progress(context, "fast_tool", "toolu_fast", {}):
+            events.append((event, result))
+        return events
+
+    events = await asyncio.wait_for(_collect(), timeout=0.5)
+
+    progress_events = [event for event, result in events if isinstance(event, AgentProgressEvent)]
+    results = [result for event, result in events if isinstance(result, ToolResultBlock)]
+    assert [event.phase for event in progress_events] == ["tool_progress"]
+    assert progress_events[0].message == "started"
+    assert len(results) == 1
+    assert results[0].content == "ok"
+    assert results[0].result_metadata == {}
+    assert any(
+        record.message.startswith("tool progress wait complete: name=fast_tool")
+        and "heartbeats=0" in record.message
+        and "progress_events=1" in record.message
+        and "pending_progress=0" in record.message
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_tool_with_progress_emits_observable_heartbeat_metadata(tmp_path: Path, monkeypatch, caplog):
+    async def _fake_execute_tool_call(
+        context: QueryContext,
+        tool_name: str,
+        tool_use_id: str,
+        tool_input: dict[str, object],
+        *,
+        progress_callback=None,
+    ) -> ToolResultBlock:
+        del context, tool_name, tool_input, progress_callback
+        await asyncio.sleep(0.1)
+        return ToolResultBlock(tool_use_id=tool_use_id, content="ok", is_error=False)
+
+    monkeypatch.setattr("openharness.engine.query._execute_tool_call", _fake_execute_tool_call)
+    monkeypatch.setattr("openharness.engine.query.AGENT_PROGRESS_HEARTBEAT_SECONDS", 0.02)
+    caplog.set_level(logging.DEBUG, logger="openharness.engine.query")
+
+    context = _tool_context(tmp_path, ToolRegistry(), PermissionSettings(mode=PermissionMode.FULL_AUTO))
+
+    events = []
+    async for event, result in _run_tool_with_progress(context, "slow_tool", "toolu_slow", {}):
+        events.append((event, result))
+
+    heartbeat_events = [
+        event for event, result in events if isinstance(event, AgentProgressEvent) and event.phase == "heartbeat"
+    ]
+    results = [result for event, result in events if isinstance(result, ToolResultBlock)]
+    assert heartbeat_events
+    assert heartbeat_events[0].metadata is not None
+    assert heartbeat_events[0].metadata["engine_heartbeat_count"] == 1
+    assert heartbeat_events[0].metadata["engine_elapsed_seconds"] >= 0
+    assert len(results) == 1
+    assert results[0].result_metadata == {}
+    assert any(
+        record.message.startswith("tool progress wait complete: name=slow_tool")
+        and f"heartbeats={len(heartbeat_events)}" in record.message
+        and "progress_events=0" in record.message
+        for record in caplog.records
+    )
 
 
 def test_tool_schemas_for_context_prunes_heavy_default_tools(tmp_path: Path):
