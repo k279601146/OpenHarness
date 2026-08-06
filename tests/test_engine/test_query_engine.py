@@ -253,6 +253,20 @@ class _NoopApiClient:
             yield None
 
 
+class HangingApiClient:
+    """Fake client that keeps the model stream open until cancelled."""
+
+    async def stream_message(self, request):
+        del request
+        try:
+            while True:
+                await asyncio.sleep(60)
+        finally:
+            return
+        if False:
+            yield None
+
+
 def test_query_prompt_too_long_detection_handles_llama_cpp_errors():
     assert _is_prompt_too_long_error(
         RequestFailure("exceed_context_size_error: prompt exceeds the available context size")
@@ -1321,6 +1335,128 @@ async def test_run_tool_with_progress_emits_observable_heartbeat_metadata(tmp_pa
         and "progress_events=0" in record.message
         for record in caplog.records
     )
+
+
+@pytest.mark.asyncio
+async def test_query_engine_agent_progress_includes_turn_timing_metadata(tmp_path: Path):
+    engine = QueryEngine(
+        api_client=StaticApiClient("done"),
+        tool_registry=ToolRegistry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("hello")]
+
+    progress = [event for event in events if isinstance(event, AgentProgressEvent)]
+    phases = {event.phase for event in progress}
+    assert {"turn_start", "model_request", "model_response", "turn_complete"}.issubset(phases)
+    turn_complete = next(event for event in progress if event.phase == "turn_complete")
+    assert turn_complete.metadata is not None
+    assert str(turn_complete.metadata["turn_id"]).startswith("turn_")
+    assert turn_complete.metadata["turn_index"] == 1
+    assert turn_complete.metadata["event_seq"] >= 1
+    assert turn_complete.metadata["elapsed_ms"] >= 0
+    assert turn_complete.metadata["usage"]["output_tokens"] == 1
+
+
+@pytest.mark.asyncio
+async def test_query_engine_request_cancel_aborts_waiting_model_stream(tmp_path: Path):
+    engine = QueryEngine(
+        api_client=HangingApiClient(),
+        tool_registry=ToolRegistry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+    events: list[object] = []
+
+    async def _collect() -> None:
+        async for event in engine.submit_message("wait"):
+            events.append(event)
+
+    task = asyncio.create_task(_collect())
+    deadline = asyncio.get_running_loop().time() + 1.0
+    while asyncio.get_running_loop().time() < deadline:
+        if any(isinstance(event, AgentProgressEvent) and event.phase == "model_request" for event in events):
+            break
+        await asyncio.sleep(0.01)
+    else:
+        task.cancel()
+        raise AssertionError("model_request progress was not emitted")
+
+    engine.request_cancel("user requested stop")
+    await asyncio.wait_for(task, timeout=1.0)
+
+    aborted = [event for event in events if isinstance(event, AgentProgressEvent) and event.phase == "turn_aborted"]
+    assert aborted
+    assert aborted[-1].metadata is not None
+    assert aborted[-1].metadata["reason"] == "user requested stop"
+    assert aborted[-1].metadata["stage"] == "model_stream"
+
+
+@pytest.mark.asyncio
+async def test_query_engine_serializes_workspace_write_tools_with_execution_group(tmp_path: Path):
+    class DelayInput(BaseModel):
+        label: str
+
+    class SerialWriteTool(BaseTool):
+        name = "write_file"
+        description = "Synthetic write tool used to test dispatch serialization."
+        input_model = DelayInput
+
+        def __init__(self) -> None:
+            self.active = 0
+            self.max_active = 0
+
+        async def execute(self, arguments, context):
+            del context
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            await asyncio.sleep(0.05)
+            self.active -= 1
+            return ToolResult(arguments.label, metadata={"label": arguments.label})
+
+    tool = SerialWriteTool()
+    registry = ToolRegistry()
+    registry.register(tool)
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(id="toolu_write_a", name="write_file", input={"label": "a"}),
+                            ToolUseBlock(id="toolu_write_b", name="write_file", input={"label": "b"}),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[TextBlock(text="done")]),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+            ]
+        ),
+        tool_registry=registry,
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("write twice")]
+
+    assert tool.max_active == 1
+    dispatch_events = [
+        event for event in events if isinstance(event, AgentProgressEvent) and event.phase == "tool_dispatch"
+    ]
+    assert len(dispatch_events) == 2
+    assert all(event.metadata and event.metadata["execution_group"] == "workspace_write" for event in dispatch_events)
 
 
 def test_tool_schemas_for_context_prunes_heavy_default_tools(tmp_path: Path):

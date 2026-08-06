@@ -15,6 +15,30 @@ if TYPE_CHECKING:
     from openharness.hooks.executor import HookExecutor
 
 
+class CancellationToken:
+    """Shared cancellation signal for a running query/tool turn."""
+
+    def __init__(self) -> None:
+        import asyncio
+
+        self._event = asyncio.Event()
+        self._reason: str | None = None
+
+    @property
+    def reason(self) -> str | None:
+        return self._reason
+
+    def cancel(self, reason: str | None = None) -> None:
+        self._reason = reason or self._reason or "cancelled"
+        self._event.set()
+
+    def is_cancelled(self) -> bool:
+        return self._event.is_set()
+
+    async def wait(self) -> None:
+        await self._event.wait()
+
+
 @dataclass
 class ToolExecutionContext:
     """Shared execution context for tool invocations."""
@@ -23,6 +47,7 @@ class ToolExecutionContext:
     metadata: dict[str, Any] = field(default_factory=dict)
     hook_executor: HookExecutor | None = None
     progress_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+    cancellation_token: CancellationToken | None = None
 
 
 @dataclass(frozen=True)
@@ -42,6 +67,8 @@ class BaseTool(ABC):
     input_model: type[BaseModel]
     display_name: str | None = None
     default_start_message: str | None = None
+    parallel_safe: bool = True
+    execution_group: str | None = None
     
     # [Optimize] 显式标记工具是否必须在沙箱中运行
     # False: 默认在宿主机执行（节省资源）

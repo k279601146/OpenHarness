@@ -8,7 +8,7 @@ import logging
 import os
 import re
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 from uuid import uuid4
@@ -46,7 +46,7 @@ from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
 from openharness.services.tool_outputs import tool_output_inline_chars, tool_output_preview_chars
 from openharness.tools.ask_user_question_tool import AskUserQuestionPaused
-from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.tools.base import BaseTool, CancellationToken, ToolExecutionContext, ToolResult
 from openharness.tools.base import ToolRegistry
 from openharness.tools.cron_policy import (
     SCHEDULE_MANAGEMENT_TOOL_NAMES,
@@ -74,6 +74,36 @@ MAX_TRACKED_USER_GOALS = 5
 MAX_TRACKED_ACTIVE_ARTIFACTS = 8
 MAX_TRACKED_VERIFIED_WORK = 10
 AGENT_PROGRESS_HEARTBEAT_SECONDS = 8.0
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return max(0, int((time.monotonic() - started_at) * 1000))
+
+
+@dataclass
+class _RunTimingTrace:
+    """Per-turn timing metadata attached to progress events."""
+
+    turn_id: str
+    turn_index: int
+    started_at: float = field(default_factory=time.monotonic)
+    event_seq: int = 0
+    phase_started_at: dict[str, float] = field(default_factory=dict)
+
+    def metadata(self, phase: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+        now = time.monotonic()
+        phase_started_at = self.phase_started_at.setdefault(phase, now)
+        self.event_seq += 1
+        data: dict[str, Any] = {
+            "turn_id": self.turn_id,
+            "turn_index": self.turn_index,
+            "event_seq": self.event_seq,
+            "elapsed_ms": max(0, int((now - self.started_at) * 1000)),
+            "phase_elapsed_ms": max(0, int((now - phase_started_at) * 1000)),
+        }
+        if extra:
+            data.update(extra)
+        return data
 
 
 def _format_tool_validation_error(tool_name: str, exc: ValidationError) -> str:
@@ -128,7 +158,10 @@ def _progress_event(
     path: str | None = None,
     detail: str | None = None,
     metadata: dict[str, Any] | None = None,
+    timing: _RunTimingTrace | None = None,
 ) -> AgentProgressEvent:
+    if timing is not None:
+        metadata = timing.metadata(phase, metadata)
     return AgentProgressEvent(
         phase=phase,
         status=status,  # type: ignore[arg-type]
@@ -204,6 +237,16 @@ def _tool_unavailable_message(tool_name: str, context: QueryContext) -> str:
     )
 
 
+def _query_cancelled(context: QueryContext) -> bool:
+    token = context.cancellation_token
+    return bool(token is not None and token.is_cancelled())
+
+
+def _query_cancel_reason(context: QueryContext) -> str:
+    token = context.cancellation_token
+    return (token.reason if token is not None else None) or "cancelled"
+
+
 CORE_TOOL_SCHEMA_NAMES = {
     "ask_user_question",
     "bash",
@@ -243,6 +286,44 @@ TASK_TOOL_SCHEMA_NAMES = {
     "team_delete",
 }
 SCHEDULE_TOOL_SCHEMA_NAMES = set(SCHEDULE_MANAGEMENT_TOOL_NAMES) | {"remote_trigger"}
+
+
+_WORKSPACE_WRITE_TOOL_NAMES = {"bash", "create_folder", "write_file", "edit_file", "deliver_artifact"}
+_TASK_MUTATION_TOOL_NAMES = {
+    "agent",
+    "send_message",
+    "task_create",
+    "task_stop",
+    "task_update",
+    "team_create",
+    "team_delete",
+}
+_SCHEDULE_MUTATION_TOOL_NAMES = {"cron_create", "cron_delete", "cron_toggle", "remote_trigger"}
+
+
+def _tool_execution_group(context: QueryContext, tool_name: str) -> str | None:
+    tool = context.tool_registry.get(tool_name)
+    if tool is not None:
+        explicit_group = getattr(tool, "execution_group", None)
+        if explicit_group:
+            return str(explicit_group)
+        if getattr(tool, "parallel_safe", True) is False:
+            return f"tool:{tool_name}"
+    if tool_name in _WORKSPACE_WRITE_TOOL_NAMES:
+        return "workspace_write"
+    if tool_name.startswith("canvas_") and tool_name not in {
+        "canvas_get_state",
+        "canvas_get_selection",
+        "canvas_get_request_references",
+    }:
+        return "canvas"
+    if tool_name in _TASK_MUTATION_TOOL_NAMES:
+        return "task_manager"
+    if tool_name in _SCHEDULE_MUTATION_TOOL_NAMES:
+        return "schedule"
+    if tool_name == "todo_write":
+        return "turn_state"
+    return None
 
 
 def _metadata_list(metadata: dict[str, object] | None, key: str) -> list[str]:
@@ -433,6 +514,10 @@ class MaxTurnsExceeded(RuntimeError):
         self.max_turns = max_turns
 
 
+class QueryCancelled(RuntimeError):
+    """Raised when a query cancellation token is tripped."""
+
+
 @dataclass
 class QueryContext:
     """Context shared across a query run."""
@@ -452,6 +537,7 @@ class QueryContext:
     max_turns: int | None = 200
     hook_executor: HookExecutor | None = None
     tool_metadata: dict[str, object] | None = None
+    cancellation_token: CancellationToken | None = None
 
 
 def _append_capped_unique(bucket: list[Any], value: Any, *, limit: int) -> None:
@@ -934,6 +1020,25 @@ async def run_query(
     turn_count = 0
     while context.max_turns is None or turn_count < context.max_turns:
         turn_count += 1
+        turn_trace = _RunTimingTrace(turn_id=f"turn_{uuid4().hex[:12]}", turn_index=turn_count)
+        yield _progress_event(
+            "turn_start",
+            "",
+            status="info",
+            workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+            metadata={"message_count": len(messages)},
+            timing=turn_trace,
+        ), None
+        if _query_cancelled(context):
+            yield _progress_event(
+                "turn_aborted",
+                "",
+                status="error",
+                workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                metadata={"reason": _query_cancel_reason(context)},
+                timing=turn_trace,
+            ), None
+            return
         if effective_max_tokens != context.max_tokens and not reported_token_clamp:
             reported_token_clamp = True
             yield StatusEvent(
@@ -960,6 +1065,8 @@ async def run_query(
                 "model_request",
                 "正在请求模型...",
                 workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                metadata={"message_count": len(messages)},
+                timing=turn_trace,
             ), None
             model_queue: asyncio.Queue[Any] = asyncio.Queue()
 
@@ -983,17 +1090,49 @@ async def run_query(
                     await model_queue.put(None)
 
             model_task = asyncio.create_task(_produce_model_events())
+            model_get_task: asyncio.Task[Any] | None = None
+            heartbeat_task: asyncio.Task[None] | None = None
+            cancel_task: asyncio.Task[None] | None = (
+                asyncio.create_task(context.cancellation_token.wait())
+                if context.cancellation_token is not None
+                else None
+            )
             try:
                 while True:
-                    try:
-                        event = await asyncio.wait_for(model_queue.get(), timeout=AGENT_PROGRESS_HEARTBEAT_SECONDS)
-                    except asyncio.TimeoutError:
+                    if model_get_task is None:
+                        model_get_task = asyncio.create_task(model_queue.get())
+                    if heartbeat_task is None:
+                        heartbeat_task = asyncio.create_task(asyncio.sleep(AGENT_PROGRESS_HEARTBEAT_SECONDS))
+                    wait_tasks = {model_get_task, heartbeat_task}
+                    if cancel_task is not None:
+                        wait_tasks.add(cancel_task)
+                    done, _ = await asyncio.wait(wait_tasks, return_when=asyncio.FIRST_COMPLETED)
+
+                    if cancel_task is not None and cancel_task in done:
+                        yield _progress_event(
+                            "turn_aborted",
+                            "",
+                            status="error",
+                            workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                            metadata={"reason": _query_cancel_reason(context), "stage": "model_stream"},
+                            timing=turn_trace,
+                        ), None
+                        return
+
+                    if model_get_task in done:
+                        event = model_get_task.result()
+                        model_get_task = None
+                    elif heartbeat_task in done:
+                        heartbeat_task = None
                         yield _progress_event(
                             "heartbeat",
                             "仍在等待模型响应...",
                             status="info",
                             workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                            timing=turn_trace,
                         ), None
+                        continue
+                    else:
                         continue
                     if event is None:
                         break
@@ -1002,7 +1141,12 @@ async def run_query(
                     if isinstance(event, ApiTextDeltaEvent):
                         if not model_stream_reported:
                             model_stream_reported = True
-                            yield _progress_event("model_stream", "模型正在生成回复...", status="info"), None
+                            yield _progress_event(
+                                "model_stream",
+                                "模型正在生成回复...",
+                                status="info",
+                                timing=turn_trace,
+                            ), None
                         yield AssistantTextDelta(text=event.text), None
                         continue
                     if isinstance(event, ApiRetryEvent):
@@ -1032,6 +1176,7 @@ async def run_query(
                             tool_name=event.tool_name,
                             tool_use_id=event.tool_use_id,
                             metadata=event.metadata,
+                            timing=turn_trace,
                         ), None
                         continue
 
@@ -1043,6 +1188,7 @@ async def run_query(
                             tool_name=event.tool_name,
                             tool_use_id=event.tool_use_id,
                             metadata=event.metadata,
+                            timing=turn_trace,
                         ), None
                         continue
 
@@ -1062,15 +1208,31 @@ async def run_query(
                             tool_name=event.tool_name,
                             tool_use_id=event.tool_use_id,
                             metadata=event.metadata,
+                            timing=turn_trace,
                         ), None
                         continue
 
                     if isinstance(event, ApiMessageCompleteEvent):
-                        yield _progress_event("model_response", "模型已规划下一步...", status="success"), None
+                        yield _progress_event(
+                            "model_response",
+                            "模型已规划下一步...",
+                            status="success",
+                            metadata={"stop_reason": event.stop_reason},
+                            timing=turn_trace,
+                        ), None
                         final_message = event.message
                         usage = event.usage
                         continue
             finally:
+                pending_model_wait_tasks = [
+                    pending_task
+                    for pending_task in (model_get_task, heartbeat_task, cancel_task)
+                    if pending_task is not None and not pending_task.done()
+                ]
+                for pending_task in pending_model_wait_tasks:
+                    pending_task.cancel()
+                if pending_model_wait_tasks:
+                    await asyncio.gather(*pending_model_wait_tasks, return_exceptions=True)
                 if not model_task.done():
                     model_task.cancel()
                     await asyncio.gather(model_task, return_exceptions=True)
@@ -1103,6 +1265,14 @@ async def run_query(
                 yield ErrorEvent(message=f"Network error: {error_msg}. Check your internet connection and try again."), None
             else:
                 yield ErrorEvent(message=f"API error: {error_msg}"), None
+            yield _progress_event(
+                "turn_aborted",
+                "",
+                status="error",
+                workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                metadata={"reason": error_msg, "stage": "model_request"},
+                timing=turn_trace,
+            ), None
             return
 
         if final_message is None:
@@ -1140,7 +1310,25 @@ async def run_query(
                     "The turn was ignored to keep the session healthy."
                 )
             ), usage
+            yield _progress_event(
+                "turn_aborted",
+                "",
+                status="error",
+                workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                metadata={"reason": "empty_assistant_message"},
+                timing=turn_trace,
+            ), None
             return
+
+        if not final_message.tool_uses:
+            yield _progress_event(
+                "turn_complete",
+                "",
+                status="success",
+                workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                metadata={"tool_call_count": 0, "usage": usage.model_dump()},
+                timing=turn_trace,
+            ), None
 
         messages.append(final_message)
         yield AssistantTurnComplete(message=final_message, usage=usage), usage
@@ -1161,6 +1349,16 @@ async def run_query(
 
         tool_calls = final_message.tool_uses
         tool_rationale_fallback = final_message.text.strip()
+        if _query_cancelled(context):
+            yield _progress_event(
+                "turn_aborted",
+                "",
+                status="error",
+                workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                metadata={"reason": _query_cancel_reason(context), "stage": "before_tools"},
+                timing=turn_trace,
+            ), None
+            return
 
         if len(tool_calls) == 1:
             # Single tool: sequential (stream events immediately)
@@ -1189,13 +1387,30 @@ async def run_query(
                     }.items()
                     if value
                 },
+                timing=turn_trace,
             ), None
             try:
-                async for progress_event, result in _run_tool_with_progress(context, prepared.tool_name, prepared.tool_use_id, prepared.tool_input):
+                async for progress_event, result in _run_tool_with_progress(
+                    context,
+                    prepared.tool_name,
+                    prepared.tool_use_id,
+                    prepared.tool_input,
+                    timing=turn_trace,
+                ):
                     if progress_event is not None:
                         yield progress_event, None
             except AskUserQuestionPaused:
                 raise
+            except QueryCancelled as exc:
+                yield _progress_event(
+                    "turn_aborted",
+                    "",
+                    status="error",
+                    workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                    metadata={"reason": str(exc) or _query_cancel_reason(context), "stage": "tool_execution"},
+                    timing=turn_trace,
+                ), None
+                return
             except Exception as exc:
                 log.exception("tool execution raised: name=%s id=%s", prepared.tool_name, prepared.tool_use_id)
                 result = ToolResultBlock(
@@ -1224,6 +1439,7 @@ async def run_query(
                 tool_use_id=prepared.tool_use_id,
                 workspace=str((result.result_metadata or {}).get("workspace") or (context.tool_metadata or {}).get("workspace_backend") or ""),
                 metadata=result.result_metadata,
+                timing=turn_trace,
             ), None
             tool_results = [result]
         else:
@@ -1255,14 +1471,53 @@ async def run_query(
                         }.items()
                         if value
                     },
+                    timing=turn_trace,
                 ), None
 
             result_queue: asyncio.Queue[tuple[_PreparedToolCall, AgentProgressEvent | None, ToolResultBlock | BaseException | None]] = asyncio.Queue()
+            execution_group_locks: dict[str, asyncio.Lock] = {}
 
             async def _run(prepared: _PreparedToolCall):
+                group = _tool_execution_group(context, prepared.tool_name)
+                queued_at = time.monotonic()
                 try:
-                    async for progress_event, result in _run_tool_with_progress(context, prepared.tool_name, prepared.tool_use_id, prepared.tool_input):
-                        await result_queue.put((prepared, progress_event, result))
+                    lock = execution_group_locks.setdefault(group, asyncio.Lock()) if group else None
+                    if lock is None:
+                        async for progress_event, result in _run_tool_with_progress(
+                            context,
+                            prepared.tool_name,
+                            prepared.tool_use_id,
+                            prepared.tool_input,
+                            timing=turn_trace,
+                        ):
+                            await result_queue.put((prepared, progress_event, result))
+                    else:
+                        async with lock:
+                            queued_ms = _elapsed_ms(queued_at)
+                            await result_queue.put(
+                                (
+                                    prepared,
+                                    _progress_event(
+                                        "tool_dispatch",
+                                        "",
+                                        status="info",
+                                        tool_name=prepared.tool_name,
+                                        tool_use_id=prepared.tool_use_id,
+                                        workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                                        metadata={"execution_group": group, "queued_ms": queued_ms},
+                                        timing=turn_trace,
+                                    ),
+                                    None,
+                                )
+                            )
+                            async for progress_event, result in _run_tool_with_progress(
+                                context,
+                                prepared.tool_name,
+                                prepared.tool_use_id,
+                                prepared.tool_input,
+                                timing=turn_trace,
+                            ):
+                                await result_queue.put((prepared, progress_event, result))
                 except BaseException as exc:
                     await result_queue.put((prepared, None, exc))
 
@@ -1273,9 +1528,37 @@ async def run_query(
                 if progress_event is not None:
                     yield progress_event, None
                 if result is not None:
+                    if isinstance(result, QueryCancelled):
+                        for running_task in tasks:
+                            if not running_task.done():
+                                running_task.cancel()
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                        yield _progress_event(
+                            "turn_aborted",
+                            "",
+                            status="error",
+                            workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                            metadata={"reason": str(result) or _query_cancel_reason(context), "stage": "tool_execution"},
+                            timing=turn_trace,
+                        ), None
+                        return
                     raw_results_by_id[prepared.tool_use_id] = result
 
             await asyncio.gather(*tasks, return_exceptions=True)
+            cancellation = next(
+                (result for result in raw_results_by_id.values() if isinstance(result, QueryCancelled)),
+                None,
+            )
+            if cancellation is not None:
+                yield _progress_event(
+                    "turn_aborted",
+                    "",
+                    status="error",
+                    workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                    metadata={"reason": str(cancellation) or _query_cancel_reason(context), "stage": "tool_execution"},
+                    timing=turn_trace,
+                ), None
+                return
             tool_results = []
             for prepared in prepared_calls:
                 result = raw_results_by_id.get(prepared.tool_use_id)
@@ -1317,6 +1600,7 @@ async def run_query(
                     tool_use_id=prepared.tool_use_id,
                     workspace=str((result.result_metadata or {}).get("workspace") or (context.tool_metadata or {}).get("workspace_backend") or ""),
                     metadata=result.result_metadata,
+                    timing=turn_trace,
                 ), None
 
         messages.append(ConversationMessage(role="user", content=tool_results))
@@ -1439,6 +1723,9 @@ async def _execute_tool_call(
                 is_error=True,
             )
 
+    if _query_cancelled(context):
+        raise QueryCancelled(_query_cancel_reason(context))
+
     tool_metadata = context.tool_metadata or {}
     existing_reservation = tool_metadata.get("media_billing_reservation")
     media_reservation: dict[str, Any] | None = existing_reservation if isinstance(existing_reservation, dict) else None
@@ -1520,8 +1807,22 @@ async def _execute_tool_call(
                 },
                 hook_executor=context.hook_executor,
                 progress_callback=progress_callback,
+                cancellation_token=context.cancellation_token,
             ),
         )
+    except (QueryCancelled, asyncio.CancelledError):
+        if media_reservation and hook is not None and hasattr(hook, "release_media_tool_usage"):
+            try:
+                await _maybe_await(
+                    hook.release_media_tool_usage(
+                        media_reservation,
+                        reason="tool_cancelled",
+                        tool_metadata={"cancel_reason": _query_cancel_reason(context)},
+                    )
+                )
+            except Exception:
+                log.exception("media usage reservation release failed after cancellation: name=%s id=%s", tool_name, tool_use_id)
+        raise
     finally:
         if media_execution_slot and hook is not None and hasattr(hook, "release_media_execution_slot"):
             try:
@@ -1602,6 +1903,8 @@ async def _run_tool_with_progress(
     tool_name: str,
     tool_use_id: str,
     tool_input: dict[str, object],
+    *,
+    timing: _RunTimingTrace | None = None,
 ):
     progress_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
     started = time.monotonic()
@@ -1620,6 +1923,7 @@ async def _run_tool_with_progress(
             path=str(payload.get("path") or "") or None,
             detail=str(payload.get("detail") or "") or None,
             metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
+            timing=timing,
         )
 
     async def _progress(payload: dict[str, Any]) -> None:
@@ -1636,6 +1940,11 @@ async def _run_tool_with_progress(
     )
     progress_task: asyncio.Task[dict[str, Any]] | None = None
     heartbeat_task: asyncio.Task[None] | None = None
+    cancel_task: asyncio.Task[None] | None = (
+        asyncio.create_task(context.cancellation_token.wait())
+        if context.cancellation_token is not None
+        else None
+    )
     try:
         while not task.done():
             if progress_task is None:
@@ -1644,6 +1953,8 @@ async def _run_tool_with_progress(
                 heartbeat_task = asyncio.create_task(asyncio.sleep(AGENT_PROGRESS_HEARTBEAT_SECONDS))
 
             wait_tasks: set[asyncio.Task[Any]] = {task, progress_task, heartbeat_task}
+            if cancel_task is not None:
+                wait_tasks.add(cancel_task)
             done, _ = await asyncio.wait(wait_tasks, return_when=asyncio.FIRST_COMPLETED)
 
             if progress_task in done:
@@ -1655,6 +1966,21 @@ async def _run_tool_with_progress(
 
             if task in done:
                 break
+
+            if cancel_task is not None and cancel_task in done:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                yield _progress_event(
+                    "tool_aborted",
+                    "",
+                    status="error",
+                    tool_name=tool_name,
+                    tool_use_id=tool_use_id,
+                    workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                    metadata={"reason": _query_cancel_reason(context)},
+                    timing=timing,
+                ), None
+                raise QueryCancelled(_query_cancel_reason(context))
 
             if heartbeat_task in done:
                 heartbeat_task = None
@@ -1670,11 +1996,12 @@ async def _run_tool_with_progress(
                         "engine_elapsed_seconds": round(time.monotonic() - started, 3),
                         "engine_heartbeat_count": heartbeat_count,
                     },
+                    timing=timing,
                 ), None
     finally:
         pending_tasks = [
             pending_task
-            for pending_task in (progress_task, heartbeat_task)
+            for pending_task in (progress_task, heartbeat_task, cancel_task)
             if pending_task is not None and not pending_task.done()
         ]
         for pending_task in pending_tasks:

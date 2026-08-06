@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from openharness.api.client import SupportsStreamingMessages
 from openharness.engine.cost_tracker import CostTracker
@@ -15,7 +15,7 @@ from openharness.config.settings import Settings
 from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
 from openharness.services.autodream.service import schedule_auto_dream
-from openharness.tools.base import ToolRegistry
+from openharness.tools.base import CancellationToken, ToolRegistry
 
 
 class QueryEngine:
@@ -63,6 +63,7 @@ class QueryEngine:
         self._settings = settings
         self._messages: list[ConversationMessage] = []
         self._cost_tracker = CostTracker()
+        self._active_cancellation_token: CancellationToken | None = None
 
     @property
     def messages(self) -> list[ConversationMessage]:
@@ -127,6 +128,11 @@ class QueryEngine:
     def set_permission_checker(self, checker: PermissionChecker) -> None:
         """Update the active permission checker for future turns."""
         self._permission_checker = checker
+
+    def request_cancel(self, reason: str | None = None) -> None:
+        """Request cancellation of the currently running turn, if any."""
+        if self._active_cancellation_token is not None:
+            self._active_cancellation_token.cancel(reason)
 
     def _build_coordinator_context_message(self) -> ConversationMessage | None:
         """Build a synthetic user message carrying coordinator runtime context."""
@@ -249,6 +255,8 @@ class QueryEngine:
                     "prompt": user_message.text,
                 },
             )
+        cancellation_token = CancellationToken()
+        self._active_cancellation_token = cancellation_token
         context = QueryContext(
             api_client=self._api_client,
             tool_registry=self._tool_registry,
@@ -265,6 +273,7 @@ class QueryEngine:
             ask_user_prompt=self._ask_user_prompt,
             hook_executor=self._hook_executor,
             tool_metadata=self._tool_metadata,
+            cancellation_token=cancellation_token,
         )
         query_messages = list(self._messages)
         coordinator_context = self._build_coordinator_context_message()
@@ -278,6 +287,8 @@ class QueryEngine:
                     self._cost_tracker.add(usage)
                 yield event
         finally:
+            if self._active_cancellation_token is cancellation_token:
+                self._active_cancellation_token = None
             await self._update_session_memory()
             await self._extract_durable_memories()
             self._schedule_auto_dream()
@@ -286,6 +297,8 @@ class QueryEngine:
         """Continue an interrupted tool loop without appending a new user message."""
         self._prepare_session_memory()
         self._messages = sanitize_conversation_messages(self._messages)
+        cancellation_token = CancellationToken()
+        self._active_cancellation_token = cancellation_token
         context = QueryContext(
             api_client=self._api_client,
             tool_registry=self._tool_registry,
@@ -302,10 +315,15 @@ class QueryEngine:
             ask_user_prompt=self._ask_user_prompt,
             hook_executor=self._hook_executor,
             tool_metadata=self._tool_metadata,
+            cancellation_token=cancellation_token,
         )
-        async for event, usage in run_query(context, self._messages):
-            if usage is not None:
-                self._cost_tracker.add(usage)
-            yield event
-        await self._update_session_memory()
-        await self._extract_durable_memories()
+        try:
+            async for event, usage in run_query(context, self._messages):
+                if usage is not None:
+                    self._cost_tracker.add(usage)
+                yield event
+        finally:
+            if self._active_cancellation_token is cancellation_token:
+                self._active_cancellation_token = None
+            await self._update_session_memory()
+            await self._extract_durable_memories()
