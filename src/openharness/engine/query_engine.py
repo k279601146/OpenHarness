@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -9,6 +10,12 @@ from openharness.api.client import SupportsStreamingMessages
 from openharness.engine.cost_tracker import CostTracker
 from openharness.coordinator.coordinator_mode import get_coordinator_user_context
 from openharness.engine.messages import ConversationMessage, TextBlock, ToolResultBlock, sanitize_conversation_messages
+from openharness.engine.events import (
+    build_session_event,
+    message_event_payload,
+    stream_event_to_session_event,
+    stream_event_turn_id,
+)
 from openharness.engine.query import AskUserPrompt, PermissionPrompt, QueryContext, remember_user_goal, run_query
 from openharness.engine.stream_events import AssistantTurnComplete, StreamEvent
 from openharness.config.settings import Settings
@@ -16,6 +23,10 @@ from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
 from openharness.services.autodream.service import schedule_auto_dream
 from openharness.tools.base import CancellationToken, ToolRegistry
+from openharness.services.session_storage import append_session_event
+
+
+log = logging.getLogger(__name__)
 
 
 class QueryEngine:
@@ -64,6 +75,7 @@ class QueryEngine:
         self._messages: list[ConversationMessage] = []
         self._cost_tracker = CostTracker()
         self._active_cancellation_token: CancellationToken | None = None
+        self._active_session_turn_id: str | None = None
 
     @property
     def messages(self) -> list[ConversationMessage]:
@@ -163,6 +175,52 @@ class QueryEngine:
             **kwargs,
         )
 
+    def _session_id(self) -> str:
+        return str(self._tool_metadata.get("session_id") or "default")
+
+    def _append_session_event(self, event) -> None:
+        try:
+            append_session_event(
+                cwd=self._cwd,
+                session_id=self._session_id(),
+                event=event,
+            )
+        except Exception:
+            log.debug("failed to append session event", exc_info=True)
+
+    def _record_user_message_submitted(self, user_message: ConversationMessage) -> None:
+        self._append_session_event(
+            build_session_event(
+                "user_message_submitted",
+                session_id=self._session_id(),
+                payload={
+                    "message": message_event_payload(user_message),
+                    "message_count": len(self._messages),
+                },
+            )
+        )
+
+    def _record_continuation_started(self) -> None:
+        self._append_session_event(
+            build_session_event(
+                "continuation_started",
+                session_id=self._session_id(),
+                payload={"message_count": len(self._messages)},
+            )
+        )
+
+    def _record_stream_event(self, event: StreamEvent) -> None:
+        event_turn_id = stream_event_turn_id(event)
+        if event_turn_id:
+            self._active_session_turn_id = event_turn_id
+        session_event = stream_event_to_session_event(
+            event,
+            session_id=self._session_id(),
+            fallback_turn_id=self._active_session_turn_id,
+        )
+        if session_event is not None:
+            self._append_session_event(session_event)
+
     def _prepare_session_memory(self) -> None:
         """Expose file-backed session memory to compaction when enabled."""
 
@@ -247,6 +305,7 @@ class QueryEngine:
         self._prepare_session_memory()
         self._messages = sanitize_conversation_messages(self._messages)
         self._messages.append(user_message)
+        self._record_user_message_submitted(user_message)
         if self._hook_executor is not None:
             await self._hook_executor.execute(
                 HookEvent.USER_PROMPT_SUBMIT,
@@ -285,6 +344,7 @@ class QueryEngine:
                     self._messages = list(query_messages)
                 if usage is not None:
                     self._cost_tracker.add(usage)
+                self._record_stream_event(event)
                 yield event
         finally:
             if self._active_cancellation_token is cancellation_token:
@@ -297,6 +357,7 @@ class QueryEngine:
         """Continue an interrupted tool loop without appending a new user message."""
         self._prepare_session_memory()
         self._messages = sanitize_conversation_messages(self._messages)
+        self._record_continuation_started()
         cancellation_token = CancellationToken()
         self._active_cancellation_token = cancellation_token
         context = QueryContext(
@@ -321,6 +382,7 @@ class QueryEngine:
             async for event, usage in run_query(context, self._messages):
                 if usage is not None:
                     self._cost_tracker.add(usage)
+                self._record_stream_event(event)
                 yield event
         finally:
             if self._active_cancellation_token is cancellation_token:

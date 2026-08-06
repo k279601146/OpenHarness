@@ -1209,6 +1209,128 @@ def _response_event_ref_metadata(event: Any, item: Any | None = None) -> dict[st
     return metadata
 
 
+def _safe_provider_error_field(value: Any, *, limit: int = 240) -> Any:
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        return _short_safe_text(value, limit)
+    if hasattr(value, "model_dump") and callable(getattr(value, "model_dump")):
+        try:
+            dumped = value.model_dump()
+        except Exception:
+            dumped = None
+        if isinstance(dumped, dict):
+            return _safe_provider_error_field(dumped, limit=limit)
+    if hasattr(value, "dict") and callable(getattr(value, "dict")):
+        try:
+            dumped = value.dict()
+        except Exception:
+            dumped = None
+        if isinstance(dumped, dict):
+            return _safe_provider_error_field(dumped, limit=limit)
+    if any(hasattr(value, attr) for attr in ("reason", "code", "status", "message", "type")):
+        attrs: dict[str, Any] = {}
+        for attr in ("reason", "code", "status", "message", "type"):
+            attr_value = getattr(value, attr, None)
+            if attr_value is not None:
+                attrs[attr] = attr_value
+        if attrs:
+            return _safe_provider_error_field(attrs, limit=limit)
+    if isinstance(value, list):
+        safe_items: list[Any] = []
+        for item in value[:10]:
+            safe_item = _safe_provider_error_field(item, limit=limit)
+            if safe_item is not None:
+                safe_items.append(safe_item)
+        return safe_items
+    if isinstance(value, dict):
+        safe: dict[str, Any] = {}
+        for key, item in value.items():
+            safe_key = str(key or "").strip()
+            if not safe_key:
+                continue
+            if safe_key in {"input", "output", "content", "arguments", "reasoning", "text"}:
+                continue
+            safe_item = _safe_provider_error_field(item, limit=limit)
+            if safe_item is not None:
+                safe[safe_key] = safe_item
+        return safe
+    return _short_safe_text(value, limit)
+
+
+def _response_stream_failure_detail(
+    *,
+    event: Any,
+    response_payload: Any,
+    request_id: str,
+    collected_content: str,
+    collected_reasoning: str,
+    function_call_items: list[Any],
+    chat_tool_calls: dict[int, dict[str, Any]],
+    hosted_tool_events_seen: bool,
+    finish_reason: Any,
+) -> dict[str, Any]:
+    detail: dict[str, Any] = {
+        "request_id": request_id,
+        "event_type": _response_event_type(event),
+        "event_ref": _response_event_ref_metadata(event),
+        "status": _short_safe_text(_usage_attr(response_payload, "status"), 80) if response_payload is not None else None,
+        "finish_reason": _short_safe_text(finish_reason, 80) if finish_reason is not None else None,
+        "content_chars": len(collected_content),
+        "reasoning_chars": len(collected_reasoning),
+        "tool_call_count": len(function_call_items) + len(chat_tool_calls),
+        "hosted_tool_events_seen": hosted_tool_events_seen,
+    }
+    incomplete_details = _usage_attr(response_payload, "incomplete_details")
+    if incomplete_details is not None:
+        detail["incomplete_details"] = _safe_provider_error_field(incomplete_details, limit=240)
+    error = _usage_attr(response_payload, "error")
+    if error is not None:
+        detail["error"] = _safe_provider_error_field(error, limit=240)
+    usage_snapshot = _usage_snapshot_from_responses_response(response_payload)
+    usage = usage_snapshot.model_dump()
+    if any(value not in (None, 0) for value in usage.values()):
+        detail["usage"] = usage
+    return {key: value for key, value in detail.items() if value not in (None, "", [], {})}
+
+
+def _raise_response_stream_failure(
+    *,
+    event: Any,
+    request_id: str,
+    response_payload: Any,
+    collected_content: str,
+    collected_reasoning: str,
+    function_call_items: list[Any],
+    chat_tool_calls: dict[int, dict[str, Any]],
+    hosted_tool_events_seen: bool,
+    finish_reason: Any,
+) -> None:
+    detail = _response_stream_failure_detail(
+        event=event,
+        response_payload=response_payload,
+        request_id=request_id,
+        collected_content=collected_content,
+        collected_reasoning=collected_reasoning,
+        function_call_items=function_call_items,
+        chat_tool_calls=chat_tool_calls,
+        hosted_tool_events_seen=hosted_tool_events_seen,
+        finish_reason=finish_reason,
+    )
+    message = _short_safe_text(_usage_attr(response_payload, "error") or _response_event_attr(event, "error"), 240)
+    if not message:
+        incomplete_details = detail.get("incomplete_details")
+        if isinstance(incomplete_details, dict):
+            reason = incomplete_details.get("reason") or incomplete_details.get("code")
+            if reason:
+                message = f"Responses API stream ended with {_response_event_type(event)} ({reason})"
+    if not message:
+        message = f"Responses API stream ended with {_response_event_type(event)}"
+    raise RequestFailure(message, body=detail)
+
+
 def _hosted_tool_use_id(event: Any, tool_name: str, item: Any | None = None) -> str:
     for value in (
         _response_event_attr(event, "item_id"),
@@ -2123,8 +2245,17 @@ class OpenAICompatibleClient:
 
                 if event_type in {"response.failed", "response.incomplete"}:
                     response_payload = _response_event_attr(event, "response", {})
-                    error = _usage_attr(response_payload, "error") or _response_event_attr(event, "error")
-                    raise RequestFailure(str(error or f"Responses API stream ended with {event_type}"))
+                    _raise_response_stream_failure(
+                        event=event,
+                        request_id=request_id,
+                        response_payload=response_payload,
+                        collected_content=collected_content,
+                        collected_reasoning=collected_reasoning,
+                        function_call_items=function_call_items,
+                        chat_tool_calls=chat_tool_calls,
+                        hosted_tool_events_seen=hosted_tool_events_seen,
+                        finish_reason=finish_reason,
+                    )
 
                 if event_type == "error":
                     raise RequestFailure(str(_response_event_attr(event, "message", event)))
@@ -2322,7 +2453,8 @@ class OpenAICompatibleClient:
             return AuthenticationFailure(msg)
         if status == 429:
             return RateLimitFailure(msg)
-        return RequestFailure(msg)
+        body = getattr(exc, "body", None)
+        return RequestFailure(msg, status_code=status if isinstance(status, int) else None, body=body if isinstance(body, dict) else None)
 
 
 # Matches complete <think>…</think> blocks (DOTALL so newlines are included).

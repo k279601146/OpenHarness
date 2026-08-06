@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 
 class OpenHarnessApiError(RuntimeError):
     """Base class for upstream API failures."""
@@ -17,6 +19,17 @@ class RateLimitFailure(OpenHarnessApiError):
 
 class RequestFailure(OpenHarnessApiError):
     """Raised for generic request or transport failures."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        body: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.body = body
 
 
 class FallbackTriggeredError(OpenHarnessApiError):

@@ -8,6 +8,7 @@ import httpx
 
 import pytest
 from openai import APITimeoutError
+from openai.types.responses.response import IncompleteDetails
 
 import openharness.api.openai_client as openai_client_module
 from openharness.api.client import (
@@ -1252,6 +1253,46 @@ class TestStreamMessageTokenParams:
 
         assert len(fake_sdk.responses.calls) == 1
         assert fake_sdk.responses.calls[0]["tools"][0]["filters"] == {"allowed_domains": ["openai.com"]}
+
+    @pytest.mark.asyncio
+    async def test_responses_incomplete_exposes_structured_failure_detail(self):
+        client = OpenAICompatibleClient(api_key="test-key", base_url="http://localhost:3000/v1")
+        fake_sdk = _FakeOpenAIClient([
+            {
+                "type": "response.created",
+                "item_id": "resp_1",
+                "sequence_number": 1,
+            },
+            {
+                "type": "response.incomplete",
+                "item_id": "resp_1",
+                "sequence_number": 2,
+                "response": {
+                    "status": "incomplete",
+                    "usage": {"input_tokens": 12, "output_tokens": 34},
+                    "incomplete_details": IncompleteDetails(reason="max_output_tokens"),
+                },
+            },
+        ])
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="gpt-5.5",
+            messages=[ConversationMessage.from_user_text("Explain the failure")],
+        )
+
+        with pytest.raises(RequestFailure) as exc_info:
+            [event async for event in client.stream_message(request)]
+
+        detail = exc_info.value.body
+        assert detail is not None
+        assert detail["event_type"] == "response.incomplete"
+        assert detail["event_ref"]["item_id"] == "resp_1"
+        assert detail["incomplete_details"]["reason"] == "max_output_tokens"
+        assert detail["usage"]["input_tokens"] == 12
+        assert detail["usage"]["output_tokens"] == 34
+        assert "output" not in detail
+        assert "content" not in detail
 
     @pytest.mark.asyncio
     async def test_stream_translates_hosted_non_function_tools_without_local_tool_calls(self):

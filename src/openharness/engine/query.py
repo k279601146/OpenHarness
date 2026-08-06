@@ -2,29 +2,20 @@
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import logging
 import os
 import re
 import time
-from dataclasses import dataclass, field, replace
+import asyncio
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 from uuid import uuid4
 
 from pydantic import ValidationError
 
-from openharness.api.client import (
-    ApiMessageCompleteEvent,
-    ApiMessageRequest,
-    ApiRetryEvent,
-    ApiTextDeltaEvent,
-    ApiToolCallCompletedEvent,
-    ApiToolCallProgressEvent,
-    ApiToolCallStartedEvent,
-    SupportsStreamingMessages,
-)
+from openharness.api.client import SupportsStreamingMessages
 from openharness.api.usage import UsageSnapshot
 from openharness.config.paths import get_data_dir
 from openharness.engine.messages import (
@@ -33,7 +24,6 @@ from openharness.engine.messages import (
 )
 from openharness.engine.stream_events import (
     AgentProgressEvent,
-    AssistantTextDelta,
     AssistantTurnComplete,
     CompactProgressEvent,
     ErrorEvent,
@@ -41,6 +31,14 @@ from openharness.engine.stream_events import (
     StreamEvent,
     ToolExecutionCompleted,
     ToolExecutionStarted,
+)
+from openharness.engine.model_turn import ModelTurnComplete, stream_model_turn
+from openharness.engine.tool_progress import run_tool_with_progress
+from openharness.engine.turn_state import (
+    RunTimingTrace as _RunTimingTrace,
+    progress_event as _progress_event,
+    query_cancel_reason as _query_cancel_reason,
+    query_cancelled as _query_cancelled,
 )
 from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
@@ -78,32 +76,6 @@ AGENT_PROGRESS_HEARTBEAT_SECONDS = 8.0
 
 def _elapsed_ms(started_at: float) -> int:
     return max(0, int((time.monotonic() - started_at) * 1000))
-
-
-@dataclass
-class _RunTimingTrace:
-    """Per-turn timing metadata attached to progress events."""
-
-    turn_id: str
-    turn_index: int
-    started_at: float = field(default_factory=time.monotonic)
-    event_seq: int = 0
-    phase_started_at: dict[str, float] = field(default_factory=dict)
-
-    def metadata(self, phase: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
-        now = time.monotonic()
-        phase_started_at = self.phase_started_at.setdefault(phase, now)
-        self.event_seq += 1
-        data: dict[str, Any] = {
-            "turn_id": self.turn_id,
-            "turn_index": self.turn_index,
-            "event_seq": self.event_seq,
-            "elapsed_ms": max(0, int((now - self.started_at) * 1000)),
-            "phase_elapsed_ms": max(0, int((now - phase_started_at) * 1000)),
-        }
-        if extra:
-            data.update(extra)
-        return data
 
 
 def _format_tool_validation_error(tool_name: str, exc: ValidationError) -> str:
@@ -147,32 +119,40 @@ def _format_tool_validation_error(tool_name: str, exc: ValidationError) -> str:
     return f"invalid_canonical_request: {tool_name} input does not match its tool schema. {detail}.{retry_hint}"
 
 
-def _progress_event(
-    phase: str,
-    message: str,
-    *,
-    status: str = "running",
-    tool_name: str | None = None,
-    tool_use_id: str | None = None,
-    workspace: str | None = None,
-    path: str | None = None,
-    detail: str | None = None,
-    metadata: dict[str, Any] | None = None,
-    timing: _RunTimingTrace | None = None,
-) -> AgentProgressEvent:
-    if timing is not None:
-        metadata = timing.metadata(phase, metadata)
-    return AgentProgressEvent(
-        phase=phase,
-        status=status,  # type: ignore[arg-type]
-        message=message,
-        tool_name=tool_name,
-        tool_use_id=tool_use_id,
-        workspace=workspace,
-        path=path,
-        detail=detail,
-        metadata=metadata,
-    )
+def _safe_request_failure_detail(exc: Exception) -> dict[str, Any] | None:
+    body = getattr(exc, "body", None)
+    if not isinstance(body, dict) or not body:
+        return None
+    detail: dict[str, Any] = {}
+    for key in ("event_type", "status", "finish_reason", "request_id", "content_chars", "reasoning_chars", "tool_call_count", "hosted_tool_events_seen"):
+        value = body.get(key)
+        if value not in (None, "", [], {}):
+            detail[key] = value
+    event_ref = body.get("event_ref")
+    if isinstance(event_ref, dict) and event_ref:
+        detail["event_ref"] = {
+            key: value
+            for key, value in event_ref.items()
+            if value not in (None, "", [], {})
+        }
+    incomplete_details = body.get("incomplete_details")
+    if isinstance(incomplete_details, dict) and incomplete_details:
+        detail["incomplete_details"] = {
+            key: value
+            for key, value in incomplete_details.items()
+            if value not in (None, "", [], {})
+        }
+    elif isinstance(incomplete_details, str) and incomplete_details:
+        match = re.search(r"reason=['\"]?([a-z0-9_:-]+)['\"]?", incomplete_details, re.IGNORECASE)
+        if match:
+            detail["incomplete_details"] = {"reason": match.group(1)}
+    error = body.get("error")
+    if error not in (None, "", [], {}):
+        detail["error"] = error
+    usage = body.get("usage")
+    if isinstance(usage, dict) and usage:
+        detail["usage"] = usage
+    return detail or None
 
 
 def _concrete_path(path: Path) -> Path:
@@ -235,16 +215,6 @@ def _tool_unavailable_message(tool_name: str, context: QueryContext) -> str:
         f"{tool_name} is not available for the active model. "
         "Use the model's native image understanding instead."
     )
-
-
-def _query_cancelled(context: QueryContext) -> bool:
-    token = context.cancellation_token
-    return bool(token is not None and token.is_cancelled())
-
-
-def _query_cancel_reason(context: QueryContext) -> str:
-    token = context.cancellation_token
-    return (token.reason if token is not None else None) or "cancelled"
 
 
 CORE_TOOL_SCHEMA_NAMES = {
@@ -1056,188 +1026,23 @@ async def run_query(
             messages[:] = compacted_messages
         # ---------------------------------------------------------------
 
-        final_message: ConversationMessage | None = None
-        usage = UsageSnapshot()
-        model_stream_reported = False
-
+        model_result: ModelTurnComplete | None = None
         try:
-            yield _progress_event(
-                "model_request",
-                "正在请求模型...",
-                workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
-                metadata={"message_count": len(messages)},
+            async for item in stream_model_turn(
+                context=context,
+                messages=messages,
+                effective_max_tokens=effective_max_tokens,
+                tool_schemas=_tool_schemas_for_context(context),
+                heartbeat_seconds=AGENT_PROGRESS_HEARTBEAT_SECONDS,
                 timing=turn_trace,
-            ), None
-            model_queue: asyncio.Queue[Any] = asyncio.Queue()
-
-            async def _produce_model_events() -> None:
-                try:
-                    async for stream_event in context.api_client.stream_message(
-                        ApiMessageRequest(
-                            model=context.model,
-                            messages=messages,
-                            system_prompt=context.system_prompt,
-                            max_tokens=effective_max_tokens,
-                            tools=_tool_schemas_for_context(context),
-                            effort=context.effort,
-                            openai_web_search=(context.tool_metadata or {}).get("openai_web_search") if isinstance((context.tool_metadata or {}).get("openai_web_search"), dict) else None,
-                        )
-                    ):
-                        await model_queue.put(stream_event)
-                except BaseException as exc:
-                    await model_queue.put(exc)
-                finally:
-                    await model_queue.put(None)
-
-            model_task = asyncio.create_task(_produce_model_events())
-            model_get_task: asyncio.Task[Any] | None = None
-            heartbeat_task: asyncio.Task[None] | None = None
-            cancel_task: asyncio.Task[None] | None = (
-                asyncio.create_task(context.cancellation_token.wait())
-                if context.cancellation_token is not None
-                else None
-            )
-            try:
-                while True:
-                    if model_get_task is None:
-                        model_get_task = asyncio.create_task(model_queue.get())
-                    if heartbeat_task is None:
-                        heartbeat_task = asyncio.create_task(asyncio.sleep(AGENT_PROGRESS_HEARTBEAT_SECONDS))
-                    wait_tasks = {model_get_task, heartbeat_task}
-                    if cancel_task is not None:
-                        wait_tasks.add(cancel_task)
-                    done, _ = await asyncio.wait(wait_tasks, return_when=asyncio.FIRST_COMPLETED)
-
-                    if cancel_task is not None and cancel_task in done:
-                        yield _progress_event(
-                            "turn_aborted",
-                            "",
-                            status="error",
-                            workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
-                            metadata={"reason": _query_cancel_reason(context), "stage": "model_stream"},
-                            timing=turn_trace,
-                        ), None
-                        return
-
-                    if model_get_task in done:
-                        event = model_get_task.result()
-                        model_get_task = None
-                    elif heartbeat_task in done:
-                        heartbeat_task = None
-                        yield _progress_event(
-                            "heartbeat",
-                            "仍在等待模型响应...",
-                            status="info",
-                            workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
-                            timing=turn_trace,
-                        ), None
-                        continue
-                    else:
-                        continue
-                    if event is None:
-                        break
-                    if isinstance(event, BaseException):
-                        raise event
-                    if isinstance(event, ApiTextDeltaEvent):
-                        if not model_stream_reported:
-                            model_stream_reported = True
-                            yield _progress_event(
-                                "model_stream",
-                                "模型正在生成回复...",
-                                status="info",
-                                timing=turn_trace,
-                            ), None
-                        yield AssistantTextDelta(text=event.text), None
-                        continue
-                    if isinstance(event, ApiRetryEvent):
-                        yield StatusEvent(
-                            message=(
-                                f"Request failed; retrying in {event.delay_seconds:.1f}s "
-                                f"(attempt {event.attempt + 1} of {event.max_attempts}): {event.message}"
-                            ),
-                            kind="model_retrying",
-                            attempt=event.attempt + 1,
-                            max_attempts=event.max_attempts,
-                            delay_seconds=event.delay_seconds,
-                            detail=event.message,
-                        ), None
-                        continue
-
-                    if isinstance(event, ApiToolCallStartedEvent):
-                        yield ToolExecutionStarted(
-                            tool_name=event.tool_name,
-                            tool_input=event.tool_input,
-                            tool_use_id=event.tool_use_id,
-                        ), None
-                        yield _progress_event(
-                            "hosted_tool_start",
-                            event.message or f"正在执行托管工具 {event.tool_name}...",
-                            status=event.status,
-                            tool_name=event.tool_name,
-                            tool_use_id=event.tool_use_id,
-                            metadata=event.metadata,
-                            timing=turn_trace,
-                        ), None
-                        continue
-
-                    if isinstance(event, ApiToolCallProgressEvent):
-                        yield _progress_event(
-                            "hosted_tool_progress",
-                            event.message or f"托管工具 {event.tool_name} 正在执行...",
-                            status=event.status,
-                            tool_name=event.tool_name,
-                            tool_use_id=event.tool_use_id,
-                            metadata=event.metadata,
-                            timing=turn_trace,
-                        ), None
-                        continue
-
-                    if isinstance(event, ApiToolCallCompletedEvent):
-                        is_error = event.status == "error"
-                        yield ToolExecutionCompleted(
-                            tool_name=event.tool_name,
-                            output=event.message or f"Hosted tool {event.tool_name} completed.",
-                            is_error=is_error,
-                            metadata=event.metadata,
-                            tool_use_id=event.tool_use_id,
-                        ), None
-                        yield _progress_event(
-                            "hosted_tool_complete",
-                            event.message or f"托管工具 {event.tool_name} 执行{'失败' if is_error else '完成'}",
-                            status="error" if is_error else "success",
-                            tool_name=event.tool_name,
-                            tool_use_id=event.tool_use_id,
-                            metadata=event.metadata,
-                            timing=turn_trace,
-                        ), None
-                        continue
-
-                    if isinstance(event, ApiMessageCompleteEvent):
-                        yield _progress_event(
-                            "model_response",
-                            "模型已规划下一步...",
-                            status="success",
-                            metadata={"stop_reason": event.stop_reason},
-                            timing=turn_trace,
-                        ), None
-                        final_message = event.message
-                        usage = event.usage
-                        continue
-            finally:
-                pending_model_wait_tasks = [
-                    pending_task
-                    for pending_task in (model_get_task, heartbeat_task, cancel_task)
-                    if pending_task is not None and not pending_task.done()
-                ]
-                for pending_task in pending_model_wait_tasks:
-                    pending_task.cancel()
-                if pending_model_wait_tasks:
-                    await asyncio.gather(*pending_model_wait_tasks, return_exceptions=True)
-                if not model_task.done():
-                    model_task.cancel()
-                    await asyncio.gather(model_task, return_exceptions=True)
+            ):
+                if isinstance(item, ModelTurnComplete):
+                    model_result = item
+                    continue
+                yield item
         except Exception as exc:
             error_msg = str(exc)
+            failure_detail = _safe_request_failure_detail(exc)
             if _is_completion_token_limit_error(exc):
                 supported_limit = _extract_completion_token_limit(exc)
                 if supported_limit is not None and effective_max_tokens > supported_limit:
@@ -1262,21 +1067,31 @@ async def run_query(
                 if was_compacted:
                     continue
             if "connect" in error_msg.lower() or "timeout" in error_msg.lower() or "network" in error_msg.lower():
-                yield ErrorEvent(message=f"Network error: {error_msg}. Check your internet connection and try again."), None
+                yield ErrorEvent(
+                    message=f"Network error: {error_msg}. Check your internet connection and try again.",
+                    detail=failure_detail,
+                ), None
             else:
-                yield ErrorEvent(message=f"API error: {error_msg}"), None
+                yield ErrorEvent(message=f"API error: {error_msg}", detail=failure_detail), None
+            turn_metadata: dict[str, Any] = {"reason": error_msg, "stage": "model_request"}
+            if failure_detail:
+                turn_metadata["provider_error_detail"] = failure_detail
             yield _progress_event(
                 "turn_aborted",
                 "",
                 status="error",
                 workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
-                metadata={"reason": error_msg, "stage": "model_request"},
+                metadata=turn_metadata,
                 timing=turn_trace,
             ), None
             return
 
-        if final_message is None:
+        if model_result is None:
+            if _query_cancelled(context):
+                return
             raise RuntimeError("Model stream finished without a final message")
+        final_message = model_result.message
+        usage = model_result.usage
 
         
         coordinator_context_message: ConversationMessage | None = None
@@ -1906,141 +1721,18 @@ async def _run_tool_with_progress(
     *,
     timing: _RunTimingTrace | None = None,
 ):
-    progress_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-    started = time.monotonic()
-    heartbeat_count = 0
-    progress_event_count = 0
-    pending_progress_count = 0
-
-    def _progress_payload_event(payload: dict[str, Any]) -> AgentProgressEvent:
-        return _progress_event(
-            str(payload.get("phase") or "tool_progress"),
-            str(payload.get("message") or f"{tool_name} 正在运行..."),
-            status=str(payload.get("status") or "running"),
-            tool_name=str(payload.get("tool_name") or tool_name),
-            tool_use_id=str(payload.get("tool_use_id") or tool_use_id),
-            workspace=str(payload.get("workspace") or (context.tool_metadata or {}).get("workspace_backend") or ""),
-            path=str(payload.get("path") or "") or None,
-            detail=str(payload.get("detail") or "") or None,
-            metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
-            timing=timing,
-        )
-
-    async def _progress(payload: dict[str, Any]) -> None:
-        await progress_queue.put(payload)
-
-    task = asyncio.create_task(
-        _execute_tool_call(
-            context,
-            tool_name,
-            tool_use_id,
-            tool_input,
-            progress_callback=_progress,
-        )
-    )
-    progress_task: asyncio.Task[dict[str, Any]] | None = None
-    heartbeat_task: asyncio.Task[None] | None = None
-    cancel_task: asyncio.Task[None] | None = (
-        asyncio.create_task(context.cancellation_token.wait())
-        if context.cancellation_token is not None
-        else None
-    )
-    try:
-        while not task.done():
-            if progress_task is None:
-                progress_task = asyncio.create_task(progress_queue.get())
-            if heartbeat_task is None:
-                heartbeat_task = asyncio.create_task(asyncio.sleep(AGENT_PROGRESS_HEARTBEAT_SECONDS))
-
-            wait_tasks: set[asyncio.Task[Any]] = {task, progress_task, heartbeat_task}
-            if cancel_task is not None:
-                wait_tasks.add(cancel_task)
-            done, _ = await asyncio.wait(wait_tasks, return_when=asyncio.FIRST_COMPLETED)
-
-            if progress_task in done:
-                payload = progress_task.result()
-                progress_task = None
-                progress_event_count += 1
-                yield _progress_payload_event(payload), None
-                continue
-
-            if task in done:
-                break
-
-            if cancel_task is not None and cancel_task in done:
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
-                yield _progress_event(
-                    "tool_aborted",
-                    "",
-                    status="error",
-                    tool_name=tool_name,
-                    tool_use_id=tool_use_id,
-                    workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
-                    metadata={"reason": _query_cancel_reason(context)},
-                    timing=timing,
-                ), None
-                raise QueryCancelled(_query_cancel_reason(context))
-
-            if heartbeat_task in done:
-                heartbeat_task = None
-                heartbeat_count += 1
-                yield _progress_event(
-                    "heartbeat",
-                    f"工具 {tool_name} 仍在运行...",
-                    status="info",
-                    tool_name=tool_name,
-                    tool_use_id=tool_use_id,
-                    workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
-                    metadata={
-                        "engine_elapsed_seconds": round(time.monotonic() - started, 3),
-                        "engine_heartbeat_count": heartbeat_count,
-                    },
-                    timing=timing,
-                ), None
-    finally:
-        pending_tasks = [
-            pending_task
-            for pending_task in (progress_task, heartbeat_task, cancel_task)
-            if pending_task is not None and not pending_task.done()
-        ]
-        for pending_task in pending_tasks:
-            pending_task.cancel()
-        if pending_tasks:
-            await asyncio.gather(*pending_tasks, return_exceptions=True)
-
-    while not progress_queue.empty():
-        payload = progress_queue.get_nowait()
-        progress_event_count += 1
-        pending_progress_count += 1
-        yield _progress_payload_event(payload), None
-    try:
-        result = await task
-    except Exception:
-        elapsed_seconds = time.monotonic() - started
-        log.debug(
-            "tool progress wait failed: name=%s id=%s elapsed=%.3fs heartbeats=%d progress_events=%d pending_progress=%d",
-            tool_name,
-            tool_use_id,
-            elapsed_seconds,
-            heartbeat_count,
-            progress_event_count,
-            pending_progress_count,
-            exc_info=True,
-        )
-        raise
-    else:
-        elapsed_seconds = time.monotonic() - started
-        log.debug(
-            "tool progress wait complete: name=%s id=%s elapsed=%.3fs heartbeats=%d progress_events=%d pending_progress=%d",
-            tool_name,
-            tool_use_id,
-            elapsed_seconds,
-            heartbeat_count,
-            progress_event_count,
-            pending_progress_count,
-        )
-    yield None, result
+    async for event, result in run_tool_with_progress(
+        context,
+        tool_name,
+        tool_use_id,
+        tool_input,
+        execute_tool_call=_execute_tool_call,
+        query_cancelled_error=QueryCancelled,
+        heartbeat_seconds=AGENT_PROGRESS_HEARTBEAT_SECONDS,
+        logger=log,
+        timing=timing,
+    ):
+        yield event, result
 
 
 async def _maybe_await(value: Any) -> Any:

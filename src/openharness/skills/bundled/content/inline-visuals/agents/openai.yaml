@@ -1,4 +1,0 @@
-interface:
-  display_name: "Inline Visuals"
-  short_description: "Render chat answers as safe inline visuals."
-  default_prompt: "Use $inline-visuals to turn this explanation into a safe inline visual message."

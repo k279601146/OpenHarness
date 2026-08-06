@@ -8,8 +8,11 @@ from openharness.services.compact import (
     summarize_messages,
 )
 from openharness.services.session_storage import (
+    append_session_event,
     export_session_markdown,
+    get_session_event_log_path,
     get_project_session_dir,
+    load_session_events,
     load_session_snapshot,
     save_session_snapshot,
 )
@@ -23,7 +26,10 @@ __all__ = [
     "estimate_message_tokens",
     "estimate_tokens",
     "export_session_markdown",
+    "append_session_event",
+    "get_session_event_log_path",
     "get_project_session_dir",
+    "load_session_events",
     "load_session_snapshot",
     "save_session_snapshot",
     "summarize_messages",

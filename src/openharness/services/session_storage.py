@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import time
 from hashlib import sha1
 from pathlib import Path
@@ -12,7 +14,9 @@ from uuid import uuid4
 from openharness.api.usage import UsageSnapshot
 from openharness.config.paths import get_sessions_dir
 from openharness.engine.messages import ConversationMessage, sanitize_conversation_messages
+from openharness.engine.events import SessionEvent, dumps_event_record, sanitize_event_payload
 from openharness.utils.fs import atomic_write_text
+from openharness.utils.file_lock import exclusive_file_lock
 
 
 PERSISTED_TOOL_METADATA_KEYS = (
@@ -58,6 +62,64 @@ def get_project_session_dir(cwd: str | Path) -> Path:
     session_dir = get_sessions_dir() / f"{path.name}-{digest}"
     session_dir.mkdir(parents=True, exist_ok=True)
     return session_dir
+
+
+def _safe_session_id(session_id: str | None) -> str:
+    raw = str(session_id or "default").strip() or "default"
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw)
+    return safe[:80] or "default"
+
+
+def get_session_event_log_path(cwd: str | Path, session_id: str | None) -> Path:
+    """Return the append-only JSONL event log path for a session."""
+    return get_project_session_dir(cwd) / f"session-{_safe_session_id(session_id)}.events.jsonl"
+
+
+def append_session_event(
+    *,
+    cwd: str | Path,
+    session_id: str | None,
+    event: SessionEvent | dict[str, Any],
+) -> Path:
+    """Append one sanitized session event record as JSONL."""
+    path = get_session_event_log_path(cwd, session_id)
+    if isinstance(event, SessionEvent):
+        record = event.to_record()
+    else:
+        record = dict(event)
+        record["payload"] = sanitize_event_payload(record.get("payload", {}))
+    line = dumps_event_record(record) + "\n"
+    with exclusive_file_lock(path.with_suffix(path.suffix + ".lock")):
+        with path.open("a", encoding="utf-8", newline="\n") as file:
+            file.write(line)
+            file.flush()
+            os.fsync(file.fileno())
+    return path
+
+
+def load_session_events(
+    cwd: str | Path,
+    session_id: str | None,
+    *,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Load persisted session events from the append-only JSONL log."""
+    path = get_session_event_log_path(cwd, session_id)
+    if not path.exists():
+        return []
+    events: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    if limit is not None and limit >= 0:
+        return events[-limit:]
+    return events
 
 
 def save_session_snapshot(

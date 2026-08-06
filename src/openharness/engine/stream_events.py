@@ -77,6 +77,7 @@ class ErrorEvent:
 
     message: str
     recoverable: bool = True
+    detail: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

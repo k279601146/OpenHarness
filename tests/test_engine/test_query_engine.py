@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -38,6 +39,7 @@ from openharness.tasks import get_task_manager
 from openharness.tools import create_default_tool_registry
 from openharness.tools.ask_user_question_tool import AskUserQuestionPaused
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
+from openharness.services.session_storage import load_session_events
 from openharness.tools.glob_tool import GlobTool
 from openharness.tools.grep_tool import GrepTool
 from pydantic import BaseModel
@@ -313,6 +315,51 @@ async def test_query_engine_plain_text_reply(tmp_path: Path, monkeypatch):
     assert engine.total_usage.input_tokens == 10
     assert engine.total_usage.output_tokens == 5
     assert len(engine.messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_query_engine_appends_session_event_log(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[TextBlock(text="Hello from the model.")],
+                    ),
+                    usage=UsageSnapshot(input_tokens=10, output_tokens=5),
+                )
+            ]
+        ),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        tool_metadata={"session_id": "session-event-test"},
+    )
+
+    events = [event async for event in engine.submit_message("hello Authorization: Bearer abcdefghijklmnopqrstuvwxyz")]
+
+    assert any(isinstance(event, AssistantTurnComplete) for event in events)
+    records = load_session_events(tmp_path, "session-event-test")
+    event_types = [record["event_type"] for record in records]
+    serialized = json.dumps(records, ensure_ascii=False)
+    assert "user_message_submitted" in event_types
+    assert "assistant_text_delta" in event_types
+    assert "assistant_turn_complete" in event_types
+    assert "hello Authorization" not in serialized
+    assert "Hello from the model." not in serialized
+    assert "abcdefghijklmnopqrstuvwxyz" not in serialized
+    turn_ids = {
+        record["turn_id"]
+        for record in records
+        if record["event_type"] in {"assistant_text_delta", "assistant_turn_complete"}
+    }
+    assert len(turn_ids) == 1
+    assert next(iter(turn_ids))
 
 
 @pytest.mark.asyncio
