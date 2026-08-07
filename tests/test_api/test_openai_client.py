@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import httpx
 
@@ -30,6 +31,7 @@ from openharness.api.openai_client import (
     _looks_like_service_tier_unsupported,
     _prompt_cache_params_for_request,
     _reasoning_effort_param_for_model,
+    _message_from_responses_response,
     _responses_reasoning_param_for_model,
     _service_tier_param,
     _strip_service_tier_param,
@@ -1663,3 +1665,51 @@ class TestReasoningContentEmission:
         msg = ConversationMessage(role="assistant", content=[TextBlock(text="hi")])
         out = _convert_assistant_message(msg)
         assert "reasoning_content" not in out
+
+
+class TestResponsesReasoningRoundTrip:
+    def test_converts_assistant_reasoning_into_responses_input(self):
+        msg = ConversationMessage(
+            role="assistant",
+            content=[
+                TextBlock(text="answer"),
+                ToolUseBlock(id="tool_1", name="read_file", input={"path": "x"}),
+            ],
+        )
+        msg._reasoning = "thinking..."  # type: ignore[attr-defined]
+
+        out = _convert_messages_to_responses_input([msg])
+
+        assert out[0] == {
+            "type": "reasoning",
+            "content": [{"type": "reasoning_text", "text": "thinking..."}],
+        }
+        assert out[1] == {
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "answer"}],
+        }
+        assert out[2] == {
+            "type": "function_call",
+            "call_id": "tool_1",
+            "name": "read_file",
+            "arguments": json.dumps({"path": "x"}),
+        }
+
+    def test_reads_reasoning_back_from_responses_output(self):
+        response = SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="reasoning",
+                    content=[SimpleNamespace(type="reasoning_text", text="thinking...")],
+                ),
+                SimpleNamespace(
+                    type="message",
+                    content=[SimpleNamespace(type="output_text", text="answer")],
+                ),
+            ]
+        )
+
+        message = _message_from_responses_response(response)
+
+        assert message.text == "answer"
+        assert getattr(message, "_reasoning") == "thinking..."

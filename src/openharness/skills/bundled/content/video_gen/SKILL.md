@@ -10,6 +10,7 @@ Use this skill to decide whether a request should become a video generation requ
 ## Core Rules
 
 - Call `generate_video` for new video clips, animating a still image, interpolating between first and last frames, or using image/video/audio references.
+- After this skill is loaded, call the exact `generate_video` tool directly when video generation is needed. Do not use `tool_search`, shell commands, or filesystem scans to rediscover the video generation tool.
 - Keep the tool request canonical: describe user intent, not provider implementation details.
 - Do not include provider names, upstream model names, base URLs, API keys, CLI commands, output paths, local filesystem paths, or adapter fields in the request.
 - Do not use or mention deprecated video CLI tools.
@@ -19,6 +20,7 @@ Use this skill to decide whether a request should become a video generation requ
 
 Convert the user request into a concise production brief:
 
+- `prompt`: final user-visible video instruction. This is the required top-level generation prompt; it must not be nested inside `brief` or `output`.
 - `purpose`: why the clip exists, such as social ad, product reveal, story beat, or canvas asset.
 - `subject`: main person, product, place, or object.
 - `scene`: location, environment, time period, and action context.
@@ -29,6 +31,14 @@ Convert the user request into a concise production brief:
 - `constraints`: must-preserve identity, brand, text, safety, aspect, timing, or platform limits.
 
 Keep the final prompt direct and production-ready. Avoid stuffing unrelated analysis into the prompt.
+
+## Canonical Field Reminders
+
+- `prompt` is required at the top level and must be non-empty.
+- `brief` and `output` are required nested objects; use empty objects when there is no detail.
+- Use `output.duration_seconds` for video length. Do not use `output.duration`.
+- Use `output.count` only for the requested number of videos.
+- Do not pass provider-native fields, adapter fields, or old CLI fields.
 
 ## Reference Roles
 
@@ -57,7 +67,9 @@ Do not include provider-native fields or upstream implementation details in the 
 
 ## Seedance Expert Reference
 
-Read `references/experts/seedance_video/` only when Seedance-specific creative planning is needed, such as dance, character continuity, first/last frame control, motion-heavy clips, or when the selected logical model is a Seedance model. Load only the relevant expert files needed for the current request.
+Read `references/experts/seedance_video/` when its creative vocabulary or planning craft would improve the request, even if the selected logical model is not Seedance. Shared references such as camera movement, shot size, lighting, motion continuity, character consistency, audio intent, prompt concision, and anti-slop checks are broadly useful across video models.
+
+Only treat Seedance-specific capability notes, model behavior, examples, troubleshooting, or provider assumptions as Seedance-specific. For non-Seedance models, adapt the general descriptive language and ignore Seedance-only constraints. Load only the relevant expert files needed for the current request.
 
 ## Light Validation
 

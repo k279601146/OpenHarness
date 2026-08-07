@@ -1537,6 +1537,23 @@ def test_tool_schemas_for_context_includes_media_for_explicit_skill(tmp_path: Pa
     assert "canvas_get_state" not in names
 
 
+def test_tool_schemas_for_context_includes_media_after_video_skill_invocation(tmp_path: Path):
+    registry = create_default_tool_registry()
+    context = _tool_context(
+        tmp_path,
+        registry,
+        PermissionSettings(mode=PermissionMode.DEFAULT),
+        tool_metadata={"invoked_skills": ["video_gen"]},
+    )
+
+    names = _schema_names_for_context(context)
+
+    assert "generate_video" in names
+    assert "generate_image" in names
+    assert "tool_search" in names
+    assert "canvas_generate_video" not in names
+
+
 def test_tool_schemas_for_context_includes_connector_tools_only_when_selected(tmp_path: Path):
     class ConnectorArgs(BaseModel):
         value: str = ""

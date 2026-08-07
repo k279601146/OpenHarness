@@ -304,6 +304,7 @@ def _media_request_guidance(kind: str, mode: str) -> str:
         f"当前正在处理真实 canvas_request 媒体生成任务（{kind}）。"
         f"不要递归调用 canvas_generate_{mode} 或 canvas_run_generation；"
         f"请直接使用 {tool_name}，并在完成后返回 agent_artifact。"
+        f"如果 {tool_name} 或对应媒体模型不可用，直接报告该可用性错误，不要创建新的画布生成节点作为 fallback。"
     )
 
 
@@ -997,7 +998,10 @@ class CanvasGenerateImageTool(_CanvasGenerateFlowTool):
 
 class CanvasGenerateVideoTool(_CanvasGenerateFlowTool):
     name = "canvas_generate_video"
-    description = "创建提示词文本节点和目标视频节点，连接参考素材，并立即在视频节点上触发 Bahew 视频生成。"
+    description = (
+        "仅用于用户明确要求搭建或触发画布视频生成流程时：创建提示词文本节点和目标视频节点，连接参考素材，并立即在视频节点上触发 Bahew 视频生成。"
+        "不要把它当作 generate_video 或视频模型不可用时的 fallback；真实视频生成请求应直接调用 generate_video，模型不可用时应返回可用性错误。"
+    )
     generation_mode = "video"
 
 

@@ -55,7 +55,7 @@ from openharness.utils.paths import normalize_host_path
 
 AUTO_COMPACT_STATUS_MESSAGE = "Auto-compacting conversation memory to keep things fast and focused."
 REACTIVE_COMPACT_STATUS_MESSAGE = "Prompt too long; compacting conversation memory and retrying."
-MAX_SAFE_COMPLETION_TOKENS = 128_000
+MAX_SAFE_COMPLETION_TOKENS = 256_000
 
 log = logging.getLogger(__name__)
 
@@ -313,7 +313,11 @@ def _metadata_dict(metadata: dict[str, object] | None, key: str) -> dict[str, ob
 
 
 def _has_selected_skill(metadata: dict[str, object] | None, *needles: str) -> bool:
-    selected = _metadata_list(metadata, "selected_skill_ids") + _metadata_list(metadata, "required_skill_ids")
+    selected = (
+        _metadata_list(metadata, "selected_skill_ids")
+        + _metadata_list(metadata, "required_skill_ids")
+        + _metadata_list(metadata, "invoked_skills")
+    )
     if not selected:
         return False
     normalized_needles = tuple(needle.lower() for needle in needles)

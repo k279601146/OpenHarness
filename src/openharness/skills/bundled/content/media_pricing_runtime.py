@@ -13,15 +13,320 @@ from typing import Any, Literal
 PRICING_RULES_ENV = "OPENHARNESS_MEDIA_MODEL_PRICING_RULES"
 DEFAULT_CREDITS_PER_USD = 125.0
 SUPPORTED_IMAGE_SCHEMES = {"image_size_tier_pricing"}
-SUPPORTED_VIDEO_SCHEMES = {"video_seconds_pricing", "video_unit_pricing"}
+SUPPORTED_VIDEO_SCHEMES = {"video_seconds_pricing", "video_unit_pricing", "video_call_pricing"}
 SUPPORTED_AUDIO_SCHEMES = {"audio_tts_character_pricing", "audio_tts_unit_pricing"}
 SUPPORTED_MUSIC_SCHEMES = {"music_duration_pricing", "music_unit_pricing"}
+APIMART_PROVIDER_FAMILY = "apimart_media"
+APIMART_PRICING_SOURCE_URL = "https://apimart.ai/zh/pricing"
+APIMART_SUNO_UNIT_COST_BY_ACTION = {
+    "default": 0.068,
+    "add_instrumental": 0.05,
+    "add_instrumental-v5": 0.05,
+    "add_instrumental-v5.5": 0.05,
+    "add_stem": 0.05,
+    "add_stem-v5.5": 0.05,
+    "add_vocals": 0.05,
+    "add_vocals-v5": 0.05,
+    "add_vocals-v5.5": 0.05,
+    "adjust_speed": 0.024,
+    "aligned_lyrics": 0.0008,
+    "bpm": 0.0008,
+    "concat": 0.004,
+    "cover": 0.05,
+    "cover-v3.5": 0.05,
+    "cover-v4": 0.05,
+    "cover-v4.5": 0.05,
+    "cover-v4.5+": 0.05,
+    "cover-v4.5-all": 0.05,
+    "cover-v5": 0.05,
+    "cover-v5.5": 0.05,
+    "create_voice": 0.016,
+    "crop": 0.008,
+    "extend": 0.05,
+    "extend-v3.5": 0.05,
+    "extend-v4": 0.05,
+    "extend-v4.5": 0.05,
+    "extend-v4.5+": 0.05,
+    "extend-v4.5-all": 0.05,
+    "extend-v5": 0.05,
+    "extend-v5.5": 0.05,
+    "fade_in": 0.008,
+    "fade_out": 0.008,
+    "generate_video": 0.004,
+    "inspo": 0.068,
+    "inspo-v4": 0.068,
+    "inspo-v4.5": 0.068,
+    "inspo-v4.5+": 0.068,
+    "inspo-v4.5-all": 0.068,
+    "inspo-v5": 0.068,
+    "inspo-v5.5": 0.068,
+    "lyrics": 0.008,
+    "mashup": 0.05,
+    "mashup-v3.5": 0.05,
+    "mashup-v4": 0.05,
+    "mashup-v4.5": 0.05,
+    "mashup-v4.5+": 0.05,
+    "mashup-v4.5-all": 0.05,
+    "mashup-v5": 0.05,
+    "mashup-v5.5": 0.05,
+    "midi": 0.05,
+    "music": 0.05,
+    "music-v3.5": 0.05,
+    "music-v4": 0.05,
+    "music-v4.5": 0.05,
+    "music-v4.5+": 0.05,
+    "music-v4.5-all": 0.05,
+    "music-v5": 0.05,
+    "music-v5.5": 0.05,
+    "persona": 0.004,
+    "remaster": 0.05,
+    "remaster-v4.5+": 0.05,
+    "remaster-v5": 0.05,
+    "remaster-v5.5": 0.05,
+    "remove_section": 0.008,
+    "replace_section": 0.05,
+    "replace_section-v4": 0.05,
+    "replace_section-v4.5+": 0.05,
+    "replace_section-v5": 0.05,
+    "replace_section-v5.5": 0.05,
+    "sample": 0.05,
+    "sample-v3.5": 0.05,
+    "sample-v4": 0.05,
+    "sample-v4.5": 0.05,
+    "sample-v4.5+": 0.05,
+    "sample-v4.5-all": 0.05,
+    "sample-v5": 0.05,
+    "sample-v5.5": 0.05,
+    "sounds": 0.0096,
+    "sounds-v5": 0.0096,
+    "sounds-v5.5": 0.0096,
+    "stems": 0.1,
+    "stems_all": 0.24,
+    "upload": 0.004,
+    "upsample_tags": 0.004,
+    "vox": 0.004,
+    "wav": 0.004,
+}
 
 
 DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
     "currency_rates": {"USD": 1.0, "CNY": 0.14},
     "credits_per_usd": DEFAULT_CREDITS_PER_USD,
+    "provider_multipliers": {"apimart_media": 1.0},
     "image": {
+        "apimart-gpt-image-2": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "image_size_tier_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "gpt-image-2",
+            "price_model_id": "gpt-image-2",
+            "allowed_upstream_model_ids": ["gpt-image-2", "gpt-image-2-ext"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-08-07",
+            "default_billing_size_tier": "1K",
+            "price_unit": "usd",
+            "price_by_size_tier": {"1k": 0.0085, "2k": 0.014, "4k": 0.021},
+            "original_price": {"default": 0.010625, "1k": 0.010625, "2k": 0.0175, "4k": 0.02625},
+            "after_discount": {"default": 0.0085, "1k": 0.0085, "2k": 0.014, "4k": 0.021},
+            "active_price_basis": "after_discount",
+            "tier_aliases": {
+                "1:1": "1k",
+                "16:9": "1k",
+                "9:16": "1k",
+                "4:3": "1k",
+                "3:4": "1k",
+                "1024x1024": "1k",
+                "2048x2048": "2k",
+                "3840x2160": "4k",
+                "2160x3840": "4k",
+            },
+            "max_output_count": 2,
+        },
+        "apimart-grok-imagine-1.5-apimart": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "image_size_tier_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "grok-imagine-1.5-ext",
+            "price_model_id": "grok-imagine-1.5-apimart",
+            "allowed_upstream_model_ids": ["grok-imagine-1.5-apimart", "grok-imagine-1.5-ext"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-08-07",
+            "default_billing_size_tier": "1K",
+            "price_unit": "usd",
+            "price_by_size_tier": {"1k": 0.015},
+            "original_price": {"default": 0.01875},
+            "after_discount": {"default": 0.015},
+            "active_price_basis": "after_discount",
+            "max_output_count": 1,
+        },
+        "apimart-grok-imagine-1.5-edit-apimart": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "image_size_tier_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "grok-imagine-1.5-edit-ext",
+            "price_model_id": "grok-imagine-1.5-edit-apimart",
+            "allowed_upstream_model_ids": ["grok-imagine-1.5-edit-apimart", "grok-imagine-1.5-edit-ext"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-08-07",
+            "default_billing_size_tier": "1K",
+            "price_unit": "usd",
+            "price_by_size_tier": {"1k": 0.015},
+            "original_price": {"default": 0.01875},
+            "after_discount": {"default": 0.015},
+            "active_price_basis": "after_discount",
+            "max_output_count": 1,
+            "supports_reference": True,
+            "supports_edit": True,
+        },
+        "apimart-imagen-4.0-apimart": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "image_size_tier_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "imagen-4.0-apimart",
+            "price_model_id": "imagen-4.0-apimart",
+            "allowed_upstream_model_ids": ["imagen-4.0-apimart"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-08-07",
+            "default_billing_size_tier": "1K",
+            "price_unit": "usd",
+            "price_by_size_tier": {"1k": 0.04},
+            "original_price": {"default": 0.05},
+            "after_discount": {"default": 0.04},
+            "active_price_basis": "after_discount",
+            "max_output_count": 1,
+        },
+        "apimart-qwen-image-2.0": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "image_size_tier_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "qwen-image-2.0",
+            "price_model_id": "qwen-image-2.0",
+            "allowed_upstream_model_ids": ["qwen-image-2.0"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-08-07",
+            "default_billing_size_tier": "1K",
+            "price_unit": "usd",
+            "price_by_size_tier": {"1k": 0.02},
+            "original_price": {"default": 0.025, "1k": 0.025},
+            "after_discount": {"default": 0.02, "1k": 0.02},
+            "active_price_basis": "after_discount",
+            "max_output_count": 1,
+        },
+        "apimart-qwen-image-2.0-pro": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "image_size_tier_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "qwen-image-2.0-pro",
+            "price_model_id": "qwen-image-2.0-pro",
+            "allowed_upstream_model_ids": ["qwen-image-2.0-pro"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-08-07",
+            "default_billing_size_tier": "1K",
+            "price_unit": "usd",
+            "price_by_size_tier": {"1k": 0.05},
+            "original_price": {"default": 0.0625, "1k": 0.0625},
+            "after_discount": {"default": 0.05, "1k": 0.05},
+            "active_price_basis": "after_discount",
+            "max_output_count": 1,
+        },
+        "apimart-qwen-image-3.0": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "image_size_tier_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "qwen-image-3.0",
+            "price_model_id": "qwen-image-3.0",
+            "allowed_upstream_model_ids": ["qwen-image-3.0"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-08-07",
+            "default_billing_size_tier": "1K",
+            "price_unit": "usd",
+            "price_by_size_tier": {"1k": 0.0205712, "2k": 0.0205712},
+            "original_price": {"default": 0.025714, "1k": 0.025714, "2k": 0.025714},
+            "after_discount": {"default": 0.0205712, "1k": 0.0205712, "2k": 0.0205712},
+            "active_price_basis": "after_discount",
+            "max_output_count": 1,
+        },
+        "apimart-qwen-image-3.0-pro": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "image_size_tier_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "qwen-image-3.0-pro",
+            "price_model_id": "qwen-image-3.0-pro",
+            "allowed_upstream_model_ids": ["qwen-image-3.0-pro"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-08-07",
+            "default_billing_size_tier": "1K",
+            "price_unit": "usd",
+            "price_by_size_tier": {"1k": 0.0285712, "2k": 0.0571432},
+            "original_price": {"default": 0.035714, "1k": 0.035714, "2k": 0.071429},
+            "after_discount": {"default": 0.0285712, "1k": 0.0285712, "2k": 0.0571432},
+            "active_price_basis": "after_discount",
+            "max_output_count": 1,
+        },
+        "apimart-wan2.7-image": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "image_size_tier_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "wan2.7-image",
+            "price_model_id": "wan2.7-image",
+            "allowed_upstream_model_ids": ["wan2.7-image"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-08-07",
+            "default_billing_size_tier": "1K",
+            "price_unit": "usd",
+            "price_by_size_tier": {"1k": 0.0216},
+            "original_price": {"default": 0.027, "1k": 0.027},
+            "after_discount": {"default": 0.0216, "1k": 0.0216},
+            "active_price_basis": "after_discount",
+            "max_output_count": 1,
+        },
+        "apimart-wan2.7-image-pro": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "image_size_tier_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "wan2.7-image-pro",
+            "price_model_id": "wan2.7-image-pro",
+            "allowed_upstream_model_ids": ["wan2.7-image-pro"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-08-07",
+            "default_billing_size_tier": "1K",
+            "price_unit": "usd",
+            "price_by_size_tier": {"1k": 0.0544},
+            "original_price": {"default": 0.068, "1k": 0.068},
+            "after_discount": {"default": 0.0544, "1k": 0.0544},
+            "active_price_basis": "after_discount",
+            "max_output_count": 1,
+        },
         "kolors": {
             "enabled": True,
             "currency": "USD",
@@ -163,6 +468,110 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
         },
     },
     "video": {
+        "apimart-sora-2": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "video_seconds_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "sora-2",
+            "price_model_id": "sora-2",
+            "allowed_upstream_model_ids": ["sora-2"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-08-07",
+            "cost_per_second_by_resolution": {"720p": 0.08},
+            "original_price": {"default": 0.1, "official-720P": 0.1},
+            "after_discount": {"default": 0.08, "official-720P": 0.08},
+            "active_price_basis": "after_discount",
+            "default_duration_seconds": 8,
+            "default_resolution": "720p",
+            "default_mode": "standard",
+        },
+        "apimart-sora-2-pro": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "video_seconds_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "sora-2-pro",
+            "price_model_id": "sora-2-pro",
+            "allowed_upstream_model_ids": ["sora-2-pro"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-08-07",
+            "cost_per_second_by_resolution": {"720p": 0.24, "1024p": 0.4, "1080p": 0.56},
+            "original_price": {"default": 0.75, "official-720P": 0.3, "official-1024P": 0.5, "official-1080P": 0.7},
+            "after_discount": {"default": 0.6, "official-720P": 0.24, "official-1024P": 0.4, "official-1080P": 0.56},
+            "active_price_basis": "after_discount",
+            "default_duration_seconds": 8,
+            "default_resolution": "720p",
+            "default_mode": "standard",
+        },
+        "apimart-grok-imagine-1.5-video-apimart": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "video_seconds_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "grok-imagine-1.5-video-ext",
+            "price_model_id": "grok-imagine-1.5-video-apimart",
+            "allowed_upstream_model_ids": ["grok-imagine-1.5-video-apimart", "grok-imagine-1.5-video-ext"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-08-07",
+            "cost_per_second_by_resolution": {"480p": 0.0068, "720p": 0.012},
+            "original_price": {"480P": 0.0085, "720P": 0.015},
+            "after_discount": {"480P": 0.0068, "720P": 0.012},
+            "active_price_basis": "after_discount",
+            "default_duration_seconds": 8,
+            "default_resolution": "720p",
+            "default_mode": "standard",
+            "supported_resolutions": ("480p", "720p"),
+            "supported_durations": (4, 8, 12, 16, 20),
+        },
+        "apimart-veo3.1-fast": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "video_call_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "veo3.1-fast",
+            "price_model_id": "veo3.1-fast",
+            "allowed_upstream_model_ids": ["veo3.1-fast", "veo3.1-fast-official"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-08-07",
+            "call_cost_by_resolution": {"default": 0.14, "4k": 0.64},
+            "call_cost_by_command": {"extend": 0.14},
+            "original_price": {"default": 0.175, "4K": 0.8, "extend": 0.175},
+            "after_discount": {"default": 0.14, "4K": 0.64, "extend": 0.14},
+            "active_price_basis": "after_discount",
+            "default_duration_seconds": 8,
+            "default_resolution": "720p",
+            "default_mode": "standard",
+        },
+        "apimart-veo3.1-quality": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "video_call_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "veo3.1-quality",
+            "price_model_id": "veo3.1-quality",
+            "allowed_upstream_model_ids": ["veo3.1-quality", "veo3.1-quality-official"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-08-07",
+            "call_cost_by_resolution": {"default": 1.0, "4k": 1.5},
+            "call_cost_by_command": {"extend": 1.0},
+            "original_price": {"default": 1.25, "4K": 1.875, "extend": 1.25},
+            "after_discount": {"default": 1.0, "4K": 1.5, "extend": 1.0},
+            "active_price_basis": "after_discount",
+            "default_duration_seconds": 8,
+            "default_resolution": "720p",
+            "default_mode": "standard",
+        },
         "doubao-seedance-2-0-260128": {
             "enabled": True,
             "currency": "CNY",
@@ -310,6 +719,25 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
         },
     },
     "audio": {
+        "apimart-gpt-4o-mini-tts": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "audio_tts_character_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "gpt-4o-mini-tts",
+            "price_model_id": "gpt-4o-mini-tts",
+            "allowed_upstream_model_ids": ["gpt-4o-mini-tts"],
+            "source_url": "https://docs.apimart.ai/en/api-reference/audios/tts.md",
+            "source_checked_at": "2026-08-07",
+            "cost_per_1k_chars": 0.015,
+            "original_price": {"default": 0.015},
+            "after_discount": {"default": 0.015},
+            "active_price_basis": "after_discount",
+            "default_prompt_chars": 1000,
+            "max_output_count": 1,
+        },
         "gpt-4o-mini-tts": {
             "enabled": True,
             "currency": "USD",
@@ -370,6 +798,78 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
         },
     },
     "music": {
+        "apimart-flowmusic": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "music_unit_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "flowmusic",
+            "price_model_id": "flowmusic",
+            "allowed_upstream_model_ids": ["flowmusic"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-08-07",
+            "unit_cost_by_action": {
+                "default": 0.06,
+                "generate": 0.06,
+                "extend": 0.06,
+                "replace": 0.06,
+                "cover": 0.06,
+                "upload_audio": 0.01,
+                "lyrics": 0.02,
+                "download_audio": 0.02,
+                "video_clip": 0.02,
+            },
+            "original_price": {
+                "default": 0.075,
+                "generate": 0.075,
+                "extend": 0.075,
+                "replace": 0.075,
+                "cover": 0.075,
+                "upload_audio": 0.0125,
+                "lyrics": 0.025,
+                "download_audio": 0.025,
+                "video_clip": 0.025,
+            },
+            "after_discount": {
+                "default": 0.06,
+                "generate": 0.06,
+                "extend": 0.06,
+                "replace": 0.06,
+                "cover": 0.06,
+                "upload_audio": 0.01,
+                "lyrics": 0.02,
+                "download_audio": 0.02,
+                "video_clip": 0.02,
+            },
+            "active_price_basis": "after_discount",
+            "default_pricing_action": "generate",
+            "supported_pricing_actions": ("generate", "extend", "replace", "cover", "upload_audio", "lyrics", "download_audio", "video_clip"),
+            "default_duration_seconds": 60,
+            "max_output_count": 1,
+        },
+        "apimart-suno": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "music_unit_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "suno",
+            "price_model_id": "suno",
+            "allowed_upstream_model_ids": ["suno"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-08-07",
+            "unit_cost_by_action": APIMART_SUNO_UNIT_COST_BY_ACTION,
+            "original_price": {action: round(price / 0.8, 6) for action, price in APIMART_SUNO_UNIT_COST_BY_ACTION.items()},
+            "after_discount": dict(APIMART_SUNO_UNIT_COST_BY_ACTION),
+            "active_price_basis": "after_discount",
+            "default_pricing_action": "default",
+            "supported_pricing_actions": tuple(APIMART_SUNO_UNIT_COST_BY_ACTION.keys()),
+            "default_duration_seconds": 60,
+            "max_output_count": 2,
+        },
         "suno-ai": {
             "enabled": True,
             "currency": "USD",
@@ -443,9 +943,14 @@ class MediaPricingResult:
     pricing_source: str
     source_checked_at: str
     pricing_breakdown: dict[str, Any]
+    provider_multiplier: float = 1.0
+    price_model_id: str | None = None
+    active_price_basis: str | None = None
+    original_price: Any = None
+    after_discount: Any = None
 
     def to_metadata(self) -> dict[str, Any]:
-        return {
+        metadata = {
             "official_cost": self.official_cost,
             "official_currency": self.official_currency,
             "pricing_multiplier": self.pricing_multiplier,
@@ -456,6 +961,17 @@ class MediaPricingResult:
             "source_checked_at": self.source_checked_at,
             "pricing_breakdown": self.pricing_breakdown,
         }
+        if self.provider_multiplier != 1.0:
+            metadata["provider_multiplier"] = self.provider_multiplier
+        if self.price_model_id:
+            metadata["price_model_id"] = self.price_model_id
+        if self.active_price_basis:
+            metadata["active_price_basis"] = self.active_price_basis
+        if self.original_price is not None:
+            metadata["original_price"] = self.original_price
+        if self.after_discount is not None:
+            metadata["after_discount"] = self.after_discount
+        return metadata
 
 
 def load_pricing_rules(raw: Any | None = None) -> dict[str, Any]:
@@ -491,11 +1007,19 @@ def validate_pricing_rules(raw: Any) -> dict[str, Any]:
     normalized = {
         "currency_rates": normalized_rates,
         "credits_per_usd": credits_per_usd,
+        "provider_multipliers": {},
         "image": {},
         "video": {},
         "audio": {},
         "music": {},
     }
+    provider_multipliers = rules.get("provider_multipliers")
+    if isinstance(provider_multipliers, dict):
+        normalized["provider_multipliers"] = {
+            str(provider or "").strip().lower(): _positive_float(multiplier, f"provider_multipliers.{str(provider or '').strip().lower()}", allow_zero=False)
+            for provider, multiplier in provider_multipliers.items()
+            if str(provider or "").strip()
+        }
     for kind, schemes in (
         ("image", SUPPORTED_IMAGE_SCHEMES),
         ("video", SUPPORTED_VIDEO_SCHEMES),
@@ -568,22 +1092,33 @@ def estimate_image_pricing(
         resolution=resolution,
         size=size,
     )
-    unit_credits = _lookup_number(rule.get("price_by_size_tier"), resolved_tier, default=None)
-    if unit_credits is None:
+    price_unit = str(rule.get("price_unit") or "credits").strip().lower()
+    unit_price = _lookup_active_price(rule, resolved_tier, fallback_mapping=rule.get("price_by_size_tier"), field=f"image.{model_id}.price_by_size_tier.{resolved_tier}")
+    if unit_price is None:
         raise ValueError(f"Image pricing does not include billing_size_tier {resolved_tier} for {model_id}")
     reference_unit_credits = _reference_unit_credits(rule)
-    reference_credits = reference_unit_credits * resolved_reference_count
-    billing_units = unit_credits * output_count + reference_credits
-    official_cost = _credits_to_official_cost(loaded, rule, billing_units)
+    if price_unit == "usd":
+        reference_cost = _reference_unit_cost(rule, "image") * resolved_reference_count
+        official_cost = unit_price * output_count + reference_cost
+        reference_charge = reference_cost
+        price_unit_label = "usd"
+    else:
+        reference_credits = reference_unit_credits * resolved_reference_count
+        billing_units = unit_price * output_count + reference_credits
+        official_cost = _credits_to_official_cost(loaded, rule, billing_units)
+        reference_charge = reference_credits
+        price_unit_label = "credits"
     breakdown = {
         "scheme": scheme,
-        "unit_credits": unit_credits,
+        "unit_credits": unit_price if price_unit == "credits" else None,
+        "unit_cost": unit_price if price_unit == "usd" else None,
         "billing_size_tier": resolved_tier.upper(),
         "output_count": output_count,
         "reference_count": resolved_reference_count,
         "reference_unit_credits": reference_unit_credits,
-        "reference_credits": reference_credits,
-        "price_unit": "credits",
+        "reference_credits": reference_charge if price_unit == "credits" else 0.0,
+        "reference_cost": reference_charge if price_unit == "usd" else 0.0,
+        "price_unit": price_unit_label,
     }
 
     return _pricing_result(loaded, rule, official_cost, breakdown)
@@ -624,7 +1159,7 @@ def estimate_video_pricing(
             if generate_audio and (isinstance(rule.get("cost_per_second_with_audio_by_resolution"), dict) or isinstance(rule.get("usd_per_second_with_audio_by_resolution"), dict))
             else rule.get("cost_per_second_by_resolution") or rule.get("usd_per_second_by_resolution")
         )
-        unit_cost = _lookup_number(per_second_map, resolved_resolution, default=None)
+        unit_cost = _lookup_active_price(rule, resolved_resolution, fallback_mapping=per_second_map, field=f"video.{rule['model_id']}.cost_per_second_by_resolution.{resolved_resolution}")
         if unit_cost is None:
             raise ValueError(f"Video pricing does not include resolution {resolved_resolution} for {rule['model_id']}")
         mode_multiplier = _lookup_number(rule.get("mode_multipliers"), resolved_mode, default=1.0) or 1.0
@@ -662,6 +1197,52 @@ def estimate_video_pricing(
             "reference_unit_cost": reference_unit_cost,
             "reference_cost": reference_cost,
         }
+    elif scheme == "video_call_pricing":
+        resolved_command = _normalize_key(command or "generate")
+        unit_cost = None
+        if resolved_command not in {"", "generate", "default"}:
+            unit_cost = _lookup_active_price(
+                rule,
+                resolved_command,
+                fallback_mapping=rule.get("call_cost_by_command"),
+                field=f"video.{rule['model_id']}.call_cost_by_command.{resolved_command}",
+            )
+        if unit_cost is None:
+            unit_cost = _lookup_active_price(
+                rule,
+                resolved_resolution,
+                fallback_mapping=rule.get("call_cost_by_resolution"),
+                field=f"video.{rule['model_id']}.call_cost_by_resolution.{resolved_resolution}",
+            )
+        if unit_cost is None:
+            unit_cost = _lookup_active_price(
+                rule,
+                "default",
+                fallback_mapping=rule.get("call_cost_by_resolution"),
+                field=f"video.{rule['model_id']}.call_cost_by_resolution.default",
+            )
+        if unit_cost is None:
+            unit_cost = _lookup_active_price(
+                rule,
+                "default",
+                fallback_mapping=rule.get("call_cost_by_command"),
+                field=f"video.{rule['model_id']}.call_cost_by_command.default",
+            )
+        if unit_cost is None:
+            raise ValueError(f"Video pricing does not include a call cost for {rule['model_id']}")
+        official_cost = unit_cost * output_count + reference_cost
+        breakdown = {
+            "scheme": scheme,
+            "unit_cost": unit_cost,
+            "duration_seconds": resolved_duration,
+            "resolution": resolved_resolution,
+            "mode": resolved_mode,
+            "command": resolved_command,
+            "output_count": output_count,
+            "reference_count": resolved_reference_count,
+            "reference_unit_cost": reference_unit_cost,
+            "reference_cost": reference_cost,
+        }
     else:
         raise ValueError(f"Unsupported video pricing scheme: {scheme}")
 
@@ -689,7 +1270,9 @@ def estimate_audio_pricing(
     resolved_chars = max(int(prompt_chars or rule.get("default_prompt_chars") or 1), 1)
     scheme = str(rule["scheme"])
     if scheme == "audio_tts_character_pricing":
-        cost_per_1k_chars = _positive_float(rule.get("cost_per_1k_chars"), f"audio.{model_id}.cost_per_1k_chars", allow_zero=False)
+        cost_per_1k_chars = _lookup_active_price(rule, "default", fallback_value=rule.get("cost_per_1k_chars"), field=f"audio.{model_id}.cost_per_1k_chars")
+        if cost_per_1k_chars is None:
+            raise ValueError(f"Audio pricing does not include cost_per_1k_chars for {model_id}")
         official_cost = cost_per_1k_chars * (resolved_chars / 1000.0) * output_count + reference_cost
         breakdown = {
             "scheme": scheme,
@@ -701,7 +1284,9 @@ def estimate_audio_pricing(
             "reference_cost": reference_cost,
         }
     elif scheme == "audio_tts_unit_pricing":
-        unit_cost = _positive_float(rule.get("unit_cost"), f"audio.{model_id}.unit_cost", allow_zero=not rule.get("enabled", True))
+        unit_cost = _lookup_active_price(rule, "default", fallback_value=rule.get("unit_cost"), field=f"audio.{model_id}.unit_cost", allow_zero=not rule.get("enabled", True))
+        if unit_cost is None:
+            raise ValueError(f"Audio pricing does not include unit_cost for {model_id}")
         official_cost = unit_cost * output_count + reference_cost
         breakdown = {
             "scheme": scheme,
@@ -723,6 +1308,7 @@ def estimate_music_pricing(
     duration_seconds: int | float | None = None,
     output_count: int = 1,
     prompt_chars: int | None = None,
+    pricing_action: str | None = None,
     reference_count: int = 0,
     rules: dict[str, Any] | None = None,
 ) -> MediaPricingResult:
@@ -738,9 +1324,12 @@ def estimate_music_pricing(
     reference_unit_cost = _reference_unit_cost(rule, "music")
     reference_cost = reference_unit_cost * resolved_reference_count
     resolved_duration = max(float(duration_seconds or rule.get("default_duration_seconds") or 1), 1.0)
+    resolved_action = _resolve_music_pricing_action(rule, pricing_action)
     scheme = str(rule["scheme"])
     if scheme == "music_duration_pricing":
-        cost_per_second = _positive_float(rule.get("cost_per_second"), f"music.{model_id}.cost_per_second", allow_zero=False)
+        cost_per_second = _lookup_active_price(rule, "default", fallback_value=rule.get("cost_per_second"), field=f"music.{model_id}.cost_per_second")
+        if cost_per_second is None:
+            raise ValueError(f"Music pricing does not include cost_per_second for {model_id}")
         official_cost = cost_per_second * resolved_duration * output_count + reference_cost
         breakdown = {
             "scheme": scheme,
@@ -752,11 +1341,12 @@ def estimate_music_pricing(
             "reference_cost": reference_cost,
         }
     elif scheme == "music_unit_pricing":
-        unit_cost = _positive_float(rule.get("unit_cost"), f"music.{model_id}.unit_cost", allow_zero=not rule.get("enabled", True))
+        unit_cost = _resolve_music_unit_cost(rule, resolved_action)
         official_cost = unit_cost * output_count + reference_cost
         breakdown = {
             "scheme": scheme,
             "unit_cost": unit_cost,
+            "pricing_action": resolved_action,
             "duration_seconds": resolved_duration,
             "output_count": output_count,
             "reference_count": resolved_reference_count,
@@ -798,6 +1388,15 @@ def _validate_model_rule(kind: str, model_id: str, raw: Any, schemes: set[str], 
         raise ValueError(f"{kind}.{model_id}.pricing_basis must be official_public or manual_contract")
     if pricing_basis == "official_public" and not str(rule.get("official_model_id") or model_id).strip():
         raise ValueError(f"{kind}.{model_id}.official_model_id is required")
+    rule["official_model_id"] = str(rule.get("official_model_id") or model_id).strip()
+    rule["price_model_id"] = str(rule.get("price_model_id") or rule["official_model_id"] or model_id).strip()
+    active_price_basis = str(rule.get("active_price_basis") or "after_discount").strip().lower()
+    if active_price_basis not in {"original_price", "after_discount"}:
+        raise ValueError(f"{kind}.{model_id}.active_price_basis must be original_price or after_discount")
+    rule["active_price_basis"] = active_price_basis
+    provider_family = str(rule.get("provider_family") or "").strip().lower()
+    if provider_family:
+        rule["provider_family"] = provider_family
     allowed_upstream_model_ids = rule.get("allowed_upstream_model_ids")
     if allowed_upstream_model_ids is not None and (
         not isinstance(allowed_upstream_model_ids, list)
@@ -820,6 +1419,10 @@ def _validate_model_rule(kind: str, model_id: str, raw: Any, schemes: set[str], 
 
 
 def _validate_image_scheme(model_id: str, rule: dict[str, Any]) -> None:
+    price_unit = str(rule.get("price_unit") or "credits").strip().lower()
+    if price_unit not in {"credits", "usd"}:
+        raise ValueError(f"image.{model_id}.price_unit must be credits or usd")
+    rule["price_unit"] = price_unit
     prices = rule.get("price_by_size_tier")
     if not isinstance(prices, dict) or not prices:
         raise ValueError(f"image.{model_id}.price_by_size_tier must be a non-empty object")
@@ -857,6 +1460,9 @@ def _validate_video_scheme(model_id: str, rule: dict[str, Any]) -> None:
     elif rule["scheme"] == "video_unit_pricing":
         if not any(isinstance(rule.get(key), dict) and rule[key] for key in ("cost_by_quality_size", "cost_by_size")) and "unit_cost" not in rule:
             raise ValueError(f"video.{model_id} must define unit_cost, cost_by_size, or cost_by_quality_size")
+    elif rule["scheme"] == "video_call_pricing":
+        if not any(isinstance(rule.get(key), dict) and rule[key] for key in ("call_cost_by_resolution", "call_cost_by_command")):
+            raise ValueError(f"video.{model_id} must define call_cost_by_resolution or call_cost_by_command")
     if any(key in rule and rule.get(key) is not None for key in ("reference_unit_cost", "cost_per_reference", "reference_cost")):
         rule["reference_unit_cost"] = _reference_unit_cost(rule)
 
@@ -877,7 +1483,9 @@ def _validate_music_scheme(model_id: str, rule: dict[str, Any]) -> None:
         rule["cost_per_second"] = _positive_float(rule.get("cost_per_second"), f"music.{model_id}.cost_per_second", allow_zero=False)
         rule["default_duration_seconds"] = int(_positive_float(rule.get("default_duration_seconds", 60), f"music.{model_id}.default_duration_seconds", allow_zero=False))
     elif rule["scheme"] == "music_unit_pricing":
-        rule["unit_cost"] = _positive_float(rule.get("unit_cost"), f"music.{model_id}.unit_cost", allow_zero=not rule.get("enabled", True))
+        _validate_music_action_pricing(rule, model_id)
+        if not isinstance(rule.get("unit_cost_by_action"), dict) or not rule.get("unit_cost_by_action"):
+            rule["unit_cost"] = _positive_float(rule.get("unit_cost"), f"music.{model_id}.unit_cost", allow_zero=not rule.get("enabled", True))
     if any(key in rule and rule.get(key) is not None for key in ("reference_unit_cost", "cost_per_reference", "reference_cost")):
         rule["reference_unit_cost"] = _reference_unit_cost(rule, "music")
     rule["max_output_count"] = int(_positive_float(rule.get("max_output_count", 1), f"music.{model_id}.max_output_count", allow_zero=False))
@@ -919,13 +1527,82 @@ def _reference_unit_cost(rule: dict[str, Any], kind: str = "video") -> float:
     )
 
 
+def _normalize_music_pricing_action(value: Any) -> str:
+    return str(value or "").strip().lower().replace(" ", "_")
+
+
+def _validate_music_action_pricing(rule: dict[str, Any], model_id: str) -> None:
+    action_costs = rule.get("unit_cost_by_action")
+    if action_costs is not None:
+        if not isinstance(action_costs, dict) or not action_costs:
+            raise ValueError(f"music.{model_id}.unit_cost_by_action must be a non-empty object")
+        normalized_costs: dict[str, float] = {}
+        for action, cost in action_costs.items():
+            normalized_action = _normalize_music_pricing_action(action)
+            if not normalized_action:
+                raise ValueError(f"music.{model_id}.unit_cost_by_action contains an empty action")
+            normalized_costs[normalized_action] = _positive_float(cost, f"music.{model_id}.unit_cost_by_action.{normalized_action}", allow_zero=False)
+        rule["unit_cost_by_action"] = normalized_costs
+    supported_actions = rule.get("supported_pricing_actions")
+    if supported_actions is not None:
+        if not isinstance(supported_actions, (list, tuple)) or not supported_actions:
+            raise ValueError(f"music.{model_id}.supported_pricing_actions must be a non-empty string list")
+        normalized_actions = []
+        for action in supported_actions:
+            normalized_action = _normalize_music_pricing_action(action)
+            if not normalized_action:
+                raise ValueError(f"music.{model_id}.supported_pricing_actions contains an empty action")
+            normalized_actions.append(normalized_action)
+        rule["supported_pricing_actions"] = sorted(set(normalized_actions))
+    default_action = _normalize_music_pricing_action(rule.get("default_pricing_action") or "generate")
+    if not default_action:
+        default_action = "generate"
+    if isinstance(rule.get("supported_pricing_actions"), list) and default_action not in set(rule["supported_pricing_actions"]):
+        raise ValueError(f"music.{model_id}.default_pricing_action must exist in supported_pricing_actions")
+    rule["default_pricing_action"] = default_action
+
+
+def _resolve_music_pricing_action(rule: dict[str, Any], pricing_action: str | None) -> str:
+    supported_actions = set(str(item).strip().lower() for item in (rule.get("supported_pricing_actions") or []) if str(item or "").strip())
+    default_action = _normalize_music_pricing_action(rule.get("default_pricing_action") or "generate") or "generate"
+    resolved_action = _normalize_music_pricing_action(pricing_action) or default_action
+    if supported_actions and resolved_action not in supported_actions:
+        raise ValueError(f"Music pricing action {resolved_action} is not configured for {rule['model_id']}")
+    return resolved_action
+
+
+def _resolve_music_unit_cost(rule: dict[str, Any], pricing_action: str) -> float:
+    for action_costs in (_active_price_table(rule), rule.get("unit_cost_by_action")):
+        if isinstance(action_costs, dict) and action_costs:
+            unit_cost = _lookup_number(action_costs, pricing_action, default=None)
+            if unit_cost is None and pricing_action != "default":
+                unit_cost = _lookup_number(action_costs, "default", default=None)
+            if unit_cost is not None:
+                return _positive_float(unit_cost, f"music.{rule['model_id']}.unit_cost_by_action.{pricing_action}", allow_zero=False)
+    return _positive_float(rule.get("unit_cost"), f"music.{rule['model_id']}.unit_cost", allow_zero=not rule.get("enabled", True))
+
+
 def _pricing_result(loaded: dict[str, Any], rule: dict[str, Any], official_cost: float, breakdown: dict[str, Any]) -> MediaPricingResult:
     official_cost = round(max(float(official_cost or 0), 0.0), 8)
     currency = str(rule.get("currency") or "USD").upper()
     currency_rate = float(loaded.get("currency_rates", {}).get(currency, 0) or 0)
     credits_per_usd = float(loaded.get("credits_per_usd") or os.getenv("BILLING_CREDITS_PER_USD", DEFAULT_CREDITS_PER_USD) or DEFAULT_CREDITS_PER_USD)
     multiplier = float(rule.get("multiplier", 1) or 1)
-    billing_units = official_cost * currency_rate * credits_per_usd * multiplier
+    provider_multiplier = 1.0
+    provider_family = str(rule.get("provider_family") or "").strip().lower()
+    provider_multipliers = loaded.get("provider_multipliers")
+    if provider_family and isinstance(provider_multipliers, dict):
+        provider_multiplier = float(provider_multipliers.get(provider_family, 1.0) or 1.0)
+    billing_units = official_cost * currency_rate * credits_per_usd * multiplier * provider_multiplier
+    pricing_breakdown = {
+        **breakdown,
+        "currency_rate_to_usd": currency_rate,
+        "credits_per_usd": credits_per_usd,
+        "provider_multiplier": provider_multiplier,
+    }
+    for key in ("price_model_id", "active_price_basis", "original_price", "after_discount", "provider_family"):
+        if key in rule:
+            pricing_breakdown[key] = rule.get(key)
     return MediaPricingResult(
         official_cost=official_cost,
         official_currency=currency,
@@ -935,7 +1612,12 @@ def _pricing_result(loaded: dict[str, Any], rule: dict[str, Any], official_cost:
         pricing_basis=str(rule.get("pricing_basis") or "official_public"),
         pricing_source=str(rule.get("source_url") or ""),
         source_checked_at=str(rule.get("source_checked_at") or ""),
-        pricing_breakdown={**breakdown, "currency_rate_to_usd": currency_rate, "credits_per_usd": credits_per_usd},
+        pricing_breakdown=pricing_breakdown,
+        provider_multiplier=provider_multiplier,
+        price_model_id=str(rule.get("price_model_id") or rule.get("official_model_id") or rule.get("model_id") or "").strip() or None,
+        active_price_basis=str(rule.get("active_price_basis") or "").strip() or None,
+        original_price=rule.get("original_price"),
+        after_discount=rule.get("after_discount"),
     )
 
 
@@ -1072,19 +1754,59 @@ def _lookup_number(mapping: Any, key: str, default: float | None) -> float | Non
     if not isinstance(mapping, dict):
         return default
     normalized = _normalize_key(key)
-    value = mapping.get(normalized)
+    normalized_mapping = {
+        _normalize_key(raw_key): raw_value
+        for raw_key, raw_value in mapping.items()
+        if str(raw_key or "").strip()
+    }
+    value = normalized_mapping.get(normalized)
     if value is None:
         value = mapping.get(key)
     if value is None and normalized.endswith("p"):
-        value = mapping.get(normalized[:-1])
+        value = normalized_mapping.get(normalized[:-1]) or mapping.get(normalized[:-1]) or mapping.get(normalized[:-1].upper())
     if value is None and not normalized.endswith("p") and normalized.isdigit():
-        value = mapping.get(f"{normalized}p")
+        value = normalized_mapping.get(f"{normalized}p") or mapping.get(f"{normalized}p") or mapping.get(f"{normalized}P")
     if value is None:
         return default
     try:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _active_price_table(rule: dict[str, Any]) -> dict[str, Any] | None:
+    basis = str(rule.get("active_price_basis") or "after_discount").strip().lower()
+    if basis not in {"original_price", "after_discount"}:
+        return None
+    table = rule.get(basis)
+    return table if isinstance(table, dict) else None
+
+
+def _lookup_active_price(
+    rule: dict[str, Any],
+    key: str,
+    *,
+    fallback_mapping: Any = None,
+    fallback_value: Any = None,
+    field: str,
+    allow_zero: bool = False,
+) -> float | None:
+    normalized_key = _normalize_key(key)
+    lookup_keys = [key]
+    if normalized_key and not normalized_key.startswith("official-"):
+        lookup_keys.append(f"official-{normalized_key}")
+    if key != "default":
+        lookup_keys.append("default")
+    for mapping in (_active_price_table(rule), fallback_mapping):
+        if not isinstance(mapping, dict):
+            continue
+        for lookup_key in lookup_keys:
+            value = _lookup_number(mapping, lookup_key, default=None)
+            if value is not None:
+                return _positive_float(value, field, allow_zero=allow_zero)
+    if fallback_value is not None:
+        return _positive_float(fallback_value, field, allow_zero=allow_zero)
+    return None
 
 
 def _normalize_key(value: str | None) -> str:

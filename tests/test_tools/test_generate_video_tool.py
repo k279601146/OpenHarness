@@ -145,6 +145,16 @@ def test_generate_video_rejects_missing_canonical_objects() -> None:
     assert "`output` is required and must be an object" in message
 
 
+def test_generate_video_rejects_missing_prompt_and_output_duration_alias() -> None:
+    with pytest.raises(ValidationError) as exc:
+        GenerateVideoInput(brief={}, output={"duration": 5})
+
+    message = _format_tool_validation_error("generate_video", exc.value)
+
+    assert "`prompt` is required" in message
+    assert "unexpected field `output.duration`" in message
+
+
 @pytest.mark.asyncio
 async def test_generate_video_delegates_to_backend_hook(tmp_path: Path) -> None:
     hook = FakeVideoHook()

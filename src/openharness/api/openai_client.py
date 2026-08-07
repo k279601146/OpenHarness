@@ -786,6 +786,12 @@ def _convert_messages_to_responses_input(messages: list[ConversationMessage]) ->
 
     for msg in messages:
         if msg.role == "assistant":
+            reasoning = getattr(msg, "_reasoning", None)
+            if isinstance(reasoning, str) and reasoning.strip():
+                responses_items.append({
+                    "type": "reasoning",
+                    "content": [{"type": "reasoning_text", "text": reasoning}],
+                })
             text_parts = [b.text for b in msg.content if isinstance(b, TextBlock)]
             text = "".join(text_parts)
             if text:
@@ -1002,10 +1008,36 @@ def _text_from_response_message_item(item: Any) -> str:
     return "".join(parts)
 
 
+def _reasoning_text_from_response_item(item: Any) -> str:
+    raw_content = _response_item_attr(item, "content", [])
+    parts: list[str] = []
+    if isinstance(raw_content, list):
+        for block in raw_content:
+            if _usage_attr(block, "type") == "reasoning_text":
+                parts.append(str(_usage_attr(block, "text", "")))
+    return "".join(parts)
+
+
+def _reasoning_text_from_response_payload(response: Any) -> str:
+    parts: list[str] = []
+    for item in _usage_attr(response, "output", []) or []:
+        if _response_item_attr(item, "type") == "reasoning":
+            reasoning_text = _reasoning_text_from_response_item(item)
+            if reasoning_text:
+                parts.append(reasoning_text)
+    return "".join(parts)
+
+
 def _message_from_responses_response(response: Any) -> ConversationMessage:
     content: list[ContentBlock] = []
+    reasoning_parts: list[str] = []
     for item in _usage_attr(response, "output", []) or []:
         item_type = _response_item_attr(item, "type")
+        if item_type == "reasoning":
+            reasoning_text = _reasoning_text_from_response_item(item)
+            if reasoning_text:
+                reasoning_parts.append(reasoning_text)
+            continue
         if item_type == "message":
             text = _text_from_response_message_item(item)
             if text:
@@ -1014,7 +1046,10 @@ def _message_from_responses_response(response: Any) -> ConversationMessage:
             tool_use = _tool_use_from_response_item(item)
             if tool_use:
                 content.append(tool_use)
-    return ConversationMessage(role="assistant", content=content)
+    message = ConversationMessage(role="assistant", content=content)
+    if reasoning_parts:
+        message._reasoning = "".join(reasoning_parts)  # type: ignore[attr-defined]
+    return message
 
 
 def _tool_use_from_response_item(item: Any) -> ToolUseBlock | None:
@@ -2233,6 +2268,9 @@ class OpenAICompatibleClient:
                     if response_payload:
                         usage = _usage_snapshot_from_responses_response(response_payload)
                         finish_reason = _usage_attr(response_payload, "status") or "completed"
+                        payload_reasoning = _reasoning_text_from_response_payload(response_payload)
+                        if payload_reasoning and len(payload_reasoning) > len(collected_reasoning):
+                            collected_reasoning = payload_reasoning
                         for hosted_event in _hosted_tool_events_from_response(
                             response_payload,
                             hosted_tool_started=hosted_tool_started,
