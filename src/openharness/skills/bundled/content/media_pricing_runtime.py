@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 PRICING_RULES_ENV = "OPENHARNESS_MEDIA_MODEL_PRICING_RULES"
 DEFAULT_CREDITS_PER_USD = 125.0
-SUPPORTED_IMAGE_SCHEMES = {"image_size_tier_pricing"}
+SUPPORTED_IMAGE_SCHEMES = {"image_size_tier_pricing", "image_call_pricing"}
 SUPPORTED_VIDEO_SCHEMES = {"video_seconds_pricing", "video_unit_pricing", "video_call_pricing"}
 SUPPORTED_AUDIO_SCHEMES = {"audio_tts_character_pricing", "audio_tts_unit_pricing"}
 SUPPORTED_MUSIC_SCHEMES = {"music_duration_pricing", "music_unit_pricing"}
@@ -543,9 +543,9 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "source_url": APIMART_PRICING_SOURCE_URL,
             "source_checked_at": "2026-08-07",
             "call_cost_by_resolution": {"default": 0.14, "4k": 0.64},
-            "call_cost_by_command": {"extend": 0.14},
-            "original_price": {"default": 0.175, "4K": 0.8, "extend": 0.175},
-            "after_discount": {"default": 0.14, "4K": 0.64, "extend": 0.14},
+            "call_cost_by_command": {"extend": 0.14, "extend-4k": 0.64},
+            "original_price": {"default": 0.175, "4K": 0.8, "EXTEND-4K": 0.8, "extend": 0.175},
+            "after_discount": {"default": 0.14, "4K": 0.64, "EXTEND-4K": 0.64, "extend": 0.14},
             "active_price_basis": "after_discount",
             "default_duration_seconds": 8,
             "default_resolution": "720p",
@@ -564,9 +564,9 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "source_url": APIMART_PRICING_SOURCE_URL,
             "source_checked_at": "2026-08-07",
             "call_cost_by_resolution": {"default": 1.0, "4k": 1.5},
-            "call_cost_by_command": {"extend": 1.0},
-            "original_price": {"default": 1.25, "4K": 1.875, "extend": 1.25},
-            "after_discount": {"default": 1.0, "4K": 1.5, "extend": 1.0},
+            "call_cost_by_command": {"extend": 1.0, "extend-4k": 1.5},
+            "original_price": {"default": 1.25, "4K": 1.875, "EXTEND-4K": 1.875, "extend": 1.25},
+            "after_discount": {"default": 1.0, "4K": 1.5, "EXTEND-4K": 1.5, "extend": 1.0},
             "active_price_basis": "after_discount",
             "default_duration_seconds": 8,
             "default_resolution": "720p",
@@ -719,25 +719,6 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
         },
     },
     "audio": {
-        "apimart-gpt-4o-mini-tts": {
-            "enabled": True,
-            "currency": "USD",
-            "multiplier": 1.0,
-            "scheme": "audio_tts_character_pricing",
-            "pricing_basis": "official_public",
-            "provider_family": APIMART_PROVIDER_FAMILY,
-            "official_model_id": "gpt-4o-mini-tts",
-            "price_model_id": "gpt-4o-mini-tts",
-            "allowed_upstream_model_ids": ["gpt-4o-mini-tts"],
-            "source_url": "https://docs.apimart.ai/en/api-reference/audios/tts.md",
-            "source_checked_at": "2026-08-07",
-            "cost_per_1k_chars": 0.015,
-            "original_price": {"default": 0.015},
-            "after_discount": {"default": 0.015},
-            "active_price_basis": "after_discount",
-            "default_prompt_chars": 1000,
-            "max_output_count": 1,
-        },
         "gpt-4o-mini-tts": {
             "enabled": True,
             "currency": "USD",
@@ -816,6 +797,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
                 "extend": 0.06,
                 "replace": 0.06,
                 "cover": 0.06,
+                "stems": 0.06,
                 "upload_audio": 0.01,
                 "lyrics": 0.02,
                 "download_audio": 0.02,
@@ -827,6 +809,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
                 "extend": 0.075,
                 "replace": 0.075,
                 "cover": 0.075,
+                "stems": 0.075,
                 "upload_audio": 0.0125,
                 "lyrics": 0.025,
                 "download_audio": 0.025,
@@ -838,6 +821,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
                 "extend": 0.06,
                 "replace": 0.06,
                 "cover": 0.06,
+                "stems": 0.06,
                 "upload_audio": 0.01,
                 "lyrics": 0.02,
                 "download_audio": 0.02,
@@ -845,7 +829,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             },
             "active_price_basis": "after_discount",
             "default_pricing_action": "generate",
-            "supported_pricing_actions": ("generate", "extend", "replace", "cover", "upload_audio", "lyrics", "download_audio", "video_clip"),
+            "supported_pricing_actions": ("generate", "extend", "replace", "cover", "stems", "upload_audio", "lyrics", "download_audio", "video_clip"),
             "default_duration_seconds": 60,
             "max_output_count": 1,
         },
@@ -930,6 +914,508 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
         },
     },
 }
+
+
+def _apimart_original_price(value: float) -> float:
+    return round(float(value) / 0.8, 6)
+
+
+def _apimart_original_price_map(after_discount: dict[str, float], *, discounted: bool = True) -> dict[str, float]:
+    if not discounted:
+        return {key: float(value) for key, value in after_discount.items()}
+    return {key: _apimart_original_price(value) for key, value in after_discount.items()}
+
+
+def _apimart_image_size_rule(
+    logical_model_id: str,
+    official_model_id: str,
+    after_discount: dict[str, float],
+    *,
+    default_billing_size_tier: str = "default",
+    allowed_upstream_model_ids: list[str] | None = None,
+    original_price: dict[str, float] | None = None,
+    tier_aliases: dict[str, str] | None = None,
+    max_output_count: int = 1,
+) -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "currency": "USD",
+        "multiplier": 1.0,
+        "scheme": "image_size_tier_pricing",
+        "pricing_basis": "official_public",
+        "provider_family": APIMART_PROVIDER_FAMILY,
+        "official_model_id": official_model_id,
+        "price_model_id": official_model_id,
+        "allowed_upstream_model_ids": allowed_upstream_model_ids or [official_model_id],
+        "source_url": APIMART_PRICING_SOURCE_URL,
+        "source_checked_at": "2026-08-07",
+        "default_billing_size_tier": default_billing_size_tier,
+        "price_unit": "usd",
+        "price_by_size_tier": after_discount,
+        "original_price": original_price or _apimart_original_price_map(after_discount),
+        "after_discount": after_discount,
+        "active_price_basis": "after_discount",
+        "tier_aliases": tier_aliases or {},
+        "max_output_count": max_output_count,
+    }
+
+
+def _apimart_image_call_rule(
+    logical_model_id: str,
+    official_model_id: str,
+    after_discount: dict[str, float],
+    *,
+    allowed_upstream_model_ids: list[str] | None = None,
+    original_price: dict[str, float] | None = None,
+    max_output_count: int = 1,
+) -> dict[str, Any]:
+    del logical_model_id
+    return {
+        "enabled": True,
+        "currency": "USD",
+        "multiplier": 1.0,
+        "scheme": "image_call_pricing",
+        "pricing_basis": "official_public",
+        "provider_family": APIMART_PROVIDER_FAMILY,
+        "official_model_id": official_model_id,
+        "price_model_id": official_model_id,
+        "allowed_upstream_model_ids": allowed_upstream_model_ids or [official_model_id],
+        "source_url": APIMART_PRICING_SOURCE_URL,
+        "source_checked_at": "2026-08-07",
+        "call_cost_by_action": after_discount,
+        "original_price": original_price or _apimart_original_price_map(after_discount),
+        "after_discount": after_discount,
+        "active_price_basis": "after_discount",
+        "max_output_count": max_output_count,
+    }
+
+
+def _apimart_video_seconds_rule(
+    logical_model_id: str,
+    official_model_id: str,
+    after_discount: dict[str, float],
+    *,
+    default_resolution: str,
+    default_duration_seconds: int = 5,
+    default_mode: str = "standard",
+    allowed_upstream_model_ids: list[str] | None = None,
+    original_price: dict[str, float] | None = None,
+    token_settlement_after_discount: dict[str, float] | None = None,
+    token_settlement_original_price: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    del logical_model_id
+    normalized_prices = {str(key).strip().lower(): float(value) for key, value in after_discount.items()}
+    default_key = str(default_resolution).strip().lower()
+    default_cost = normalized_prices.get(default_key) or next(iter(normalized_prices.values()))
+    after_table = {"default": default_cost, **normalized_prices}
+    original_table = original_price or _apimart_original_price_map(after_table)
+    dimension_features: list[str] = []
+    if any(key.endswith(("-input", "-reference", "-refvideo")) for key in normalized_prices):
+        dimension_features.append("input")
+    if any(key.endswith(("-audio", "-sound")) for key in normalized_prices):
+        dimension_features.append("audio")
+    rule = {
+        "enabled": True,
+        "currency": "USD",
+        "multiplier": 1.0,
+        "scheme": "video_seconds_pricing",
+        "pricing_basis": "official_public",
+        "provider_family": APIMART_PROVIDER_FAMILY,
+        "official_model_id": official_model_id,
+        "price_model_id": official_model_id,
+        "allowed_upstream_model_ids": allowed_upstream_model_ids or [official_model_id],
+        "source_url": APIMART_PRICING_SOURCE_URL,
+        "source_checked_at": "2026-08-07",
+        "cost_per_second_by_resolution": normalized_prices,
+        "price_dimension_features": dimension_features,
+        "original_price": original_table,
+        "after_discount": after_table,
+        "active_price_basis": "after_discount",
+        "default_duration_seconds": default_duration_seconds,
+        "default_resolution": default_resolution,
+        "default_mode": default_mode,
+    }
+    if token_settlement_after_discount:
+        normalized_token_prices = {
+            str(key or "").strip().lower().replace("_", "-").replace(" ", "-"): float(value)
+            for key, value in token_settlement_after_discount.items()
+            if str(key or "").strip()
+        }
+        rule["settlement_pricing_scheme"] = "video_token_usage_pricing"
+        rule["token_settlement_unit"] = "usd_per_million_tokens"
+        rule["token_settlement_after_discount"] = normalized_token_prices
+        rule["token_settlement_original_price"] = (
+            {
+                str(key or "").strip().lower().replace("_", "-").replace(" ", "-"): float(value)
+                for key, value in token_settlement_original_price.items()
+                if str(key or "").strip()
+            }
+            if token_settlement_original_price
+            else _apimart_original_price_map(normalized_token_prices)
+        )
+    return rule
+
+
+def _apimart_midjourney_action_prices() -> dict[str, float]:
+    prices = {
+        "default": 0.04504,
+        "imagine": 0.04504,
+        "imagine-fast": 0.05504,
+        "imagine-turbo": 0.1,
+        "video": 0.2,
+        "video-720p": 0.4,
+    }
+    imagine_versions = ("niji6", "niji7", "v5.1", "v5.2", "v6.1", "v7", "v8.1", "v8.2")
+    for version in imagine_versions:
+        prices[f"imagine-{version}"] = 0.04504
+        prices[f"imagine-{version}-fast"] = 0.05504
+        prices[f"imagine-{version}-turbo"] = 0.1
+    for action in (
+        "blend", "describe", "edits", "high_variation", "inpaint", "low_variation", "modal",
+        "pan", "remix_strong", "remix_subtle", "reroll", "shorten", "upscale", "variation", "zoom",
+    ):
+        prices[action] = 0.05504
+        prices[f"{action}-fast"] = 0.05504
+        prices[f"{action}-turbo"] = 0.1
+    return prices
+
+
+_APIMART_MIDJOURNEY_UNIT_COST_BY_ACTION = _apimart_midjourney_action_prices()
+
+
+DEFAULT_MEDIA_MODEL_PRICING_RULES["image"].update(
+    {
+        "apimart-nano-banana": _apimart_image_size_rule(
+            "apimart-nano-banana",
+            "gemini-2.5-flash-image-preview",
+            {"default": 0.0125, "1k": 0.0125},
+            default_billing_size_tier="1K",
+            allowed_upstream_model_ids=["gemini-2.5-flash-image-preview", "gemini-2.5-flash-image", "nano-banana"],
+            original_price={"default": 0.015625, "1k": 0.015625},
+        ),
+        "apimart-nano-banana-2": _apimart_image_size_rule(
+            "apimart-nano-banana-2",
+            "gemini-3.1-flash-image-preview",
+            {"default": 0.03, "0.5k": 0.015, "1k": 0.015, "2k": 0.02, "4k": 0.025},
+            default_billing_size_tier="1K",
+            allowed_upstream_model_ids=["gemini-3.1-flash-image-preview", "gemini-3.1-flash-image", "nano-banana-2"],
+            original_price={"default": 0.0375, "0.5k": 0.01875, "1k": 0.01875, "2k": 0.025, "4k": 0.03125},
+        ),
+        "apimart-nano-banana-pro": _apimart_image_size_rule(
+            "apimart-nano-banana-pro",
+            "gemini-3-pro-image-preview",
+            {"default": 0.03, "4k": 0.04},
+            default_billing_size_tier="4K",
+            allowed_upstream_model_ids=["gemini-3-pro-image-preview", "gemini-3-pro-image", "nano-banana-pro"],
+            original_price={"default": 0.0375, "4k": 0.05},
+        ),
+        "apimart-doubao-seedream-5-0-pro": _apimart_image_size_rule(
+            "apimart-doubao-seedream-5-0-pro",
+            "doubao-seedream-5-0-pro",
+            {"default": 0.036, "1k": 0.02928, "2k": 0.05856},
+            default_billing_size_tier="1K",
+            allowed_upstream_model_ids=["doubao-seedream-5-0-pro", "doubao-seedream-5-0-260128"],
+            original_price={"default": 0.045, "1k": 0.0366, "2k": 0.0732},
+            max_output_count=4,
+        ),
+        "apimart-doubao-seedream-5-0-lite": _apimart_image_size_rule(
+            "apimart-doubao-seedream-5-0-lite",
+            "doubao-seedream-5-0-lite",
+            {"default": 0.0228, "1k": 0.0228},
+            default_billing_size_tier="1K",
+            allowed_upstream_model_ids=["doubao-seedream-5-0-lite", "doubao-seedream-5-0-lite-260128"],
+            original_price={"default": 0.0285, "1k": 0.0285},
+            max_output_count=4,
+        ),
+        "apimart-doubao-seedream-4-5": _apimart_image_size_rule(
+            "apimart-doubao-seedream-4-5",
+            "doubao-seedream-4-5",
+            {"1k": 0.0228, "2k": 0.0228},
+            default_billing_size_tier="1K",
+            allowed_upstream_model_ids=["doubao-seedream-4-5", "doubao-seedream-4-5-251128"],
+            original_price={"1k": 0.0285, "2k": 0.0285},
+            max_output_count=4,
+        ),
+        "apimart-doubao-seedream-4-0": _apimart_image_size_rule(
+            "apimart-doubao-seedream-4-0",
+            "doubao-seedream-4-0",
+            {"default": 0.0182, "1k": 0.0182, "2k": 0.0182},
+            default_billing_size_tier="1K",
+            allowed_upstream_model_ids=["doubao-seedream-4-0", "doubao-seedream-4-0-250828"],
+            original_price={"default": 0.02275, "1k": 0.02275, "2k": 0.02275},
+            max_output_count=4,
+        ),
+        "apimart-flux-kontext-pro": _apimart_image_size_rule(
+            "apimart-flux-kontext-pro",
+            "flux-kontext-pro",
+            {"default": 0.032},
+            default_billing_size_tier="default",
+            original_price={"default": 0.04},
+        ),
+        "apimart-flux-kontext-max": _apimart_image_size_rule(
+            "apimart-flux-kontext-max",
+            "flux-kontext-max",
+            {"default": 0.064},
+            default_billing_size_tier="default",
+            original_price={"default": 0.08},
+        ),
+        "apimart-flux-2-flex": _apimart_image_size_rule(
+            "apimart-flux-2-flex",
+            "flux-2-flex",
+            {"1mp": 0.04, "2mp": 0.08, "3mp": 0.12, "4mp": 0.16},
+            default_billing_size_tier="1MP",
+            original_price={"1mp": 0.05, "2mp": 0.1, "3mp": 0.15, "4mp": 0.2},
+        ),
+        "apimart-flux-2-pro": _apimart_image_size_rule(
+            "apimart-flux-2-pro",
+            "flux-2-pro",
+            {"1mp": 0.024, "2mp": 0.036, "3mp": 0.048, "4mp": 0.06},
+            default_billing_size_tier="1MP",
+            original_price={"1mp": 0.03, "2mp": 0.045, "3mp": 0.06, "4mp": 0.075},
+        ),
+        "apimart-flux-2-max": _apimart_image_size_rule(
+            "apimart-flux-2-max",
+            "flux-2-max",
+            {"default": 0.08, "1mp": 0.056, "2mp": 0.08, "3mp": 0.104, "4mp": 0.128},
+            default_billing_size_tier="default",
+            original_price={"default": 0.1, "1mp": 0.07, "2mp": 0.1, "3mp": 0.13, "4mp": 0.16},
+        ),
+        "apimart-midjourney": _apimart_image_call_rule(
+            "apimart-midjourney",
+            "midjourney",
+            _APIMART_MIDJOURNEY_UNIT_COST_BY_ACTION,
+            allowed_upstream_model_ids=["midjourney", "mj"],
+        ),
+    }
+)
+
+
+DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
+    {
+        "apimart-doubao-seedance-2.0": _apimart_video_seconds_rule(
+            "apimart-doubao-seedance-2.0",
+            "doubao-seedance-2.0",
+            {
+                "480p": 0.066,
+                "480p-input": 0.04,
+                "720p": 0.142,
+                "720p-input": 0.08584,
+                "1080p": 0.3544,
+                "1080p-input": 0.21568,
+                "4k": 0.722,
+                "4k-input": 0.44432,
+            },
+            default_resolution="1080p",
+            default_duration_seconds=5,
+            default_mode="standard",
+        ),
+        "apimart-doubao-seedance-2.0-face": _apimart_video_seconds_rule(
+            "apimart-doubao-seedance-2.0-face",
+            "doubao-seedance-2.0-face",
+            {
+                "480p": 0.0992,
+                "480p-input": 0.06,
+                "720p": 0.2136,
+                "720p-input": 0.1288,
+                "1080p": 0.5,
+                "1080p-input": 0.3,
+            },
+            default_resolution="720p",
+            default_duration_seconds=5,
+            default_mode="standard",
+        ),
+        "apimart-doubao-seedance-2.0-fast": _apimart_video_seconds_rule(
+            "apimart-doubao-seedance-2.0-fast",
+            "doubao-seedance-2.0-fast",
+            {
+                "480p": 0.05312,
+                "480p-input": 0.0316,
+                "720p": 0.11416,
+                "720p-input": 0.0684,
+            },
+            default_resolution="720p",
+            default_duration_seconds=5,
+            default_mode="fast",
+        ),
+        "apimart-doubao-seedance-2.0-fast-face": _apimart_video_seconds_rule(
+            "apimart-doubao-seedance-2.0-fast-face",
+            "doubao-seedance-2.0-fast-face",
+            {
+                "480p": 0.08,
+                "480p-input": 0.048,
+                "720p": 0.172,
+                "720p-input": 0.1032,
+            },
+            default_resolution="720p",
+            default_duration_seconds=5,
+            default_mode="fast",
+        ),
+        "apimart-doubao-seedance-2.0-mini": _apimart_video_seconds_rule(
+            "apimart-doubao-seedance-2.0-mini",
+            "doubao-seedance-2.0-mini",
+            {
+                "480p": 0.02632,
+                "480p-input": 0.01608,
+                "720p": 0.05712,
+                "720p-input": 0.03456,
+            },
+            default_resolution="720p",
+            default_duration_seconds=5,
+            default_mode="fast",
+        ),
+        "apimart-doubao-seedance-2.5": _apimart_video_seconds_rule(
+            "apimart-doubao-seedance-2.5",
+            "doubao-seedance-2.5",
+            {
+                "default": 0.216,
+                "480p": 0.09608,
+                "480p-input": 0.0576,
+                "720p": 0.216,
+                "720p-input": 0.1296,
+            },
+            default_resolution="720p",
+            default_duration_seconds=5,
+            default_mode="standard",
+            token_settlement_after_discount={"token": 10.0, "token-input": 6.0},
+            token_settlement_original_price={"token": 12.5, "token-input": 7.5},
+        ),
+        "apimart-happyhorse-1.0": _apimart_video_seconds_rule(
+            "apimart-happyhorse-1.0",
+            "happyhorse-1.0",
+            {
+                "default": 0.23,
+                "720p": 0.13,
+                "1080p": 0.23,
+                "edit-720p": 0.13,
+                "edit-1080p": 0.23,
+            },
+            default_resolution="720p",
+            default_duration_seconds=5,
+        ),
+        "apimart-minimax-h3": _apimart_video_seconds_rule(
+            "apimart-minimax-h3",
+            "MiniMax-H3",
+            {"default": 0.09144, "2k": 0.09144, "768p": 0.05712},
+            default_resolution="2k",
+            default_duration_seconds=5,
+        ),
+        "apimart-minimax-h3-regeneration": _apimart_video_seconds_rule(
+            "apimart-minimax-h3-regeneration",
+            "MiniMax-H3-Regeneration",
+            {"2k": 0.03432},
+            default_resolution="2k",
+            default_duration_seconds=15,
+        ),
+        "apimart-minimax-hailuo-02": _apimart_video_seconds_rule(
+            "apimart-minimax-hailuo-02",
+            "MiniMax-Hailuo-02",
+            {"512p": 0.0104, "768p": 0.04, "1080p": 0.08},
+            default_resolution="768p",
+            default_duration_seconds=5,
+        ),
+        "apimart-minimax-hailuo-2.3": _apimart_video_seconds_rule(
+            "apimart-minimax-hailuo-2.3",
+            "MiniMax-Hailuo-2.3",
+            {"default": 0.0488, "1080p": 0.072},
+            default_resolution="1080p",
+            default_duration_seconds=5,
+            default_mode="standard",
+        ),
+        "apimart-kling-3.0-turbo": _apimart_video_seconds_rule(
+            "apimart-kling-3.0-turbo",
+            "kling-3.0-turbo",
+            {"720p": 0.1144, "1080p": 0.1432},
+            default_resolution="1080p",
+            default_duration_seconds=5,
+            default_mode="turbo",
+        ),
+        "apimart-kling-v2-6": _apimart_video_seconds_rule(
+            "apimart-kling-v2-6",
+            "kling-v2-6",
+            {
+                "default": 0.0368,
+                "pro": 0.0625,
+                "pro-sound": 0.125,
+                "pro-sound-voice": 0.15,
+            },
+            default_resolution="1080p",
+            default_duration_seconds=5,
+        ),
+        "apimart-kling-v2-6-motion-control": _apimart_video_seconds_rule(
+            "apimart-kling-v2-6-motion-control",
+            "kling-v2-6-motion-control",
+            {"default": 0.05712, "pro": 0.09144},
+            default_resolution="1080p",
+            default_duration_seconds=5,
+            default_mode="standard",
+        ),
+        "apimart-kling-v3-motion-control": _apimart_video_seconds_rule(
+            "apimart-kling-v3-motion-control",
+            "kling-v3-motion-control",
+            {"default": 0.10288, "pro": 0.13712},
+            default_resolution="1080p",
+            default_duration_seconds=5,
+            default_mode="standard",
+        ),
+        "apimart-kling-v3-omni": _apimart_video_seconds_rule(
+            "apimart-kling-v3-omni",
+            "kling-v3-omni",
+            {
+                "default": 0.0672,
+                "4k": 0.42856,
+                "4k-sound": 0.42856,
+                "pro": 0.0896,
+                "pro-sound": 0.112,
+                "pro-video": 0.1344,
+                "sound": 0.0896,
+                "video": 0.1008,
+            },
+            default_resolution="1080p",
+            default_duration_seconds=5,
+            default_mode="omni",
+        ),
+        "apimart-kling-video-o1": _apimart_video_seconds_rule(
+            "apimart-kling-video-o1",
+            "kling-video-o1",
+            {
+                "default": 0.0672,
+                "pro": 0.0896,
+                "pro-video": 0.1344,
+                "video": 0.1008,
+            },
+            default_resolution="1080p",
+            default_duration_seconds=5,
+        ),
+        "apimart-wan2.7": _apimart_video_seconds_rule(
+            "apimart-wan2.7",
+            "wan2.7",
+            {"default": 0.0664, "1080p": 0.1096},
+            default_resolution="1080p",
+            default_duration_seconds=5,
+        ),
+        "apimart-wan2.7-r2v": _apimart_video_seconds_rule(
+            "apimart-wan2.7-r2v",
+            "wan2.7-r2v",
+            {"default": 0.0664, "1080p": 0.1096},
+            default_resolution="1080p",
+            default_duration_seconds=5,
+        ),
+        "apimart-wan2.7-videoedit": _apimart_video_seconds_rule(
+            "apimart-wan2.7-videoedit",
+            "wan2.7-videoedit",
+            {"default": 0.0664, "1080p": 0.1096},
+            default_resolution="1080p",
+            default_duration_seconds=5,
+        ),
+        "apimart-gemini-omni-flash-preview": _apimart_video_seconds_rule(
+            "apimart-gemini-omni-flash-preview",
+            "gemini-omni-flash-preview",
+            {"720p": 0.088},
+            default_resolution="720p",
+            default_duration_seconds=8,
+        ),
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -1035,6 +1521,9 @@ def validate_pricing_rules(raw: Any) -> dict[str, Any]:
             key = str(model_id or "").strip().lower()
             if not key:
                 raise ValueError(f"media_model_pricing_rules.{kind} contains an empty model id")
+            if isinstance(rule, dict) and rule.get("enabled") is False:
+                normalized[kind][key] = {"model_id": key, "enabled": False}
+                continue
             normalized[kind][key] = _validate_model_rule(kind, key, rule, schemes, normalized_rates)
     return normalized
 
@@ -1068,6 +1557,7 @@ def estimate_image_pricing(
     size: str | None = None,
     quality: str | None = None,
     aspect_ratio: str | None = None,
+    pricing_action: str | None = None,
     output_count: int = 1,
     reference_count: int = 0,
     rules: dict[str, Any] | None = None,
@@ -1084,42 +1574,65 @@ def estimate_image_pricing(
     if max_output_count > 0 and output_count > max_output_count:
         raise ValueError(f"Image output_count {output_count} exceeds max_output_count {max_output_count} for {model_id}")
     scheme = str(rule["scheme"])
-    if scheme != "image_size_tier_pricing":
-        raise ValueError(f"Unsupported image pricing scheme: {scheme}")
-    resolved_tier = _resolve_image_billing_size_tier(
-        rule,
-        billing_size_tier=billing_size_tier,
-        resolution=resolution,
-        size=size,
-    )
-    price_unit = str(rule.get("price_unit") or "credits").strip().lower()
-    unit_price = _lookup_active_price(rule, resolved_tier, fallback_mapping=rule.get("price_by_size_tier"), field=f"image.{model_id}.price_by_size_tier.{resolved_tier}")
-    if unit_price is None:
-        raise ValueError(f"Image pricing does not include billing_size_tier {resolved_tier} for {model_id}")
-    reference_unit_credits = _reference_unit_credits(rule)
-    if price_unit == "usd":
+    if scheme == "image_size_tier_pricing":
+        resolved_tier = _resolve_image_billing_size_tier(
+            rule,
+            billing_size_tier=billing_size_tier,
+            resolution=resolution,
+            size=size,
+        )
+        price_unit = str(rule.get("price_unit") or "credits").strip().lower()
+        unit_price = _lookup_active_price(rule, resolved_tier, fallback_mapping=rule.get("price_by_size_tier"), field=f"image.{model_id}.price_by_size_tier.{resolved_tier}")
+        if unit_price is None:
+            raise ValueError(f"Image pricing does not include billing_size_tier {resolved_tier} for {model_id}")
+        reference_unit_credits = _reference_unit_credits(rule)
+        if price_unit == "usd":
+            reference_cost = _reference_unit_cost(rule, "image") * resolved_reference_count
+            official_cost = unit_price * output_count + reference_cost
+            reference_charge = reference_cost
+            price_unit_label = "usd"
+        else:
+            reference_credits = reference_unit_credits * resolved_reference_count
+            billing_units = unit_price * output_count + reference_credits
+            official_cost = _credits_to_official_cost(loaded, rule, billing_units)
+            reference_charge = reference_credits
+            price_unit_label = "credits"
+        breakdown = {
+            "scheme": scheme,
+            "unit_credits": unit_price if price_unit == "credits" else None,
+            "unit_cost": unit_price if price_unit == "usd" else None,
+            "billing_size_tier": _display_billing_size_tier(resolved_tier),
+            "output_count": output_count,
+            "reference_count": resolved_reference_count,
+            "reference_unit_credits": reference_unit_credits,
+            "reference_credits": reference_charge if price_unit == "credits" else 0.0,
+            "reference_cost": reference_charge if price_unit == "usd" else 0.0,
+            "price_unit": price_unit_label,
+        }
+    elif scheme == "image_call_pricing":
+        resolved_action = _normalize_key(pricing_action) or "default"
+        unit_cost = _lookup_exact_active_price(
+            rule,
+            resolved_action,
+            fallback_mapping=rule.get("call_cost_by_action"),
+            field=f"image.{model_id}.call_cost_by_action.{resolved_action}",
+        )
+        if unit_cost is None:
+            raise ValueError(f"Image pricing does not include pricing_action {resolved_action} for {model_id}")
         reference_cost = _reference_unit_cost(rule, "image") * resolved_reference_count
-        official_cost = unit_price * output_count + reference_cost
-        reference_charge = reference_cost
-        price_unit_label = "usd"
+        official_cost = unit_cost * output_count + reference_cost
+        breakdown = {
+            "scheme": scheme,
+            "unit_cost": unit_cost,
+            "pricing_action": resolved_action,
+            "output_count": output_count,
+            "reference_count": resolved_reference_count,
+            "reference_unit_cost": _reference_unit_cost(rule, "image"),
+            "reference_cost": reference_cost,
+            "price_unit": "usd",
+        }
     else:
-        reference_credits = reference_unit_credits * resolved_reference_count
-        billing_units = unit_price * output_count + reference_credits
-        official_cost = _credits_to_official_cost(loaded, rule, billing_units)
-        reference_charge = reference_credits
-        price_unit_label = "credits"
-    breakdown = {
-        "scheme": scheme,
-        "unit_credits": unit_price if price_unit == "credits" else None,
-        "unit_cost": unit_price if price_unit == "usd" else None,
-        "billing_size_tier": resolved_tier.upper(),
-        "output_count": output_count,
-        "reference_count": resolved_reference_count,
-        "reference_unit_credits": reference_unit_credits,
-        "reference_credits": reference_charge if price_unit == "credits" else 0.0,
-        "reference_cost": reference_charge if price_unit == "usd" else 0.0,
-        "price_unit": price_unit_label,
-    }
+        raise ValueError(f"Unsupported image pricing scheme: {scheme}")
 
     return _pricing_result(loaded, rule, official_cost, breakdown)
 
@@ -1137,8 +1650,6 @@ def estimate_video_pricing(
     provider_usage: dict[str, Any] | None = None,
     rules: dict[str, Any] | None = None,
 ) -> MediaPricingResult:
-    # Provider-reported cost is telemetry only and must not alter customer billing.
-    _ = provider_usage
     loaded = load_pricing_rules(rules)
     rule = model_rule("video", model_id, loaded)
     if rule is None:
@@ -1154,21 +1665,111 @@ def estimate_video_pricing(
     reference_cost = reference_unit_cost * resolved_reference_count
 
     if scheme == "video_seconds_pricing":
-        per_second_map = (
-            rule.get("cost_per_second_with_audio_by_resolution") or rule.get("usd_per_second_with_audio_by_resolution")
-            if generate_audio and (isinstance(rule.get("cost_per_second_with_audio_by_resolution"), dict) or isinstance(rule.get("usd_per_second_with_audio_by_resolution"), dict))
-            else rule.get("cost_per_second_by_resolution") or rule.get("usd_per_second_by_resolution")
+        per_second_map = rule.get("cost_per_second_by_resolution") or rule.get("usd_per_second_by_resolution")
+        with_audio_map = rule.get("cost_per_second_with_audio_by_resolution") or rule.get("usd_per_second_with_audio_by_resolution")
+        price_key, dimension_candidates = _video_seconds_dimension_price_key(
+            rule,
+            resolved_resolution,
+            resolved_mode,
+            command=command,
+            generate_audio=generate_audio,
+            reference_count=resolved_reference_count,
+            base_mapping=per_second_map,
+            with_audio_mapping=with_audio_map,
         )
-        unit_cost = _lookup_active_price(rule, resolved_resolution, fallback_mapping=per_second_map, field=f"video.{rule['model_id']}.cost_per_second_by_resolution.{resolved_resolution}")
+        token_settlement_usage = _video_token_settlement_usage(rule, provider_usage)
+        if token_settlement_usage is not None:
+            unit_prices = token_settlement_usage["unit_prices"]
+            input_tokens = float(token_settlement_usage["input_tokens"])
+            output_tokens = float(token_settlement_usage["output_tokens"])
+            token_input_cost = (input_tokens / 1_000_000.0) * float(unit_prices.get("token-input", 0.0))
+            token_cost = (output_tokens / 1_000_000.0) * float(unit_prices.get("token", 0.0))
+            official_cost = token_input_cost + token_cost
+            breakdown = {
+                "scheme": scheme,
+                "settlement_pricing_scheme": "video_token_usage_pricing",
+                "settlement_source": "provider_usage",
+                "token_settlement_unit": str(rule.get("token_settlement_unit") or "usd_per_million_tokens"),
+                "token_input_cost_per_million": float(unit_prices.get("token-input", 0.0)),
+                "token_cost_per_million": float(unit_prices.get("token", 0.0)),
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "token_input_cost": token_input_cost,
+                "token_cost": token_cost,
+                "price_dimension_key": price_key,
+                "price_dimension_candidates": dimension_candidates,
+                "duration_seconds": resolved_duration,
+                "resolution": resolved_resolution,
+                "mode": resolved_mode,
+                "command": _normalize_key(command or "generate"),
+                "output_count": output_count,
+                "reference_count": resolved_reference_count,
+                "reference_unit_cost": reference_unit_cost,
+                "reference_cost": 0.0,
+            }
+            return _pricing_result(loaded, rule, official_cost, breakdown)
+        actual_provider_cost = _video_actual_cost_settlement_cost(rule, provider_usage)
+        if actual_provider_cost is not None:
+            official_cost = actual_provider_cost["official_cost"]
+            breakdown = {
+                "scheme": scheme,
+                "settlement_pricing_scheme": "video_token_usage_pricing",
+                "settlement_source": "provider_task_cost",
+                "provider_task_cost": official_cost,
+                "provider_credits_cost": actual_provider_cost.get("credits_cost"),
+                "price_dimension_key": price_key,
+                "price_dimension_candidates": dimension_candidates,
+                "duration_seconds": resolved_duration,
+                "resolution": resolved_resolution,
+                "mode": resolved_mode,
+                "command": _normalize_key(command or "generate"),
+                "output_count": output_count,
+                "reference_count": resolved_reference_count,
+                "reference_unit_cost": reference_unit_cost,
+                "reference_cost": 0.0,
+            }
+            return _pricing_result(loaded, rule, official_cost, breakdown)
+        if provider_usage is not None and str(rule.get("settlement_pricing_scheme") or "") == "video_token_usage_pricing":
+            raise ValueError(f"Video token settlement usage is missing for {rule['model_id']}")
+        exact_dimension = price_key != resolved_resolution
+        if exact_dimension:
+            lookup_map = with_audio_map if price_key.endswith("-audio") and isinstance(with_audio_map, dict) else per_second_map
+            unit_cost = _lookup_exact_active_price(
+                rule,
+                price_key,
+                fallback_mapping=lookup_map,
+                field=f"video.{rule['model_id']}.cost_per_second_by_resolution.{price_key}",
+            )
+        elif generate_audio and isinstance(with_audio_map, dict):
+            raw_audio_cost = _lookup_number(with_audio_map, resolved_resolution, default=None)
+            unit_cost = (
+                _positive_float(raw_audio_cost, f"video.{rule['model_id']}.cost_per_second_with_audio_by_resolution.{resolved_resolution}", allow_zero=False)
+                if raw_audio_cost is not None
+                else _lookup_active_price(
+                    rule,
+                    resolved_resolution,
+                    fallback_mapping=with_audio_map,
+                    field=f"video.{rule['model_id']}.cost_per_second_with_audio_by_resolution.{resolved_resolution}",
+                )
+            )
+        else:
+            unit_cost = _lookup_active_price(
+                rule,
+                resolved_resolution,
+                fallback_mapping=per_second_map,
+                field=f"video.{rule['model_id']}.cost_per_second_by_resolution.{resolved_resolution}",
+            )
         if unit_cost is None:
-            raise ValueError(f"Video pricing does not include resolution {resolved_resolution} for {rule['model_id']}")
+            raise ValueError(f"Video pricing does not include resolution dimension {price_key} for {rule['model_id']}")
         mode_multiplier = _lookup_number(rule.get("mode_multipliers"), resolved_mode, default=1.0) or 1.0
         command_multiplier = _lookup_number(rule.get("command_multipliers"), _normalize_key(command or "generate"), default=1.0) or 1.0
-        audio_multiplier = float(rule.get("audio_multiplier", 1.0) or 1.0) if generate_audio else 1.0
+        audio_multiplier = 1.0 if exact_dimension and _video_price_key_covers_feature(price_key, "audio") else float(rule.get("audio_multiplier", 1.0) or 1.0) if generate_audio else 1.0
         official_cost = unit_cost * resolved_duration * output_count * mode_multiplier * command_multiplier * audio_multiplier + reference_cost
         breakdown = {
             "scheme": scheme,
             "cost_per_second": unit_cost,
+            "price_dimension_key": price_key,
+            "price_dimension_candidates": dimension_candidates,
             "duration_seconds": resolved_duration,
             "resolution": resolved_resolution,
             "mode": resolved_mode,
@@ -1181,6 +1782,12 @@ def estimate_video_pricing(
             "reference_unit_cost": reference_unit_cost,
             "reference_cost": reference_cost,
         }
+        if str(rule.get("settlement_pricing_scheme") or "") == "video_token_usage_pricing":
+            breakdown["settlement_pricing_scheme"] = "video_token_usage_pricing"
+            breakdown["settlement_source"] = "provider_usage"
+            breakdown["token_settlement_unit"] = str(rule.get("token_settlement_unit") or "usd_per_million_tokens")
+            breakdown["token_settlement_after_discount"] = dict(rule.get("token_settlement_after_discount") or {})
+            breakdown["token_settlement_original_price"] = dict(rule.get("token_settlement_original_price") or {})
     elif scheme == "video_unit_pricing":
         unit_cost = _lookup_unit_cost(rule, resolved_mode, resolved_resolution)
         duration_factor = resolved_duration / max(float(rule.get("unit_duration_seconds", resolved_duration) or resolved_duration), 1.0)
@@ -1199,41 +1806,29 @@ def estimate_video_pricing(
         }
     elif scheme == "video_call_pricing":
         resolved_command = _normalize_key(command or "generate")
+        call_mapping: dict[str, Any] = {}
+        for mapping in (rule.get("call_cost_by_resolution"), rule.get("call_cost_by_command")):
+            if isinstance(mapping, dict):
+                call_mapping.update(mapping)
         unit_cost = None
-        if resolved_command not in {"", "generate", "default"}:
-            unit_cost = _lookup_active_price(
+        price_key = ""
+        for candidate in _video_price_candidate_basis(resolved_resolution, resolved_mode, resolved_command):
+            unit_cost = _lookup_exact_active_price(
                 rule,
-                resolved_command,
-                fallback_mapping=rule.get("call_cost_by_command"),
-                field=f"video.{rule['model_id']}.call_cost_by_command.{resolved_command}",
+                candidate,
+                fallback_mapping=call_mapping,
+                field=f"video.{rule['model_id']}.video_call_pricing.{candidate}",
             )
-        if unit_cost is None:
-            unit_cost = _lookup_active_price(
-                rule,
-                resolved_resolution,
-                fallback_mapping=rule.get("call_cost_by_resolution"),
-                field=f"video.{rule['model_id']}.call_cost_by_resolution.{resolved_resolution}",
-            )
-        if unit_cost is None:
-            unit_cost = _lookup_active_price(
-                rule,
-                "default",
-                fallback_mapping=rule.get("call_cost_by_resolution"),
-                field=f"video.{rule['model_id']}.call_cost_by_resolution.default",
-            )
-        if unit_cost is None:
-            unit_cost = _lookup_active_price(
-                rule,
-                "default",
-                fallback_mapping=rule.get("call_cost_by_command"),
-                field=f"video.{rule['model_id']}.call_cost_by_command.default",
-            )
+            if unit_cost is not None:
+                price_key = candidate
+                break
         if unit_cost is None:
             raise ValueError(f"Video pricing does not include a call cost for {rule['model_id']}")
         official_cost = unit_cost * output_count + reference_cost
         breakdown = {
             "scheme": scheme,
             "unit_cost": unit_cost,
+            "price_dimension_key": price_key,
             "duration_seconds": resolved_duration,
             "resolution": resolved_resolution,
             "mode": resolved_mode,
@@ -1419,6 +2014,23 @@ def _validate_model_rule(kind: str, model_id: str, raw: Any, schemes: set[str], 
 
 
 def _validate_image_scheme(model_id: str, rule: dict[str, Any]) -> None:
+    if rule["scheme"] == "image_call_pricing":
+        action_costs = rule.get("call_cost_by_action")
+        if not isinstance(action_costs, dict) or not action_costs:
+            raise ValueError(f"image.{model_id}.call_cost_by_action must be a non-empty object")
+        normalized_costs: dict[str, float] = {}
+        for action, cost in action_costs.items():
+            normalized_action = _normalize_key(action)
+            if not normalized_action:
+                raise ValueError(f"image.{model_id}.call_cost_by_action contains an empty action")
+            normalized_costs[normalized_action] = _positive_float(cost, f"image.{model_id}.call_cost_by_action.{normalized_action}", allow_zero=False)
+        if "default" not in normalized_costs:
+            raise ValueError(f"image.{model_id}.call_cost_by_action.default is required")
+        rule["call_cost_by_action"] = normalized_costs
+        rule["max_output_count"] = int(_positive_float(rule.get("max_output_count", 1), f"image.{model_id}.max_output_count", allow_zero=False))
+        if any(key in rule and rule.get(key) is not None for key in ("reference_unit_cost", "cost_per_reference", "reference_cost")):
+            rule["reference_unit_cost"] = _reference_unit_cost(rule, "image")
+        return
     price_unit = str(rule.get("price_unit") or "credits").strip().lower()
     if price_unit not in {"credits", "usd"}:
         raise ValueError(f"image.{model_id}.price_unit must be credits or usd")
@@ -1429,7 +2041,7 @@ def _validate_image_scheme(model_id: str, rule: dict[str, Any]) -> None:
     normalized_prices: dict[str, float] = {}
     for tier, price in prices.items():
         normalized_tier = _normalize_billing_size_tier(tier)
-        if normalized_tier not in {"1k", "2k", "4k"}:
+        if not _valid_billing_size_tier(normalized_tier):
             raise ValueError(f"image.{model_id}.price_by_size_tier contains unsupported tier {tier}")
         normalized_prices[normalized_tier] = _positive_float(price, f"image.{model_id}.price_by_size_tier.{normalized_tier}", allow_zero=False)
     rule["price_by_size_tier"] = normalized_prices
@@ -1457,6 +2069,31 @@ def _validate_video_scheme(model_id: str, rule: dict[str, Any]) -> None:
             raise ValueError(f"video.{model_id}.cost_per_second_by_resolution must be a non-empty object")
         if "cost_per_second_by_resolution" not in rule:
             rule["cost_per_second_by_resolution"] = costs
+        dimension_features = rule.get("price_dimension_features")
+        if dimension_features is not None:
+            if not isinstance(dimension_features, list) or not all(str(item or "").strip() for item in dimension_features):
+                raise ValueError(f"video.{model_id}.price_dimension_features must be a string list")
+            rule["price_dimension_features"] = sorted({_normalize_key(item) for item in dimension_features})
+        if str(rule.get("settlement_pricing_scheme") or "") == "video_token_usage_pricing":
+            token_prices = rule.get("token_settlement_after_discount")
+            if not isinstance(token_prices, dict):
+                raise ValueError(f"video.{model_id}.token_settlement_after_discount must be an object")
+            normalized_token_prices = {
+                _normalize_key(key): _positive_float(value, f"video.{model_id}.token_settlement_after_discount.{_normalize_key(key)}", allow_zero=False)
+                for key, value in token_prices.items()
+                if _normalize_key(key)
+            }
+            if "token" not in normalized_token_prices or "token-input" not in normalized_token_prices:
+                raise ValueError(f"video.{model_id}.token_settlement_after_discount must include token and token-input")
+            rule["token_settlement_after_discount"] = normalized_token_prices
+            original_token_prices = rule.get("token_settlement_original_price")
+            if isinstance(original_token_prices, dict):
+                rule["token_settlement_original_price"] = {
+                    _normalize_key(key): _positive_float(value, f"video.{model_id}.token_settlement_original_price.{_normalize_key(key)}", allow_zero=False)
+                    for key, value in original_token_prices.items()
+                    if _normalize_key(key)
+                }
+            rule["token_settlement_unit"] = str(rule.get("token_settlement_unit") or "usd_per_million_tokens")
     elif rule["scheme"] == "video_unit_pricing":
         if not any(isinstance(rule.get(key), dict) and rule[key] for key in ("cost_by_quality_size", "cost_by_size")) and "unit_cost" not in rule:
             raise ValueError(f"video.{model_id} must define unit_cost, cost_by_size, or cost_by_quality_size")
@@ -1654,7 +2291,12 @@ def _resolve_image_billing_size_tier(
 
 
 def _billing_size_tier_rank(tier: str) -> int:
-    return {"1k": 1, "2k": 2, "4k": 4}.get(_normalize_billing_size_tier(tier), 0)
+    normalized = _normalize_billing_size_tier(tier)
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)(k|mp)", normalized)
+    if match:
+        scale = 1_000 if match.group(2) == "k" else 1_000_000
+        return int(float(match.group(1)) * scale)
+    return 0
 
 
 def _billing_size_tier_from_value(rule: dict[str, Any], value: str | None) -> str | None:
@@ -1668,10 +2310,29 @@ def _billing_size_tier_from_value(rule: dict[str, Any], value: str | None) -> st
     if isinstance(aliases, dict) and alias_key in aliases:
         return _normalize_billing_size_tier(aliases[alias_key])
     direct = _normalize_billing_size_tier(text)
-    if direct in {"1k", "2k", "4k"}:
+    if _valid_billing_size_tier(direct):
         return direct
     parsed = _parse_pixel_size(alias_key)
     if parsed:
+        width, height = parsed
+        configured_tiers = {_normalize_billing_size_tier(tier) for tier in (rule.get("price_by_size_tier") or {})}
+        if any(tier.endswith("mp") for tier in configured_tiers):
+            megapixels = max(width * height / 1_000_000.0, 0.0)
+            mp_candidates = [
+                tier
+                for tier in configured_tiers
+                if re.fullmatch(r"\d+(?:\.\d+)?mp", tier)
+            ]
+            if mp_candidates:
+                ranked = sorted(
+                    (
+                        abs(float(re.fullmatch(r"(\d+(?:\.\d+)?)mp", tier).group(1)) - megapixels),
+                        -_billing_size_tier_rank(tier),
+                        tier,
+                    )
+                    for tier in mp_candidates
+                )
+                return ranked[0][2]
         longest = max(parsed)
         if longest >= 3000:
             return "4k"
@@ -1683,13 +2344,15 @@ def _billing_size_tier_from_value(rule: dict[str, Any], value: str | None) -> st
 
 def _resolve_configured_billing_size_tier(value: Any) -> str:
     tier = _normalize_billing_size_tier(value)
-    if tier not in {"1k", "2k", "4k"}:
-        raise ValueError(f"billing_size_tier must be one of 1K, 2K, or 4K")
+    if not _valid_billing_size_tier(tier):
+        raise ValueError(f"billing_size_tier is not supported")
     return tier
 
 
 def _normalize_billing_size_tier(value: Any) -> str:
     text = str(value or "").strip().lower().replace(" ", "")
+    if text in {"default", "auto"}:
+        return "default"
     if text in {"1", "1k"}:
         return "1k"
     if text in {"2", "2k"}:
@@ -1697,6 +2360,21 @@ def _normalize_billing_size_tier(value: Any) -> str:
     if text in {"4", "4k"}:
         return "4k"
     return text
+
+
+def _valid_billing_size_tier(value: str) -> bool:
+    text = str(value or "").strip().lower()
+    return bool(text == "default" or re.fullmatch(r"\d+(?:\.\d+)?(?:k|mp)", text) or re.fullmatch(r"[a-z][a-z0-9_.:+-]{0,63}", text))
+
+
+def _display_billing_size_tier(value: str) -> str:
+    text = _normalize_billing_size_tier(value)
+    if text == "default":
+        return "DEFAULT"
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)(k|mp)", text)
+    if match:
+        return f"{match.group(1)}{match.group(2).upper()}"
+    return text.upper()
 
 
 def _normalize_alias_key(value: Any) -> str:
@@ -1807,6 +2485,317 @@ def _lookup_active_price(
     if fallback_value is not None:
         return _positive_float(fallback_value, field, allow_zero=allow_zero)
     return None
+
+
+def _lookup_exact_active_price(
+    rule: dict[str, Any],
+    key: str,
+    *,
+    fallback_mapping: Any = None,
+    field: str,
+    allow_zero: bool = False,
+) -> float | None:
+    normalized_key = _normalize_key(key)
+    lookup_keys = [key]
+    if normalized_key and not normalized_key.startswith("official-"):
+        lookup_keys.append(f"official-{normalized_key}")
+    for mapping in (_active_price_table(rule), fallback_mapping):
+        if not isinstance(mapping, dict):
+            continue
+        for lookup_key in lookup_keys:
+            value = _lookup_number(mapping, lookup_key, default=None)
+            if value is not None:
+                return _positive_float(value, field, allow_zero=allow_zero)
+    return None
+
+
+def _mapping_has_normalized_key(mapping: Any, key: str) -> bool:
+    if not isinstance(mapping, dict):
+        return False
+    normalized = _normalize_key(key)
+    return any(_normalize_key(raw_key) == normalized for raw_key in mapping)
+
+
+def _video_dimension_suffix_candidates(feature: str) -> tuple[str, ...]:
+    normalized = _normalize_key(feature)
+    if normalized in {"input", "reference"}:
+        return ("input", "reference", "refvideo")
+    if normalized in {"audio", "sound"}:
+        return ("audio", "sound")
+    return (normalized,)
+
+
+def _video_match_dimension_suffix(rule: dict[str, Any], feature: str, *mappings: Any) -> str | None:
+    for suffix in _video_dimension_suffix_candidates(feature):
+        normalized_suffix = f"-{suffix}"
+        for mapping in (_active_price_table(rule), *mappings):
+            if not isinstance(mapping, dict):
+                continue
+            if any(_normalize_key(key).endswith(normalized_suffix) for key in mapping):
+                return suffix
+    return None
+
+
+def _video_price_key_covers_feature(price_key: str, feature: str) -> bool:
+    normalized = _normalize_key(price_key)
+    return any(
+        normalized == suffix or normalized.endswith(f"-{suffix}")
+        for suffix in _video_dimension_suffix_candidates(feature)
+    )
+
+
+def _video_price_key_exists(rule: dict[str, Any], key: str, *mappings: Any) -> bool:
+    return (
+        _mapping_has_normalized_key(_active_price_table(rule), key)
+        or any(_mapping_has_normalized_key(mapping, key) for mapping in mappings)
+    )
+
+
+def _video_token_settlement_usage(rule: dict[str, Any], provider_usage: dict[str, Any] | None) -> dict[str, Any] | None:
+    if str(rule.get("settlement_pricing_scheme") or "") != "video_token_usage_pricing":
+        return None
+    if not isinstance(provider_usage, dict):
+        return None
+    unit_prices = rule.get("token_settlement_after_discount")
+    if not isinstance(unit_prices, dict) or "token" not in unit_prices or "token-input" not in unit_prices:
+        raise ValueError(f"Video token settlement prices are incomplete for {rule['model_id']}")
+    usage = _find_token_usage_dict(provider_usage)
+    if not isinstance(usage, dict):
+        return None
+    input_tokens = _usage_number(
+        usage,
+        "token-input",
+        "token_input",
+        "input_token",
+        "input_tokens",
+        "prompt_tokens",
+        "prompt_token_count",
+    )
+    output_tokens = _usage_number(
+        usage,
+        "token",
+        "tokens",
+        "output_token",
+        "output_tokens",
+        "completion_tokens",
+        "generated_tokens",
+        "billable_tokens",
+    )
+    total_tokens = _usage_number(usage, "total_token", "total_tokens", "total")
+    if output_tokens is None and total_tokens is not None:
+        output_tokens = max(total_tokens - float(input_tokens or 0.0), 0.0)
+    input_tokens = float(input_tokens or 0.0)
+    output_tokens = float(output_tokens or 0.0)
+    if input_tokens <= 0 and output_tokens <= 0:
+        return None
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "unit_prices": {
+            "token": float(unit_prices["token"]),
+            "token-input": float(unit_prices["token-input"]),
+        },
+    }
+
+
+def _video_actual_cost_settlement_cost(rule: dict[str, Any], provider_usage: dict[str, Any] | None) -> dict[str, float] | None:
+    if str(rule.get("settlement_pricing_scheme") or "") != "video_token_usage_pricing":
+        return None
+    if not isinstance(provider_usage, dict):
+        return None
+    raw_cost = _usage_number(
+        provider_usage,
+        "cost",
+        "usd_cost",
+        "provider_cost",
+        "official_cost",
+        "actual_cost",
+        "task_cost",
+    )
+    if raw_cost is None:
+        usage = _find_token_usage_dict(provider_usage)
+        if isinstance(usage, dict):
+            raw_cost = _usage_number(usage, "cost", "usd_cost", "provider_cost", "official_cost", "actual_cost", "task_cost")
+    if raw_cost is None or raw_cost <= 0:
+        return None
+    credits_cost = _usage_number(provider_usage, "credits_cost", "credits")
+    return {
+        "official_cost": float(raw_cost),
+        "credits_cost": float(credits_cost) if credits_cost is not None else 0.0,
+    }
+
+
+def _find_token_usage_dict(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    candidate_keys = {"usage", "token_usage", "billing_usage", "billing", "tokens", "usage_tokens"}
+    if _usage_dict_has_token_keys(value):
+        return value
+    for key, item in value.items():
+        if _normalize_key(str(key)) in candidate_keys and isinstance(item, dict) and _usage_dict_has_token_keys(item):
+            return item
+    for key in ("data", "result", "metadata", "meta", "response"):
+        item = value.get(key)
+        if isinstance(item, dict):
+            nested = _find_token_usage_dict(item)
+            if nested is not None:
+                return nested
+    return None
+
+
+def _usage_dict_has_token_keys(value: dict[str, Any]) -> bool:
+    token_keys = {
+        "token",
+        "tokens",
+        "token-input",
+        "token_input",
+        "input_tokens",
+        "prompt_tokens",
+        "output_tokens",
+        "completion_tokens",
+        "generated_tokens",
+        "billable_tokens",
+        "total_tokens",
+    }
+    return any(_normalize_key(str(key)) in token_keys for key in value)
+
+
+def _usage_number(value: dict[str, Any], *keys: str) -> float | None:
+    wanted = {_normalize_key(key) for key in keys}
+    for key, item in value.items():
+        if _normalize_key(str(key)) not in wanted:
+            continue
+        if isinstance(item, bool):
+            continue
+        try:
+            numeric = float(item)
+        except (TypeError, ValueError):
+            continue
+        if numeric >= 0 and numeric == numeric:
+            return numeric
+    return None
+
+
+def _video_price_candidate_basis(resolution: str, mode: str, command: str | None = None) -> list[str]:
+    normalized_resolution = _normalize_key(resolution)
+    normalized_command = _normalize_key(command)
+    candidates: list[str] = []
+    if normalized_command and normalized_command not in {"standard", "default", "generate"}:
+        if normalized_resolution:
+            candidates.append(f"{normalized_command}-{normalized_resolution}")
+            candidates.append(f"{normalized_resolution}-{normalized_command}")
+    normalized_mode = _normalize_key(mode)
+    if normalized_mode and normalized_mode not in {"standard", "default", "generate"}:
+        if normalized_resolution:
+            candidates.append(f"{normalized_mode}-{normalized_resolution}")
+            candidates.append(f"{normalized_resolution}-{normalized_mode}")
+    candidates.append(normalized_resolution)
+    if normalized_command and normalized_command not in {"standard", "default", "generate"}:
+        candidates.append(normalized_command)
+    if normalized_mode and normalized_mode not in {"standard", "default", "generate"}:
+        candidates.append(normalized_mode)
+    candidates.append("default")
+    result: list[str] = []
+    for candidate in candidates:
+        if candidate and candidate not in result:
+            result.append(candidate)
+    return result
+
+
+def _video_feature_price_candidates(resolution: str, mode: str, command: str | None, suffixes: list[str]) -> list[str]:
+    basis = _video_price_candidate_basis(resolution, mode, command)
+    candidates: list[str] = []
+    if len(suffixes) > 1:
+        for base in basis:
+            candidates.append(f"{base}-{'-'.join(suffixes)}")
+            candidates.append(f"{base}-{'-'.join(reversed(suffixes))}")
+    for base in basis:
+        for suffix in suffixes:
+            candidates.append(f"{base}-{suffix}")
+    if len(suffixes) > 1:
+        candidates.append("-".join(suffixes))
+        candidates.append("-".join(reversed(suffixes)))
+    candidates.extend(suffixes)
+    result: list[str] = []
+    for candidate in candidates:
+        normalized = _normalize_key(candidate)
+        if normalized and normalized not in result:
+            result.append(normalized)
+    return result
+
+
+def _video_combined_feature_price_candidates(resolution: str, mode: str, command: str | None, suffixes: list[str]) -> list[str]:
+    if len(suffixes) < 2:
+        return []
+    candidates: list[str] = []
+    for base in _video_price_candidate_basis(resolution, mode, command):
+        candidates.append(f"{base}-{'-'.join(suffixes)}")
+        candidates.append(f"{base}-{'-'.join(reversed(suffixes))}")
+    candidates.append("-".join(suffixes))
+    candidates.append("-".join(reversed(suffixes)))
+    result: list[str] = []
+    for candidate in candidates:
+        normalized = _normalize_key(candidate)
+        if normalized and normalized not in result:
+            result.append(normalized)
+    return result
+
+
+def _video_seconds_dimension_price_key(
+    rule: dict[str, Any],
+    resolution: str,
+    mode: str,
+    *,
+    command: str | None,
+    generate_audio: bool,
+    reference_count: int,
+    base_mapping: Any,
+    with_audio_mapping: Any,
+) -> tuple[str, list[str]]:
+    normalized_resolution = _normalize_key(resolution)
+    required_suffixes: list[str] = []
+    input_suffix = _video_match_dimension_suffix(rule, "input", base_mapping)
+    audio_suffix = _video_match_dimension_suffix(rule, "audio", base_mapping, with_audio_mapping)
+    dimension_features = {_normalize_key(item) for item in (rule.get("price_dimension_features") or []) if str(item or "").strip()}
+    if reference_count > 0:
+        if input_suffix:
+            required_suffixes.append(input_suffix)
+        elif "input" in dimension_features:
+            expected = ", ".join(f"{normalized_resolution}-{suffix}" for suffix in _video_dimension_suffix_candidates("input"))
+            raise ValueError(f"Video pricing does not include required APIMart input dimension ({expected}) for {rule['model_id']}")
+    if generate_audio:
+        if audio_suffix:
+            required_suffixes.append(audio_suffix)
+        elif "audio" in dimension_features:
+            expected = ", ".join(f"{normalized_resolution}-{suffix}" for suffix in _video_dimension_suffix_candidates("audio"))
+            raise ValueError(f"Video pricing does not include required APIMart audio dimension ({expected}) for {rule['model_id']}")
+    if not required_suffixes:
+        for candidate in _video_price_candidate_basis(normalized_resolution, mode, command):
+            if _video_price_key_exists(rule, candidate, base_mapping, with_audio_mapping):
+                return candidate, []
+        return normalized_resolution, []
+
+    exact_candidates = _video_feature_price_candidates(normalized_resolution, mode, command, required_suffixes)
+    if len(required_suffixes) > 1:
+        combined_candidates = _video_combined_feature_price_candidates(normalized_resolution, mode, command, required_suffixes)
+        for candidate in combined_candidates:
+            if _video_price_key_exists(rule, candidate, base_mapping, with_audio_mapping):
+                return candidate, combined_candidates
+        raise ValueError(f"Video pricing does not include required APIMart dimension {', '.join(combined_candidates)} for {rule['model_id']}")
+
+    for candidate in exact_candidates:
+        if not _video_price_key_exists(rule, candidate, base_mapping, with_audio_mapping):
+            continue
+        price = _lookup_exact_active_price(
+            rule,
+            candidate,
+            fallback_mapping=with_audio_mapping if _video_price_key_covers_feature(candidate, "audio") and isinstance(with_audio_mapping, dict) else base_mapping,
+            field=f"video.{rule['model_id']}.cost_per_second_by_resolution.{candidate}",
+        )
+        if price is None:
+            raise ValueError(f"Video pricing does not include required APIMart dimension {candidate} for {rule['model_id']}")
+        return candidate, exact_candidates
+    raise ValueError(f"Video pricing does not include required APIMart dimension {', '.join(exact_candidates)} for {rule['model_id']}")
 
 
 def _normalize_key(value: str | None) -> str:

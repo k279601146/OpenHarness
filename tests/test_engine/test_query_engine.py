@@ -1729,6 +1729,83 @@ async def test_query_engine_executes_ask_user_tool(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_query_engine_normalizes_ask_user_question_option_values(tmp_path: Path):
+    async def _answer(payload):
+        assert payload["questions"][1]["options"][0]["value"] == "5"
+        assert payload["questions"][2]["options"][0]["value"] == "true"
+        return "5"
+
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(
+                                id="toolu_ask",
+                                name="ask_user_question",
+                                input={
+                                    "questions": [
+                                        {
+                                            "id": "aspect_ratio",
+                                            "question": "Which aspect ratio?",
+                                            "options": [
+                                                {"label": "Portrait", "value": "9:16", "recommended": True},
+                                                {"label": "Landscape", "value": "16:9"},
+                                            ],
+                                        },
+                                        {
+                                            "id": "duration",
+                                            "question": "How long?",
+                                            "options": [
+                                                {"label": "Short", "value": 5, "recommended": True},
+                                                {"label": "Long", "value": 10},
+                                            ],
+                                        },
+                                        {
+                                            "id": "audio",
+                                            "question": "Need audio?",
+                                            "options": [
+                                                {"label": "Yes", "value": True, "recommended": True},
+                                                {"label": "No", "value": False},
+                                            ],
+                                        },
+                                    ]
+                                },
+                            ),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[TextBlock(text="Done.")],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+            ]
+        ),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings()),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        ask_user_prompt=_answer,
+        tool_metadata={"ask_user_prompt_accepts_structured": True},
+    )
+
+    events = [event async for event in engine.submit_message("pick video options")]
+
+    tool_results = [event for event in events if isinstance(event, ToolExecutionCompleted)]
+    assert tool_results
+    assert tool_results[0].output == "5"
+    assert isinstance(events[-1], AssistantTurnComplete)
+    assert events[-1].message.text == "Done."
+
+
+@pytest.mark.asyncio
 async def test_query_engine_propagates_ask_user_pause(tmp_path: Path):
     async def _pause(_payload):
         raise AskUserQuestionPaused("paused")

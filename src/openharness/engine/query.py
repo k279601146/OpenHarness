@@ -421,6 +421,58 @@ def _split_tool_display_context(
     return clean_input, rationale, display_label, start_message
 
 
+def _stringify_ask_user_scalar(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return None
+
+
+def _normalize_ask_user_question_input(raw_input: dict[str, Any]) -> dict[str, Any]:
+    clean_input = dict(raw_input)
+    for key in ("question", "purpose"):
+        normalized = _stringify_ask_user_scalar(clean_input.get(key))
+        if normalized is not None:
+            clean_input[key] = normalized
+
+    questions = clean_input.get("questions")
+    if not isinstance(questions, list):
+        return clean_input
+
+    normalized_questions: list[Any] = []
+    for question in questions:
+        if not isinstance(question, dict):
+            normalized_questions.append(question)
+            continue
+        next_question = dict(question)
+        for key in ("id", "question"):
+            normalized = _stringify_ask_user_scalar(next_question.get(key))
+            if normalized is not None:
+                next_question[key] = normalized
+        options = next_question.get("options")
+        if isinstance(options, list):
+            normalized_options: list[Any] = []
+            for option in options:
+                if not isinstance(option, dict):
+                    normalized_options.append(option)
+                    continue
+                next_option = dict(option)
+                for key in ("label", "value"):
+                    normalized = _stringify_ask_user_scalar(next_option.get(key))
+                    if normalized is not None:
+                        next_option[key] = normalized
+                normalized_options.append(next_option)
+            next_question["options"] = normalized_options
+        normalized_questions.append(next_question)
+    clean_input["questions"] = normalized_questions
+    return clean_input
+
+
 def _prepare_tool_call(
     context: QueryContext,
     tool_call: Any,
@@ -429,6 +481,8 @@ def _prepare_tool_call(
 ) -> _PreparedToolCall:
     tool = context.tool_registry.get(tool_call.name)
     raw_input = tool_call.input if isinstance(tool_call.input, dict) else {}
+    if tool_call.name == "ask_user_question":
+        raw_input = _normalize_ask_user_question_input(raw_input)
     clean_input, rationale, display_name, start_message = _split_tool_display_context(tool, raw_input)
     if rationale is None and isinstance(rationale_fallback, str) and rationale_fallback.strip():
         rationale = rationale_fallback.strip()[:800]
@@ -449,6 +503,8 @@ def _clean_tool_input_for_execution(
     tool_name: str,
     tool_input: dict[str, object],
 ) -> dict[str, object]:
+    if tool_name == "ask_user_question":
+        return _normalize_ask_user_question_input(dict(tool_input))
     tool = context.tool_registry.get(tool_name)
     clean_input, _, _, _ = _split_tool_display_context(tool, dict(tool_input))
     return clean_input
