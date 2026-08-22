@@ -58,6 +58,7 @@ def load_skill_registry(
     *,
     extra_skill_dirs: Iterable[str | Path] | None = None,
     extra_plugin_roots: Iterable[str | Path] | None = None,
+    allowed_user_skill_ids: Iterable[str] | None = None,
     settings=None,
     include_default_user_skills: bool = True,
     include_default_plugin_roots: bool = True,
@@ -65,15 +66,22 @@ def load_skill_registry(
 ) -> SkillRegistry:
     """Load bundled, user-defined, project, and plugin skills."""
     registry = SkillRegistry()
+    allowed_user_skills = _normalize_allowed_skill_ids(allowed_user_skill_ids)
     for skill in get_bundled_skills():
         registry.register(skill)
     if include_default_user_skills:
-        for skill in load_user_skills(normalize_path_func=normalize_path_func):
+        for skill in _filter_user_skills(
+            load_user_skills(normalize_path_func=normalize_path_func),
+            allowed_user_skills,
+        ):
             registry.register(skill)
-    for skill in load_skills_from_dirs(
-        extra_skill_dirs,
-        source="user",
-        normalize_path_func=normalize_path_func,
+    for skill in _filter_user_skills(
+        load_skills_from_dirs(
+            extra_skill_dirs,
+            source="user",
+            normalize_path_func=normalize_path_func,
+        ),
+        allowed_user_skills,
     ):
         registry.register(skill)
 
@@ -100,6 +108,22 @@ def load_skill_registry(
             for skill in plugin.skills:
                 registry.register(skill)
     return registry
+
+
+def _normalize_allowed_skill_ids(values: Iterable[str] | None) -> set[str] | None:
+    if values is None:
+        return None
+    return {str(value).strip() for value in values if str(value).strip()}
+
+
+def _filter_user_skills(skills: list[SkillDefinition], allowed: set[str] | None) -> list[SkillDefinition]:
+    if allowed is None:
+        return skills
+    return [
+        skill
+        for skill in skills
+        if (skill.command_name or skill.name) in allowed or skill.name in allowed
+    ]
 
 
 def load_user_skills(

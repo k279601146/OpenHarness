@@ -43,7 +43,7 @@ from openharness.engine.turn_state import (
 from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
 from openharness.services.tool_outputs import tool_output_inline_chars, tool_output_preview_chars
-from openharness.tools.ask_user_question_tool import AskUserQuestionPaused
+from openharness.tools.ask_user_interaction import AskUserInteractionPaused
 from openharness.tools.base import BaseTool, CancellationToken, ToolExecutionContext, ToolResult
 from openharness.tools.base import ToolRegistry
 from openharness.tools.cron_policy import (
@@ -218,6 +218,7 @@ def _tool_unavailable_message(tool_name: str, context: QueryContext) -> str:
 
 
 CORE_TOOL_SCHEMA_NAMES = {
+    "ask_user_form",
     "ask_user_question",
     "bash",
     "brief",
@@ -1274,7 +1275,7 @@ async def run_query(
                 ):
                     if progress_event is not None:
                         yield progress_event, None
-            except AskUserQuestionPaused:
+            except AskUserInteractionPaused:
                 raise
             except QueryCancelled as exc:
                 yield _progress_event(
@@ -1435,10 +1436,13 @@ async def run_query(
                 ), None
                 return
             tool_results = []
+            completed_tool_events = []
+            paused_interaction: AskUserInteractionPaused | None = None
             for prepared in prepared_calls:
                 result = raw_results_by_id.get(prepared.tool_use_id)
-                if isinstance(result, AskUserQuestionPaused):
-                    raise result
+                if isinstance(result, AskUserInteractionPaused):
+                    paused_interaction = result
+                    continue
                 if isinstance(result, BaseException):
                     log.exception(
                         "tool execution raised: name=%s id=%s",
@@ -1458,8 +1462,9 @@ async def run_query(
                         is_error=True,
                     )
                 tool_results.append(result)
+                completed_tool_events.append((prepared, result))
 
-            for prepared, result in zip(prepared_calls, tool_results):
+            for prepared, result in completed_tool_events:
                 yield ToolExecutionCompleted(
                     tool_name=prepared.tool_name,
                     output=result.content,
@@ -1477,6 +1482,8 @@ async def run_query(
                     metadata=result.result_metadata,
                     timing=turn_trace,
                 ), None
+            if paused_interaction is not None:
+                raise paused_interaction
 
         messages.append(ConversationMessage(role="user", content=tool_results))
 

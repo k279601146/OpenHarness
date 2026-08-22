@@ -1513,6 +1513,8 @@ def test_tool_schemas_for_context_prunes_heavy_default_tools(tmp_path: Path):
     names = _schema_names_for_context(context)
 
     assert {"bash", "read_file", "write_file", "edit_file", "deliver_artifact", "skill"}.issubset(names)
+    assert "ask_user_form" in names
+    assert "ask_user_question" in names
     assert "generate_image" not in names
     assert "generate_video" not in names
     assert "canvas_get_state" not in names
@@ -1844,6 +1846,57 @@ async def test_query_engine_propagates_ask_user_pause(tmp_path: Path):
 
     assert any(isinstance(event, ToolExecutionStarted) for event in events)
     assert not any(isinstance(event, ToolExecutionCompleted) for event in events)
+
+
+@pytest.mark.asyncio
+async def test_query_engine_emits_completed_parallel_tools_before_ask_user_pause(tmp_path: Path):
+    sample = tmp_path / "context.txt"
+    sample.write_text("artifact delivered\n", encoding="utf-8")
+
+    async def _pause(_payload):
+        raise AskUserQuestionPaused("paused")
+
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(
+                                id="toolu_read",
+                                name="read_file",
+                                input={"path": str(sample), "offset": 0, "limit": 10},
+                            ),
+                            ToolUseBlock(
+                                id="toolu_ask",
+                                name="ask_user_question",
+                                input={"question": "Continue?"},
+                            ),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+            ]
+        ),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings()),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        ask_user_prompt=_pause,
+        tool_metadata={"ask_user_prompt_accepts_structured": True},
+    )
+
+    events = []
+    with pytest.raises(AskUserQuestionPaused):
+        async for event in engine.submit_message("read then ask"):
+            events.append(event)
+
+    completed = [event for event in events if isinstance(event, ToolExecutionCompleted)]
+    assert len(completed) == 1
+    assert completed[0].tool_name == "read_file"
+    assert "artifact delivered" in completed[0].output
 
 
 @pytest.mark.asyncio

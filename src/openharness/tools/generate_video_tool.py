@@ -51,6 +51,7 @@ class VideoGenerationReference(BaseModel):
         "environment",
         "audio",
         "video_reference",
+        "mask",
     ]
 
     @field_validator("input_ref")

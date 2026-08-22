@@ -62,6 +62,8 @@ _DISABLE_PROMPT_CACHE_ENV = "OPENHARNESS_OPENAI_DISABLE_PROMPT_CACHE"
 _PROMPT_CACHE_KEY_ENV = "OPENHARNESS_OPENAI_PROMPT_CACHE_KEY"
 _PROMPT_CACHE_RETENTION_ENV = "OPENHARNESS_OPENAI_PROMPT_CACHE_RETENTION"
 _SERVICE_TIER_ENV = "OPENHARNESS_OPENAI_SERVICE_TIER"
+_CUSTOM_TRACE_ID_ENV = "CUSTOM_TRACE_ID"
+_RH_BIZ_TRACE_ID_HEADER = "X-RH-Biz-Trace-Id"
 _WEB_SEARCH_METADATA_INCLUDE = ("web_search_call.action.sources", "web_search_call.results")
 _WEB_SEARCH_CONTEXT_SIZES = {"low", "medium", "high", "unlimited"}
 _WEB_SEARCH_CONTENT_TYPES = {"text", "image"}
@@ -790,7 +792,7 @@ def _convert_messages_to_responses_input(messages: list[ConversationMessage]) ->
             if isinstance(reasoning, str) and reasoning.strip():
                 responses_items.append({
                     "type": "reasoning",
-                    "content": [{"type": "reasoning_text", "text": reasoning}],
+                    "summary": [{"type": "summary_text", "text": reasoning}],
                 })
             text_parts = [b.text for b in msg.content if isinstance(b, TextBlock)]
             text = "".join(text_parts)
@@ -1660,6 +1662,11 @@ def _chat_completion_params_for_request(request: ApiMessageRequest, *, stream: b
     return params
 
 
+def _rh_biz_trace_headers(trace_id: str | None = None) -> dict[str, str]:
+    effective_trace_id = (trace_id or os.getenv(_CUSTOM_TRACE_ID_ENV, "")).strip() or str(uuid.uuid4())
+    return {_RH_BIZ_TRACE_ID_HEADER: effective_trace_id}
+
+
 class OpenAICompatibleClient:
     """Client for OpenAI-compatible APIs (DashScope, GitHub Models, etc.).
 
@@ -1777,6 +1784,9 @@ class OpenAICompatibleClient:
         params.update(prompt_cache_params)
         params.update(_service_tier_param())
         chat_params = _chat_completion_params_for_request(request, stream=bool(params.get("stream")))
+        biz_trace_headers = _rh_biz_trace_headers()
+        params["extra_headers"] = biz_trace_headers
+        chat_params["extra_headers"] = dict(biz_trace_headers)
 
         async def _create_response_with_optional_param_fallback(create_params: dict[str, Any]) -> Any:
             try:

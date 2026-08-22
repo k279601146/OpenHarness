@@ -44,6 +44,7 @@ class SkillTool(BaseTool):
             context.cwd,
             extra_skill_dirs=context.metadata.get("extra_skill_dirs"),
             extra_plugin_roots=context.metadata.get("extra_plugin_roots"),
+            allowed_user_skill_ids=context.metadata.get("allowed_user_skill_ids"),
             settings=context.metadata.get("settings"),
             include_default_user_skills=context.metadata.get("include_default_user_skills", True),
             include_default_plugin_roots=context.metadata.get("include_default_plugin_roots", True),

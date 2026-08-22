@@ -14,7 +14,10 @@ Use this skill to decide whether a request should become a video generation requ
 - Keep the tool request canonical: describe user intent, not provider implementation details.
 - Do not include provider names, upstream model names, base URLs, API keys, CLI commands, output paths, local filesystem paths, or adapter fields in the request.
 - Do not use or mention deprecated video CLI tools.
-- Ask a short clarification only when the missing choice changes the result materially, such as duration, required subject identity, or whether audio is needed.
+- Before calling `generate_video`, confirm the user's output requirements for resolution, frame size/aspect ratio, and duration. If any of these are missing, ask one concise clarification and do not call the tool in the same turn.
+- When the user explicitly accepts defaults, says the choice is up to you, or asks to minimize cost, use the lowest-cost values supported by the selected backend: typically 480p, 5 seconds, and the backend's default aspect ratio. Never silently choose a higher-cost setting.
+- Treat resolution, frame size/aspect ratio, and duration as separate choices. A user specifying one does not imply the other two.
+- Ask additional clarification when another missing choice materially changes the result, such as required subject identity or whether audio is needed.
 
 ## Brief Shape
 
@@ -52,6 +55,7 @@ Use stable references exactly as provided by the workspace or canvas, such as `a
 - `environment`: preserve place, set, or background.
 - `audio`: use as audio guidance when supported.
 - `video_reference`: use a video as source or reference.
+- `mask`: target a detected subject in a multi-subject source image when the selected model supports subject masks.
 
 Choose `intent` from the workflow: generate from text, animate one first frame, interpolate first and last frames, or reference-generate from multiple assets.
 
@@ -62,6 +66,8 @@ Use the logical model family that best matches the creative need when a choice i
 - Seedance: prefer for multi-reference clips, multi-shot motion, Chinese/social-video aesthetics, character continuity, dance/action timing, and cases that benefit from the bundled Seedance expert reference.
 - Veo: prefer for photorealism, cinematic language, natural lighting, environmental realism, camera-motivated storytelling, and audio-aware narrative beats.
 - Kling: prefer for continuous action, image-to-video subject preservation, complex reference use, dynamic object movement, and keeping a protagonist stable through motion.
+- OmniHuman 1.5: use `volcengine-omnihuman-1.5` for one source image plus one driving audio clip. Supply the image as `first_frame`, the audio as `audio`, and optional detected subject masks as `mask`. The generated duration follows the audio.
+- DreamActor 2.0: use `volcengine-dreamactor-2.0` for one source image plus one motion-template video. Supply the image as `first_frame` and the template clip as `video_reference`. The generated duration follows the template video.
 
 Do not include provider-native fields or upstream implementation details in the tool request. If the selected family is unavailable, use the canonical model choice or let the backend fail closed with a clear model availability error.
 

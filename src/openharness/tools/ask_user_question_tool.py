@@ -8,14 +8,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from openharness.tools.ask_user_interaction import AskUserQuestionPaused
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
 
 AskUserPrompt = Callable[[str | dict[str, Any]], Awaitable[str]]
-
-
-class AskUserQuestionPaused(RuntimeError):
-    """Raised when an interactive host pauses the agent for a user answer."""
 
 
 class AskUserQuestionOption(BaseModel):
@@ -74,6 +71,9 @@ class AskUserQuestionTool(BaseTool):
                 is_error=True,
             )
         payload: dict[str, Any] = arguments.model_dump(exclude_none=True)
+        payload["tool_name"] = self.name
+        payload["tool_use_id"] = str(context.metadata.get("tool_use_id") or "").strip()
+        payload["interaction_kind"] = "question"
         if not payload.get("questions") and arguments.question:
             payload["questions"] = [{"id": "question_1", "question": arguments.question, "options": [], "allow_custom": True}]
         prompt_input: str | dict[str, Any] = payload if context.metadata.get("ask_user_prompt_accepts_structured") else (arguments.question or payload["questions"][0]["question"])

@@ -319,6 +319,7 @@ def _load_context_skill_registry(context: ToolExecutionContext):
         context.cwd,
         extra_skill_dirs=metadata.get("extra_skill_dirs"),
         extra_plugin_roots=metadata.get("extra_plugin_roots"),
+        allowed_user_skill_ids=metadata.get("allowed_user_skill_ids"),
         settings=metadata.get("settings"),
         include_default_user_skills=bool(metadata.get("include_default_user_skills", True)),
         include_default_plugin_roots=bool(metadata.get("include_default_plugin_roots", True)),

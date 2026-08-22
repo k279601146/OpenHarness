@@ -560,14 +560,24 @@ async def test_responses_empty_stream_falls_back_to_non_stream():
     fake_sdk = _FallbackClient()
     client._client = fake_sdk
 
+    reasoning_message = ConversationMessage(role="assistant", content=[TextBlock(text="Earlier answer.")])
+    reasoning_message._reasoning = "internal reasoning summary"  # type: ignore[attr-defined]
     request = ApiMessageRequest(
         model="gpt-5.5",
-        messages=[ConversationMessage.from_user_text("Say hi")],
+        messages=[
+            ConversationMessage.from_user_text("Earlier prompt"),
+            reasoning_message,
+            ConversationMessage.from_user_text("Say hi"),
+        ],
     )
 
     events = [event async for event in client.stream_message(request)]
 
     assert [call["stream"] for call in fake_sdk.responses.calls] == [True, False]
+    assert fake_sdk.responses.calls[1]["input"][1]["type"] == "reasoning"
+    assert fake_sdk.responses.calls[1]["input"][1]["summary"] == [
+        {"type": "summary_text", "text": "internal reasoning summary"}
+    ]
     assert events[0].text == "hello"
     assert events[-1].message.text == "hello"
     assert events[-1].usage.input_tokens == 2
@@ -575,11 +585,14 @@ async def test_responses_empty_stream_falls_back_to_non_stream():
 
 
 @pytest.mark.asyncio
-async def test_openai_client_uses_full_base_url_path_for_requests():
+async def test_openai_client_uses_full_base_url_path_for_requests(monkeypatch):
+    monkeypatch.setenv("CUSTOM_TRACE_ID", "trace-from-test")
     seen_urls: list[str] = []
+    seen_trace_headers: list[str | None] = []
 
     def _handler(request: httpx.Request) -> httpx.Response:
         seen_urls.append(str(request.url))
+        seen_trace_headers.append(request.headers.get("X-RH-Biz-Trace-Id"))
         return httpx.Response(
             200,
             json={
@@ -609,6 +622,8 @@ async def test_openai_client_uses_full_base_url_path_for_requests():
     assert events
     assert seen_urls
     assert all(url == "https://jarodfund.xyz/openai/v1/responses" for url in seen_urls)
+    assert seen_trace_headers
+    assert all(header == "trace-from-test" for header in seen_trace_headers)
     await http_client.aclose()
 
 
@@ -1682,7 +1697,7 @@ class TestResponsesReasoningRoundTrip:
 
         assert out[0] == {
             "type": "reasoning",
-            "content": [{"type": "reasoning_text", "text": "thinking..."}],
+            "summary": [{"type": "summary_text", "text": "thinking..."}],
         }
         assert out[1] == {
             "role": "assistant",

@@ -1,6 +1,7 @@
 """Built-in tool registration."""
 
 from openharness.tools.ask_user_question_tool import AskUserQuestionTool
+from openharness.tools.ask_user_form_tool import AskUserFormTool
 from openharness.tools.agent_tool import AgentTool
 from openharness.tools.bash_tool import BashTool
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
@@ -45,6 +46,7 @@ from openharness.tools.glob_tool import GlobTool
 from openharness.tools.grep_tool import GrepTool
 from openharness.tools.generate_image_tool import GenerateImageTool
 from openharness.tools.generate_video_tool import GenerateVideoTool
+from openharness.tools.merge_video_tool import MergeVideoTool
 from openharness.tools.list_mcp_resources_tool import ListMcpResourcesTool
 from openharness.tools.mcp_auth_tool import McpAuthTool
 from openharness.tools.mcp_tool import McpToolAdapter
@@ -75,6 +77,7 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
     for tool in (
         BashTool(),
         AskUserQuestionTool(),
+        AskUserFormTool(),
         FileReadTool(),
         FileWriteTool(),
         FileEditTool(),
@@ -83,6 +86,7 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         GrepTool(),
         GenerateImageTool(),
         GenerateVideoTool(),
+        MergeVideoTool(),
         CreateHanddrawStoryVideoTool(),
         SkillTool(),
         ToolSearchTool(),

@@ -1,0 +1,4 @@
+interface:
+  display_name: "游戏营销视频"
+  short_description: "收集游戏营销需求并编排买量、宣传片和活动多镜头成片"
+  default_prompt: "使用 $game-marketing-video 规划并生成一条游戏营销多镜头视频。"
