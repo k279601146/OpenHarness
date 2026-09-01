@@ -1,0 +1,5 @@
+interface:
+  display_name: "产品 B-roll 影像工作室"
+  short_description: "规划产品静物、材质特写和商业镜头"
+  default_prompt: "使用 $product-broll-studio 为这个产品规划一组商业 B-roll 镜头。"
+

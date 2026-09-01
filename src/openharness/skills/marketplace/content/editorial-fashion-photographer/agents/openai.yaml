@@ -1,0 +1,4 @@
+interface:
+  display_name: "时尚编辑大片摄影师"
+  short_description: "规划编辑叙事、造型连续、模特姿态与灯光控制的时尚组图"
+  default_prompt: "使用 $editorial-fashion-photographer 规划一组时尚编辑大片。"

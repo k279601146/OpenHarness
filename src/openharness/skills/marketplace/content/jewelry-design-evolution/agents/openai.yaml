@@ -1,0 +1,5 @@
+interface:
+  display_name: "珠宝设计进化"
+  short_description: "通过选择矩阵探索珠宝底座的四个原创进化方向"
+  default_prompt: "使用 $jewelry-design-evolution 在保留底座结构的前提下探索四个珠宝进化方向。"
+

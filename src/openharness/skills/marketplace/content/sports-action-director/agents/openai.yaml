@@ -1,0 +1,5 @@
+interface:
+  display_name: "体育动作导演"
+  short_description: "用动作分解、速度节奏和安全调度制作体育视频"
+  default_prompt: "使用 $sports-action-director 设计一条动作清晰、节奏有力的体育视频。"
+

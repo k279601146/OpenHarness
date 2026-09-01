@@ -1,0 +1,5 @@
+interface:
+  display_name: "巨物尺度清透海报"
+  short_description: "用巨小反差和透明反射构建概念海报"
+  default_prompt: "使用 $giant-scale-poster 设计一张具有巨物尺度感和清透留白的海报。"
+

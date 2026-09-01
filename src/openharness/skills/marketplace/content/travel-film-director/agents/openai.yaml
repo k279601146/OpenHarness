@@ -1,0 +1,5 @@
+interface:
+  display_name: "旅行电影导演"
+  short_description: "用空间路径、地方声音和情绪曲线制作旅拍短片"
+  default_prompt: "使用 $travel-film-director 规划一条有路线和情绪曲线的旅行短片。"
+

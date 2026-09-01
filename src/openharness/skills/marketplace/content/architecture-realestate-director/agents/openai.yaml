@@ -1,0 +1,5 @@
+interface:
+  display_name: "建筑空间导演"
+  short_description: "用空间动线、材质和采光展示建筑与室内设计"
+  default_prompt: "使用 $architecture-realestate-director 规划一条可信的建筑空间展示视频。"
+

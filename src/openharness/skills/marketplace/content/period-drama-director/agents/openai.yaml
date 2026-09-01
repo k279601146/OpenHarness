@@ -1,0 +1,4 @@
+interface:
+  display_name: "历史年代片导演"
+  short_description: "用年代考据、服化连续性锁制作可信的历史感视频完整工作方案"
+  default_prompt: "使用 $period-drama-director 设计一段有考据边界的年代片。"

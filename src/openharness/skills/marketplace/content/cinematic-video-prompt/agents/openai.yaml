@@ -1,0 +1,5 @@
+interface:
+  display_name: "电影视频提示词工程"
+  short_description: "把故事和场景翻译成电影化视频镜头"
+  default_prompt: "使用 $cinematic-video-prompt 把这个故事整理成可执行的电影视频提示词。"
+

@@ -1,0 +1,5 @@
+interface:
+  display_name: "科幻世界导演"
+  short_description: "用世界规则、尺度和技术细节构建科幻短片"
+  default_prompt: "使用 $sci-fi-world-director 设计一条具有世界规则和电影感的科幻短片。"
+

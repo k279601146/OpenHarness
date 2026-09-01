@@ -1,0 +1,5 @@
+interface:
+  display_name: "教育科普导演"
+  short_description: "用视觉化步骤和证据讲清课程与科普主题"
+  default_prompt: "使用 $education-explainer-director 把这个主题整理成一条易懂的科普视频。"
+

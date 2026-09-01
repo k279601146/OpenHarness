@@ -1,0 +1,5 @@
+interface:
+  display_name: "黑色电影导演"
+  short_description: "规划明暗对照、悬疑节奏与权力构图的短片"
+  default_prompt: "使用 $film-noir-director 设计一条黑色电影风格短片。"
+

@@ -1,0 +1,5 @@
+interface:
+  display_name: "角色设计"
+  short_description: "从角色内核到立绘、三视图和表情姿态资产"
+  default_prompt: "使用 $character-design 设计一个有内核、辨识度和视觉资产计划的原创角色。"
+

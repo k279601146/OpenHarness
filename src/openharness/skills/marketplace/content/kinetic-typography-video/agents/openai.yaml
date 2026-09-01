@@ -1,0 +1,4 @@
+interface:
+  display_name: "文字动效视频导演"
+  short_description: "让文字层级、声音节拍与排版安全区同步且保持可读的制作方案"
+  default_prompt: "使用 $kinetic-typography-video 设计一支文字动效视频。"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "定格动画导演"
+  short_description: "以帧级位移、材质连续和灯光锁制作定格动画导演工作方案"
+  default_prompt: "使用 $stop-motion-animation-director 设计一段定格动画。"

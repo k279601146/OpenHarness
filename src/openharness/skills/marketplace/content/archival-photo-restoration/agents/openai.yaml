@@ -1,0 +1,4 @@
+interface:
+  display_name: "老照片修复与上色"
+  short_description: "分层修复划痕褪色旧照，并标注上色推测、版本与证据链"
+  default_prompt: "使用 $archival-photo-restoration 制定老照片修复方案。"

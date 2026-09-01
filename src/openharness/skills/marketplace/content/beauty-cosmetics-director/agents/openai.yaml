@@ -1,0 +1,5 @@
+interface:
+  display_name: "美妆护肤广告导演"
+  short_description: "用质地、妆容变化和细节特写制作美妆广告"
+  default_prompt: "使用 $beauty-cosmetics-director 规划一条真实可信的美妆或护肤广告。"
+

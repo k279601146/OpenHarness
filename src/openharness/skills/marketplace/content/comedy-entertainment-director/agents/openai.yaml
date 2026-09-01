@@ -1,0 +1,5 @@
+interface:
+  display_name: "喜剧娱乐导演"
+  short_description: "用反差节拍和视觉笑点设计娱乐短视频"
+  default_prompt: "使用 $comedy-entertainment-director 设计一条喜剧娱乐短视频。"
+

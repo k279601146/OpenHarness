@@ -1,0 +1,5 @@
+interface:
+  display_name: "先锋服装商拍视觉指导"
+  short_description: "把服装商品图升级为先锋时装杂志大片方案"
+  default_prompt: "使用 $avant-garde-fashion-shoot 为这件服装规划先锋商拍视觉方案。"
+

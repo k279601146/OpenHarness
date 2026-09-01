@@ -1,0 +1,5 @@
+interface:
+  display_name: "美食商业导演"
+  short_description: "用食材材质、蒸汽和动作证明制作美食广告"
+  default_prompt: "使用 $food-commercial-director 设计一组具有食欲和材质细节的美食广告镜头。"
+

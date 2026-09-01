@@ -1,0 +1,5 @@
+interface:
+  display_name: "二维动画线稿批量上色"
+  short_description: "按色彩参考统一处理二维动画线稿"
+  default_prompt: "使用 $line-art-coloring 为这组二维线稿规划并执行统一上色。"
+

@@ -1,0 +1,4 @@
+interface:
+  display_name: "竖屏短剧导演"
+  short_description: "从首屏钩子、角色连续到悬念收尾的竖屏短剧导演工作流"
+  default_prompt: "使用 $vertical-short-drama-director 设计一集可生成的竖屏短剧。"

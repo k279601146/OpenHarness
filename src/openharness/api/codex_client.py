@@ -122,12 +122,14 @@ def _convert_messages_to_codex(messages: list[ConversationMessage]) -> list[dict
 
 
 def _convert_tools_to_codex(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    from openharness.tools.base import sanitize_tool_json_schema
+
     return [
         {
             "type": "function",
             "name": tool["name"],
             "description": tool.get("description", ""),
-            "parameters": tool.get("input_schema", {}),
+            "parameters": sanitize_tool_json_schema(tool.get("input_schema", {})),
         }
         for tool in tools
     ]

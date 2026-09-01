@@ -1,0 +1,5 @@
+interface:
+  display_name: "名导十五秒视频风格资产引擎"
+  short_description: "提取参考图风格并编排十五秒三段式视频方案"
+  default_prompt: "使用 $style-asset-engine 从参考图提取风格并设计一条十五秒视频分镜。"
+

@@ -239,11 +239,13 @@ class Transition(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    between: tuple[int, int] = Field(
+    between: list[int] = Field(
+        min_length=2,
+        max_length=2,
         description=(
             "转场位于第几个和第几个片段之间，从 0 开始计数。"
             "例如 [0, 1] 表示第 1 和第 2 个视频之间。"
-        )
+        ),
     )
     type: Literal["none", "fade"] = Field(
         default="fade",
@@ -258,7 +260,9 @@ class Transition(BaseModel):
 
     @model_validator(mode="after")
     def validate_between(self) -> "Transition":
-        a, b = self.between
+        if not isinstance(self.between, (list, tuple)) or len(self.between) != 2:
+            raise ValueError("transition.between 必须包含恰好两个片段序号，如 [0, 1]")
+        a, b = int(self.between[0]), int(self.between[1])
         if b != a + 1:
             raise ValueError(
                 f"transition.between must be consecutive clip indices, e.g. (0, 1); got ({a}, {b})"
@@ -331,7 +335,7 @@ class MergeVideoInput(BaseModel):
     def validate_transitions(self) -> "MergeVideoInput":
         n = len(self.videos)
         for tr in self.transitions:
-            a, b = tr.between
+            a, b = int(tr.between[0]), int(tr.between[1])
             if a < 0 or b >= n:
                 raise ValueError(
                     f"transition.between ({a}, {b}) is out of range for {n} video clip(s)"

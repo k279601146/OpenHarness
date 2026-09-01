@@ -1,0 +1,5 @@
+interface:
+  display_name: "时尚走秀短视频导演"
+  short_description: "把模特、服装和场景编排成 15 秒高奢走秀分镜"
+  default_prompt: "使用 $fashion-runway-director 设计一条 15 秒时尚走秀分镜。"
+

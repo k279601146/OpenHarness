@@ -1,0 +1,5 @@
+interface:
+  display_name: "纪录片导演"
+  short_description: "用观察式叙事和真实声音制作纪录短片"
+  default_prompt: "使用 $documentary-film-director 规划一条可信的纪录片短片。"
+

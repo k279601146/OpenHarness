@@ -1,0 +1,5 @@
+interface:
+  display_name: "参考图动效导演"
+  short_description: "让静态参考图以可控动作连续地动起来"
+  default_prompt: "使用 $image-to-video-motion 为这张参考图设计一段连续、可控的短视频动效。"
+

@@ -1,0 +1,5 @@
+interface:
+  display_name: "汽车广告导演"
+  short_description: "用车辆设计、道路节奏和安全驾驶制作汽车广告"
+  default_prompt: "使用 $automotive-commercial-director 规划一条电影感汽车广告片。"
+

@@ -1,0 +1,5 @@
+interface:
+  display_name: "直播带货导演"
+  short_description: "规划直播切片、卖点证明和转化节奏"
+  default_prompt: "使用 $live-commerce-director 规划一组直播带货切片。"
+

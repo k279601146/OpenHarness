@@ -1,0 +1,5 @@
+interface:
+  display_name: "角色精灵图动画产线"
+  short_description: "为游戏角色规划 4–6 秒动作测试动画"
+  default_prompt: "使用 $character-sprite-animation 为角色设计一段安全留白、动作清晰的短动画。"
+

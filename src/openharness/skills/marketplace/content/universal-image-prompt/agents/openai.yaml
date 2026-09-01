@@ -1,0 +1,5 @@
+interface:
+  display_name: "通用图像提示词工程"
+  short_description: "统一规划文生图、参考编辑与局部重绘"
+  default_prompt: "使用 $universal-image-prompt 规划一次安全、可复现的图像生成任务。"
+

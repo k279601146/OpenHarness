@@ -1,0 +1,5 @@
+interface:
+  display_name: "音乐视频导演"
+  short_description: "将歌曲情绪、节拍和视觉母题编排成 MV"
+  default_prompt: "使用 $music-video-director 规划一支具有视觉母题的音乐视频。"
+

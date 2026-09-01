@@ -227,6 +227,14 @@ class E2BSandboxSession:
                 self.returncode = int(_command_result_attr(e2b_result, "exit_code", "returncode", default=0) or 0)
                 stdout_value = _coerce_command_output(_command_result_attr(e2b_result, "stdout", "output", default=""))
                 stderr_value = _coerce_command_output(_command_result_attr(e2b_result, "stderr", "error", default=""))
+                if stderr == asyncio.subprocess.STDOUT:
+                    if stdout_value and stderr_value:
+                        combined_str = f"{stdout_value}\n{stderr_value}" if not stdout_value.endswith("\n") else f"{stdout_value}{stderr_value}"
+                    else:
+                        combined_str = stdout_value or stderr_value or ""
+                    stdout_value = combined_str
+                    stderr_value = ""
+
                 self._stdout_bytes = stdout_value.encode('utf-8') if isinstance(stdout_value, str) else stdout_value
                 self._stderr_bytes = stderr_value.encode('utf-8') if isinstance(stderr_value, str) else stderr_value
                 

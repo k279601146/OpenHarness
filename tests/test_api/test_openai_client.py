@@ -164,6 +164,59 @@ class TestConvertToolsToOpenai:
             }
         ]
 
+    def test_openai_tool_schema_sanitizes_array_without_items_for_gemini_compatibility(self):
+        input_schema = {
+            "type": "object",
+            "properties": {
+                "transitions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "between": {
+                                "type": "array",
+                                "prefixItems": [{"type": "integer"}, {"type": "integer"}],
+                                "minItems": 2,
+                                "maxItems": 2,
+                            },
+                            "raw_list": {
+                                "type": "array",
+                            },
+                        },
+                    },
+                }
+            },
+        }
+        tools = [{"name": "test_array_tool", "description": "Test array schema", "input_schema": input_schema}]
+        chat_result = _convert_tools_to_openai(tools)
+        responses_result = _convert_tools_to_responses(tools)
+
+        for res in (chat_result[0]["function"]["parameters"], responses_result[0]["parameters"]):
+            transitions_schema = res["properties"]["transitions"]
+            assert transitions_schema["type"] == "array"
+            assert isinstance(transitions_schema["items"], dict)
+            between_prop = transitions_schema["items"]["properties"]["between"]
+            assert between_prop["type"] == "array"
+            assert between_prop["items"] == {"type": "integer"}
+            assert "prefixItems" not in between_prop
+            raw_list_prop = transitions_schema["items"]["properties"]["raw_list"]
+            assert raw_list_prop["type"] == "array"
+            assert raw_list_prop["items"] == {"type": "string"}
+
+    def test_merge_video_tool_schema_gemini_compatible(self):
+        from openharness.tools.merge_video_tool import MergeVideoTool
+
+        tool = MergeVideoTool()
+        schema = tool.to_api_schema()
+        assert "input_schema" in schema
+        transitions = schema["input_schema"]["properties"]["transitions"]
+        assert transitions["type"] == "array"
+        assert "items" in transitions
+        between = transitions["items"]["properties"]["between"]
+        assert between["type"] == "array"
+        assert between["items"] == {"type": "integer"}
+        assert "prefixItems" not in between
+
 
 class TestConvertMessagesToOpenai:
     """Test Anthropic → OpenAI message format conversion."""

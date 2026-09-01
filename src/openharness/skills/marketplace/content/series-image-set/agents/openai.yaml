@@ -1,0 +1,5 @@
+interface:
+  display_name: "系列套图生成"
+  short_description: "以视觉母体和变量矩阵生成统一风格的系列图片"
+  default_prompt: "使用 $series-image-set 规划一组风格统一、变量清晰的系列图片。"
+

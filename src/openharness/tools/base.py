@@ -95,11 +95,55 @@ class BaseTool(ABC):
     def to_api_schema(self) -> dict[str, Any]:
         """Return the tool schema expected by the Messages API."""
         schema = _inline_local_json_schema_refs(self.input_model.model_json_schema())
+        schema = sanitize_tool_json_schema(schema)
         return {
             "name": self.name,
             "description": self.description,
             "input_schema": schema,
         }
+
+
+def sanitize_tool_json_schema(schema: Any) -> Any:
+    """Sanitize JSON Schema for Gemini / OpenAI / Anthropic function declaration compatibility.
+
+    Ensures that:
+    1. Every ``type: "array"`` contains a valid ``items`` schema (Gemini throws 400 if missing).
+    2. Any Draft 2020-12 ``prefixItems`` (e.g. from Pydantic ``tuple[...]``) is normalized to ``items``.
+    3. Nested properties, items, anyOf/oneOf/allOf, and additionalProperties are recursively sanitized.
+    """
+    if not isinstance(schema, dict):
+        if isinstance(schema, list):
+            return [sanitize_tool_json_schema(item) for item in schema]
+        return schema
+
+    sanitized = deepcopy(schema)
+
+    # Clean array schemas
+    if sanitized.get("type") == "array":
+        items = sanitized.get("items")
+        prefix_items = sanitized.pop("prefixItems", None)
+        if items is None or items == {}:
+            if isinstance(prefix_items, list) and prefix_items:
+                sanitized["items"] = sanitize_tool_json_schema(prefix_items[0])
+            else:
+                sanitized["items"] = {"type": "string"}
+        else:
+            sanitized["items"] = sanitize_tool_json_schema(items)
+
+    if isinstance(sanitized.get("properties"), dict):
+        sanitized["properties"] = {
+            k: sanitize_tool_json_schema(v)
+            for k, v in sanitized["properties"].items()
+        }
+
+    if isinstance(sanitized.get("additionalProperties"), dict):
+        sanitized["additionalProperties"] = sanitize_tool_json_schema(sanitized["additionalProperties"])
+
+    for key in ("anyOf", "oneOf", "allOf"):
+        if isinstance(sanitized.get(key), list):
+            sanitized[key] = [sanitize_tool_json_schema(item) for item in sanitized[key]]
+
+    return sanitized
 
 
 def _inline_local_json_schema_refs(schema: dict[str, Any]) -> dict[str, Any]:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from copy import deepcopy
 import hashlib
 import inspect
 import json
@@ -402,7 +401,9 @@ def _openai_compatible_tool_parameters(schema: Any) -> dict[str, Any]:
     if not isinstance(schema, dict):
         return {}
 
-    parameters = deepcopy(schema)
+    from openharness.tools.base import sanitize_tool_json_schema
+
+    parameters = sanitize_tool_json_schema(schema)
     if parameters.get("type") == "object" or isinstance(parameters.get("properties"), dict):
         # Grok-compatible Responses rejects root anyOf/oneOf even when OpenAI accepts it.
         parameters["type"] = "object"

@@ -1,0 +1,5 @@
+interface:
+  display_name: "动作大片导演"
+  short_description: "设计动作调度、镜头动势和物理反馈"
+  default_prompt: "使用 $action-blockbuster-director 设计一段安全可执行的动作大片镜头。"
+

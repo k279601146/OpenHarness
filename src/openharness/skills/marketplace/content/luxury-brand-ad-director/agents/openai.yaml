@@ -1,0 +1,5 @@
+interface:
+  display_name: "奢侈品牌广告导演"
+  short_description: "把品牌价值、产品细节和光影编排成广告"
+  default_prompt: "使用 $luxury-brand-ad-director 规划一条高端品牌广告片。"
+

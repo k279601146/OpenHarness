@@ -1,0 +1,5 @@
+interface:
+  display_name: "广告视觉提示词指南"
+  short_description: "用 SLCT 规划产品广告、B-roll 和 UGC"
+  default_prompt: "使用 $ai-ad-prompt-guide 为这个产品规划一组广告图片或短视频。"
+

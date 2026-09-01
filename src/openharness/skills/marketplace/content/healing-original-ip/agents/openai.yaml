@@ -1,0 +1,5 @@
+interface:
+  display_name: "治愈系原创 IP 孵化助手"
+  short_description: "孵化可辨识、可持续运营的原创治愈角色"
+  default_prompt: "使用 $healing-original-ip 设计一个可持续产出内容的原创治愈 IP。"
+

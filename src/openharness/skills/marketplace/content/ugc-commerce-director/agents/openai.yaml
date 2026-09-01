@@ -1,0 +1,5 @@
+interface:
+  display_name: "UGC带货导演"
+  short_description: "为短视频平台设计真实口吻和产品演示"
+  default_prompt: "使用 $ugc-commerce-director 设计一条真实可信的 UGC 带货视频。"
+

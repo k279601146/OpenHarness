@@ -1,0 +1,5 @@
+interface:
+  display_name: "AI造型师高转化模特图"
+  short_description: "为同一件服装规划五套专业模特展示造型"
+  default_prompt: "使用 $fashion-model-stylist 为这件服装规划并生成五套商业模特展示图。"
+

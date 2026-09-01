@@ -1,0 +1,5 @@
+interface:
+  display_name: "珠宝设计出款"
+  short_description: "完成原创珠宝结构设计、材质推演和批量候选"
+  default_prompt: "使用 $jewelry-design 设计一组具有结构逻辑和系列辨识度的珠宝方案。"
+

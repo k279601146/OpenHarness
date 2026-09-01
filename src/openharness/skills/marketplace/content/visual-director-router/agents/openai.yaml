@@ -1,0 +1,5 @@
+interface:
+  display_name: "AI视觉导演路由"
+  short_description: "统一编排故事、角色、场景、海报和视频方案"
+  default_prompt: "使用 $visual-director-router 为这个创意选择路由并编排视觉资产。"
+

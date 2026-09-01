@@ -1,0 +1,5 @@
+interface:
+  display_name: "恐怖惊悚导演"
+  short_description: "用未知、空间压迫和声音线索制造可控恐惧"
+  default_prompt: "使用 $horror-thriller-director 设计一条克制而有悬念的惊悚短片。"
+

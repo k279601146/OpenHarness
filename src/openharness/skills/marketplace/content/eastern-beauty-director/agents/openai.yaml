@@ -1,0 +1,5 @@
+interface:
+  display_name: "东方美学视觉导演"
+  short_description: "规划东方美人、古风服饰和视觉图鉴"
+  default_prompt: "使用 $eastern-beauty-director 规划一组原创东方美学视觉方案。"
+

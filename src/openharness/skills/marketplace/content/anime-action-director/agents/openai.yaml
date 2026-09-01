@@ -1,0 +1,4 @@
+interface:
+  display_name: "动画战斗导演"
+  short_description: "规划关键姿态、力量路径、空间轴线与动画动作节拍方案"
+  default_prompt: "使用 $anime-action-director 设计原创动画动作片段。"

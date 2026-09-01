@@ -1,0 +1,5 @@
+interface:
+  display_name: "收藏级 Doll 设计"
+  short_description: "设计原创时尚娃娃、材质和可玩造型"
+  default_prompt: "使用 $collector-doll 设计一个原创收藏级时尚娃娃形象。"
+

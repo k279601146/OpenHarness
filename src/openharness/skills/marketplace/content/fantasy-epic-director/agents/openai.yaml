@@ -1,0 +1,5 @@
+interface:
+  display_name: "奇幻史诗导演"
+  short_description: "用神话规则、仪式构图和英雄代价制作短片"
+  default_prompt: "使用 $fantasy-epic-director 设计一条原创奇幻史诗视频。"
+

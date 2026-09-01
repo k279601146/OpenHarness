@@ -1,0 +1,5 @@
+interface:
+  display_name: "世界观美术设定"
+  short_description: "构建世界宪法、视觉体系和一致性场景资产"
+  default_prompt: "使用 $world-art-setting 规划一个可持续生成的世界观美术设定集。"
+

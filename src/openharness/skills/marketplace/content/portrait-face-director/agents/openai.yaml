@@ -1,0 +1,5 @@
+interface:
+  display_name: "人像捏脸导演"
+  short_description: "将面部审美拆成可执行的原创肖像结构"
+  default_prompt: "使用 $portrait-face-director 设计一组原创成人肖像的面部结构提示词。"
+

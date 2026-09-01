@@ -1,0 +1,5 @@
+interface:
+  display_name: "爱情电影导演"
+  short_description: "将关系转折和微表情编排成电影短片"
+  default_prompt: "使用 $romance-film-director 设计一段电影化爱情短片。"
+
