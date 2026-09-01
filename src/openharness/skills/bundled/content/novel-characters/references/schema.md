@@ -16,7 +16,7 @@
 | --- | --- | --- |
 | `source` | 是 | 书名/篇名，报告标题用 |
 | `lang` | 是 | 报告语言，默认 `zh` |
-| `style` | 是 | 出图风格，默认 `realistic`；`ghibli` 是吉卜力动画风。见 `style-presets.md` |
+| `style` | 是 | 使用首页 `style-catalog.json` 中的模板 ID；也可使用 `realistic`、`ghibli` 或 `custom`。每个模板的视觉字段独立定义，见 `style-presets.md` |
 | `ui` | 视情况 | 界面文案翻译。`lang` 是 `zh`/`en`/`ja` 时**不需要**（内置）；其他任何语言**必填**，否则 `validate` 报错。用 `ui-template <lang>` 生成骨架后翻译。只覆盖部分键也可以，缺的用内置英文兜底 |
 | `summary` | 是 | **故事摘要**，中文 3–5 句。交代时空背景、核心情境、人物聚在一起的由头。报告顶部显示，让人不看原文也知道这几个角色是什么关系。不要剧透结局，也不要写成推荐语 |
 | `characters` | 是 | 角色卡数组 |
@@ -61,7 +61,8 @@
     "accent": "南方水乡口音，尾音含混",
     "emotion": "疲惫而平静",
     "referenceHint": "像一个在同一个渡口喊了四十年「开船」的人",
-    "prompt": "An elderly male voice, around seventy-five. Low bass-baritone ..."
+    "prompt": "An elderly male voice, around seventy-five. Low bass-baritone ...",
+    "promptLocal": "约七十五岁的老年男声。低音区男中低声部……"
   }
 }
 ```
@@ -85,7 +86,8 @@
 | `image.tags` | string[] | **英文** | 4–8 个风格标签 |
 | `image.sheet` | string | **英文** | **角色设定图**，16:9 三区版面：左约 34% 半身像（面部基准）／右上全身三视图／右下细节条，细线分隔；**禁止出现人名**；**必须写明族裔／年代／地域** |
 | `voice.timbre/pitch/pace/accent/emotion/referenceHint` | string | **本地语言** | 最容易写漂的地方，注意 |
-| `voice.prompt` | string | **英文** | 给 TTS 音色设计引擎。**没有 `promptLocal` 对照版，这是有意的**——上面六项已经是本地语言，再给一段中文散文只会让人复制错，把它喂进 TTS（生产里踩过） |
+| `voice.prompt` | string | **英文** | 给 TTS 音色设计引擎 |
+| `voice.promptLocal` | string | 本地语言 | 上面那条的译文；`lang=en` 时省略 |
 
 **英文字段不跟随 `lang`。** 图像模型和 TTS 引擎吃英文最稳，跟报告用什么语言无关。
 

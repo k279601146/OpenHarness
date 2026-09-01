@@ -1,0 +1,1415 @@
+{
+  "version": 4,
+  "styles": [
+    {
+      "id": "1780651424491_style",
+      "title": "复古科幻原子朋克",
+      "render": "Cinematic cyberpunk environment concept art with crisp graphic geometry; use amber accents only at narrative focal points, with architectural rhythm.",
+      "surface": "rain-slick asphalt, brushed alloy, translucent panels and emissive cables; maintain believable scale, wear and contact shadows, with amber notes used sparingly.",
+      "lighting": "cyan-magenta rim lights over a neutral key; shape the primary stage area first, then separate secondary planes with architectural rhythm.",
+      "negative": "pastoral scenery, flat daylight, medieval ornament, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cyberpunk environment film still with amber accents and architectural rhythm",
+      "tags": [
+        "复古科幻原子朋克",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1780580870934_style",
+      "title": "宫斗权谋冷峻风格",
+      "render": "period drama cinematography with muted contrast; use indigo accents only at narrative focal points, with foreground-to-background depth.",
+      "surface": "weathered timber, plaster, paper and worn leather; maintain believable scale, wear and contact shadows, with indigo notes used sparingly.",
+      "lighting": "window light with gentle bounce fill; shape the primary stage area first, then separate secondary planes with foreground-to-background depth.",
+      "negative": "modern signage, synthetic showroom surfaces, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with indigo accents and foreground-to-background depth",
+      "tags": [
+        "宫斗权谋冷峻风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1780575862644_style",
+      "title": "国产悬疑冷调",
+      "render": "Horror film environment with oppressive negative space; use jade accents only at narrative focal points, with material storytelling.",
+      "surface": "decayed timber, peeling paint, rust and dust suspended in air; maintain believable scale, wear and contact shadows, with jade notes used sparingly.",
+      "lighting": "low-key sidelight with deep readable shadows; shape the primary stage area first, then separate secondary planes with material storytelling.",
+      "negative": "clean showroom surfaces, playful pastel colour, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "film noir environment film still with jade accents and material storytelling",
+      "tags": [
+        "国产悬疑冷调",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1780575862643_style",
+      "title": "古偶唯美柔光",
+      "render": "soft romantic cinema with luminous highlights; use crimson accents only at narrative focal points, with graphic negative space.",
+      "surface": "silk, carved wood, porcelain and translucent curtains; maintain believable scale, wear and contact shadows, with crimson notes used sparingly.",
+      "lighting": "diffused backlight with a warm rim; shape the primary stage area first, then separate secondary planes with graphic negative space.",
+      "negative": "hard flash, muddy shadows, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with crimson accents and graphic negative space",
+      "tags": [
+        "古偶唯美柔光",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1780575862642_style",
+      "title": "日式青春胶片",
+      "render": "cool urban cinematography with precise framing; use violet accents only at narrative focal points, with layered atmospheric perspective.",
+      "surface": "concrete, brushed aluminium, glass and rain-dark asphalt; maintain believable scale, wear and contact shadows, with violet notes used sparingly.",
+      "lighting": "cool skylight with controlled edge separation; shape the primary stage area first, then separate secondary planes with layered atmospheric perspective.",
+      "negative": "rustic ornament, candy colours, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with violet accents and layered atmospheric perspective",
+      "tags": [
+        "日式青春胶片",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1780575862641_style",
+      "title": "日式生活自然",
+      "render": "desert road-movie cinematography with broad horizons; use saffron accents only at narrative focal points, with controlled edge detail.",
+      "surface": "sun-bleached timber, canvas, dust and oxidized iron; maintain believable scale, wear and contact shadows, with saffron notes used sparingly.",
+      "lighting": "low-angle sunset with long shadows; shape the primary stage area first, then separate secondary planes with controlled edge detail.",
+      "negative": "lush tropical foliage, glossy studio light, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with saffron accents and controlled edge detail",
+      "tags": [
+        "日式生活自然",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1780575862640_style",
+      "title": "韩剧都市柔光",
+      "render": "amber-gold period film palette with gentle halation; use teal accents only at narrative focal points, with rhythmic repetition.",
+      "surface": "aged brass, lacquered wood, wool and paper; maintain believable scale, wear and contact shadows, with teal notes used sparingly.",
+      "lighting": "late-afternoon side light with practical glow; shape the primary stage area first, then separate secondary planes with rhythmic repetition.",
+      "negative": "cyan-magenta neon, clinical white, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with teal accents and rhythmic repetition",
+      "tags": [
+        "韩剧都市柔光",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1780575862639_style",
+      "title": "国产都市写实",
+      "render": "high-contrast war-film composition with tactile grit; use silver accents only at narrative focal points, with tactile focal prop.",
+      "surface": "canvas, worn steel, sandbag cloth and chipped paint; maintain believable scale, wear and contact shadows, with silver notes used sparingly.",
+      "lighting": "hard directional sun with readable fill; shape the primary stage area first, then separate secondary planes with tactile focal prop.",
+      "negative": "polished surfaces, cheerful pastel colour, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with silver accents and tactile focal prop",
+      "tags": [
+        "国产都市写实",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1780580870935_style",
+      "title": "武侠江湖写实摄影风格",
+      "render": "Classical Chinese fantasy landscape with gongbi detail; use ochre accents only at narrative focal points, with balanced asymmetry.",
+      "surface": "inked timber, jade, silk banners and layered mountain washes; maintain believable scale, wear and contact shadows, with ochre notes used sparingly.",
+      "lighting": "moonlit haze with a cool rim and warm lantern pools; shape the primary stage area first, then separate secondary planes with balanced asymmetry.",
+      "negative": "modern signage, industrial plastics, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "ink-wash environment film still with ochre accents and balanced asymmetry",
+      "tags": [
+        "武侠江湖写实摄影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923802_style",
+      "title": "90年代写实电影风格",
+      "render": "period drama cinematography with muted contrast; use rose accents only at narrative focal points, with quiet visual pause.",
+      "surface": "weathered timber, plaster, paper and worn leather; maintain believable scale, wear and contact shadows, with rose notes used sparingly.",
+      "lighting": "window light with gentle bounce fill; shape the primary stage area first, then separate secondary planes with quiet visual pause.",
+      "negative": "modern signage, synthetic showroom surfaces, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with rose accents and quiet visual pause",
+      "tags": [
+        "90年代写实电影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923757_style",
+      "title": "复古叙事电影风格",
+      "render": "documentary realism with natural imperfections; use copper accents only at narrative focal points, with architectural rhythm.",
+      "surface": "scuffed concrete, oxidized metal and dusty glass; maintain believable scale, wear and contact shadows, with copper notes used sparingly.",
+      "lighting": "available light with subtle atmospheric haze; shape the primary stage area first, then separate secondary planes with architectural rhythm.",
+      "negative": "sterile perfection, fantasy ornament, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with copper accents and architectural rhythm",
+      "tags": [
+        "复古叙事电影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923765_style",
+      "title": "美式复古好莱坞",
+      "render": "soft romantic cinema with luminous highlights; use azure accents only at narrative focal points, with foreground-to-background depth.",
+      "surface": "silk, carved wood, porcelain and translucent curtains; maintain believable scale, wear and contact shadows, with azure notes used sparingly.",
+      "lighting": "diffused backlight with a warm rim; shape the primary stage area first, then separate secondary planes with foreground-to-background depth.",
+      "negative": "hard flash, muddy shadows, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with azure accents and foreground-to-background depth",
+      "tags": [
+        "美式复古好莱坞",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923777_style",
+      "title": "霓虹赛博电影风格",
+      "render": "Cinematic cyberpunk environment concept art with crisp graphic geometry; use amber accents only at narrative focal points, with material storytelling.",
+      "surface": "rain-slick asphalt, brushed alloy, translucent panels and emissive cables; maintain believable scale, wear and contact shadows, with amber notes used sparingly.",
+      "lighting": "cyan-magenta rim lights over a neutral key; shape the primary stage area first, then separate secondary planes with material storytelling.",
+      "negative": "pastoral scenery, flat daylight, medieval ornament, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cyberpunk environment film still with amber accents and material storytelling",
+      "tags": [
+        "霓虹赛博电影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923813_style",
+      "title": "90 年代中国农村电影风格",
+      "render": "desert road-movie cinematography with broad horizons; use indigo accents only at narrative focal points, with graphic negative space.",
+      "surface": "sun-bleached timber, canvas, dust and oxidized iron; maintain believable scale, wear and contact shadows, with indigo notes used sparingly.",
+      "lighting": "low-angle sunset with long shadows; shape the primary stage area first, then separate secondary planes with graphic negative space.",
+      "negative": "lush tropical foliage, glossy studio light, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with indigo accents and graphic negative space",
+      "tags": [
+        "90 年代中国农村电影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923774_style",
+      "title": "中式暖调蓝辉风格",
+      "render": "amber-gold period film palette with gentle halation; use jade accents only at narrative focal points, with layered atmospheric perspective.",
+      "surface": "aged brass, lacquered wood, wool and paper; maintain believable scale, wear and contact shadows, with jade notes used sparingly.",
+      "lighting": "late-afternoon side light with practical glow; shape the primary stage area first, then separate secondary planes with layered atmospheric perspective.",
+      "negative": "cyan-magenta neon, clinical white, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with jade accents and layered atmospheric perspective",
+      "tags": [
+        "中式暖调蓝辉风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923776_style",
+      "title": "老式工业影视风格",
+      "render": "high-contrast war-film composition with tactile grit; use crimson accents only at narrative focal points, with controlled edge detail.",
+      "surface": "canvas, worn steel, sandbag cloth and chipped paint; maintain believable scale, wear and contact shadows, with crimson notes used sparingly.",
+      "lighting": "hard directional sun with readable fill; shape the primary stage area first, then separate secondary planes with controlled edge detail.",
+      "negative": "polished surfaces, cheerful pastel colour, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with crimson accents and controlled edge detail",
+      "tags": [
+        "老式工业影视风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923794_style",
+      "title": "日本黑白胶片摄影风格",
+      "render": "Cold suspense cinematography with desaturated production design; use violet accents only at narrative focal points, with rhythmic repetition.",
+      "surface": "concrete, frosted glass, aged steel and damp wood; maintain believable scale, wear and contact shadows, with violet notes used sparingly.",
+      "lighting": "cool top light with isolated practical pools; shape the primary stage area first, then separate secondary planes with rhythmic repetition.",
+      "negative": "warm romance palette, ornate fantasy decor, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "film noir environment film still with violet accents and rhythmic repetition",
+      "tags": [
+        "日本黑白胶片摄影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923778_style",
+      "title": "韩国冷淡风电影风格",
+      "render": "period drama cinematography with muted contrast; use saffron accents only at narrative focal points, with tactile focal prop.",
+      "surface": "weathered timber, plaster, paper and worn leather; maintain believable scale, wear and contact shadows, with saffron notes used sparingly.",
+      "lighting": "window light with gentle bounce fill; shape the primary stage area first, then separate secondary planes with tactile focal prop.",
+      "negative": "modern signage, synthetic showroom surfaces, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with saffron accents and tactile focal prop",
+      "tags": [
+        "韩国冷淡风电影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923775_style",
+      "title": "荒野电影风格",
+      "render": "documentary realism with natural imperfections; use teal accents only at narrative focal points, with balanced asymmetry.",
+      "surface": "scuffed concrete, oxidized metal and dusty glass; maintain believable scale, wear and contact shadows, with teal notes used sparingly.",
+      "lighting": "available light with subtle atmospheric haze; shape the primary stage area first, then separate secondary planes with balanced asymmetry.",
+      "negative": "sterile perfection, fantasy ornament, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with teal accents and balanced asymmetry",
+      "tags": [
+        "荒野电影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923779_style",
+      "title": "橙黄色电影风格",
+      "render": "soft romantic cinema with luminous highlights; use silver accents only at narrative focal points, with quiet visual pause.",
+      "surface": "silk, carved wood, porcelain and translucent curtains; maintain believable scale, wear and contact shadows, with silver notes used sparingly.",
+      "lighting": "diffused backlight with a warm rim; shape the primary stage area first, then separate secondary planes with quiet visual pause.",
+      "negative": "hard flash, muddy shadows, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with silver accents and quiet visual pause",
+      "tags": [
+        "橙黄色电影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923782_style",
+      "title": "复古战争电影风格",
+      "render": "cool urban cinematography with precise framing; use ochre accents only at narrative focal points, with architectural rhythm.",
+      "surface": "concrete, brushed aluminium, glass and rain-dark asphalt; maintain believable scale, wear and contact shadows, with ochre notes used sparingly.",
+      "lighting": "cool skylight with controlled edge separation; shape the primary stage area first, then separate secondary planes with architectural rhythm.",
+      "negative": "rustic ornament, candy colours, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with ochre accents and architectural rhythm",
+      "tags": [
+        "复古战争电影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923781_style",
+      "title": "恐怖电影风格",
+      "render": "Film-noir environment concept art in monochrome silver and charcoal; use rose accents only at narrative focal points, with foreground-to-background depth.",
+      "surface": "wet pavement, matte plaster, smoky glass and worn wool; maintain believable scale, wear and contact shadows, with rose notes used sparingly.",
+      "lighting": "hard venetian-blind key with controlled falloff; shape the primary stage area first, then separate secondary planes with foreground-to-background depth.",
+      "negative": "bright candy colours, glossy 3D, cheerful daylight, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "film noir environment film still with rose accents and foreground-to-background depth",
+      "tags": [
+        "恐怖电影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923795_style",
+      "title": "复古电影摄影风格",
+      "render": "amber-gold period film palette with gentle halation; use copper accents only at narrative focal points, with material storytelling.",
+      "surface": "aged brass, lacquered wood, wool and paper; maintain believable scale, wear and contact shadows, with copper notes used sparingly.",
+      "lighting": "late-afternoon side light with practical glow; shape the primary stage area first, then separate secondary planes with material storytelling.",
+      "negative": "cyan-magenta neon, clinical white, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with copper accents and material storytelling",
+      "tags": [
+        "复古电影摄影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923780_style",
+      "title": "美式复古怪异影视风格",
+      "render": "high-contrast war-film composition with tactile grit; use azure accents only at narrative focal points, with graphic negative space.",
+      "surface": "canvas, worn steel, sandbag cloth and chipped paint; maintain believable scale, wear and contact shadows, with azure notes used sparingly.",
+      "lighting": "hard directional sun with readable fill; shape the primary stage area first, then separate secondary planes with graphic negative space.",
+      "negative": "polished surfaces, cheerful pastel colour, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with azure accents and graphic negative space",
+      "tags": [
+        "美式复古怪异影视风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923773_style",
+      "title": "荒诞高调白色色调电影风格",
+      "render": "35mm film grain and restrained halation; use amber accents only at narrative focal points, with layered atmospheric perspective.",
+      "surface": "aged wood, brushed steel and natural cloth; maintain believable scale, wear and contact shadows, with amber notes used sparingly.",
+      "lighting": "soft overcast key with warm practicals; shape the primary stage area first, then separate secondary planes with layered atmospheric perspective.",
+      "negative": "oversaturated neon, glossy plastic, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with amber accents and layered atmospheric perspective",
+      "tags": [
+        "荒诞高调白色色调电影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923823_style",
+      "title": "高品质动画渲染风格",
+      "render": "Stylized 3D environment art with clean bevelled forms; use indigo accents only at narrative focal points, with controlled edge detail.",
+      "surface": "physically based plaster, painted metal and matte plastic; maintain believable scale, wear and contact shadows, with indigo notes used sparingly.",
+      "lighting": "large softbox key with ambient occlusion; shape the primary stage area first, then separate secondary planes with controlled edge detail.",
+      "negative": "flat sketch, watercolor bleed, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with indigo accents and controlled edge detail",
+      "tags": [
+        "高品质动画渲染风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923846_style",
+      "title": "3D风格化渲染",
+      "render": "High-end PBR visualization with measured scale; use jade accents only at narrative focal points, with rhythmic repetition.",
+      "surface": "calibrated metal, glass, stone and fabric roughness; maintain believable scale, wear and contact shadows, with jade notes used sparingly.",
+      "lighting": "studio three-point lighting with grounded contact shadows; shape the primary stage area first, then separate secondary planes with rhythmic repetition.",
+      "negative": "low-poly artifacts, warped geometry, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with jade accents and rhythmic repetition",
+      "tags": [
+        "3D风格化渲染",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923768_style",
+      "title": "蓝橙色调影视风格",
+      "render": "soft romantic cinema with luminous highlights; use crimson accents only at narrative focal points, with tactile focal prop.",
+      "surface": "silk, carved wood, porcelain and translucent curtains; maintain believable scale, wear and contact shadows, with crimson notes used sparingly.",
+      "lighting": "diffused backlight with a warm rim; shape the primary stage area first, then separate secondary planes with tactile focal prop.",
+      "negative": "hard flash, muddy shadows, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with crimson accents and tactile focal prop",
+      "tags": [
+        "蓝橙色调影视风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923772_style",
+      "title": "工业电影风格",
+      "render": "cool urban cinematography with precise framing; use violet accents only at narrative focal points, with balanced asymmetry.",
+      "surface": "concrete, brushed aluminium, glass and rain-dark asphalt; maintain believable scale, wear and contact shadows, with violet notes used sparingly.",
+      "lighting": "cool skylight with controlled edge separation; shape the primary stage area first, then separate secondary planes with balanced asymmetry.",
+      "negative": "rustic ornament, candy colours, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with violet accents and balanced asymmetry",
+      "tags": [
+        "工业电影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923760_style",
+      "title": "美式经济上行风格",
+      "render": "desert road-movie cinematography with broad horizons; use saffron accents only at narrative focal points, with quiet visual pause.",
+      "surface": "sun-bleached timber, canvas, dust and oxidized iron; maintain believable scale, wear and contact shadows, with saffron notes used sparingly.",
+      "lighting": "low-angle sunset with long shadows; shape the primary stage area first, then separate secondary planes with quiet visual pause.",
+      "negative": "lush tropical foliage, glossy studio light, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with saffron accents and quiet visual pause",
+      "tags": [
+        "美式经济上行风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923767_style",
+      "title": "90年代港片风格",
+      "render": "amber-gold period film palette with gentle halation; use teal accents only at narrative focal points, with architectural rhythm.",
+      "surface": "aged brass, lacquered wood, wool and paper; maintain believable scale, wear and contact shadows, with teal notes used sparingly.",
+      "lighting": "late-afternoon side light with practical glow; shape the primary stage area first, then separate secondary planes with architectural rhythm.",
+      "negative": "cyan-magenta neon, clinical white, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with teal accents and architectural rhythm",
+      "tags": [
+        "90年代港片风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923770_style",
+      "title": "科技感电影风格",
+      "render": "Retro-futurist atomic-punk production design with optimistic machinery; use silver accents only at narrative focal points, with foreground-to-background depth.",
+      "surface": "bakelite, chrome, riveted steel, analogue dials and coloured glass; maintain believable scale, wear and contact shadows, with silver notes used sparingly.",
+      "lighting": "warm tungsten practicals with a cool fill; shape the primary stage area first, then separate secondary planes with foreground-to-background depth.",
+      "negative": "gritty dystopia, organic medieval textures, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cyberpunk environment film still with silver accents and foreground-to-background depth",
+      "tags": [
+        "科技感电影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923761_style",
+      "title": "悬疑电影风格",
+      "render": "Horror film environment with oppressive negative space; use ochre accents only at narrative focal points, with material storytelling.",
+      "surface": "decayed timber, peeling paint, rust and dust suspended in air; maintain believable scale, wear and contact shadows, with ochre notes used sparingly.",
+      "lighting": "low-key sidelight with deep readable shadows; shape the primary stage area first, then separate secondary planes with material storytelling.",
+      "negative": "clean showroom surfaces, playful pastel colour, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "film noir environment film still with ochre accents and material storytelling",
+      "tags": [
+        "悬疑电影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923764_style",
+      "title": "希腊神话电影风格",
+      "render": "Mythic Greek cinematic environment concept art with monumental composition and archaeological grandeur",
+      "surface": "carved marble, weathered bronze, linen drapery and painted terracotta",
+      "lighting": "sunlit shafts through monumental columns with warm reflected bounce",
+      "negative": "modern objects, neon signage, glossy plastic, photorealistic people",
+      "phrase": "mythic Greek cinematic environment film still with marble and bronze accents",
+      "tags": [
+        "希腊神话电影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923771_style",
+      "title": "美式复古影视风格",
+      "render": "documentary realism with natural imperfections; use copper accents only at narrative focal points, with layered atmospheric perspective.",
+      "surface": "scuffed concrete, oxidized metal and dusty glass; maintain believable scale, wear and contact shadows, with copper notes used sparingly.",
+      "lighting": "available light with subtle atmospheric haze; shape the primary stage area first, then separate secondary planes with layered atmospheric perspective.",
+      "negative": "sterile perfection, fantasy ornament, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with copper accents and layered atmospheric perspective",
+      "tags": [
+        "美式复古影视风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923766_style",
+      "title": "好莱坞黑白电影风格",
+      "render": "Horror film environment with oppressive negative space; use azure accents only at narrative focal points, with controlled edge detail.",
+      "surface": "decayed timber, peeling paint, rust and dust suspended in air; maintain believable scale, wear and contact shadows, with azure notes used sparingly.",
+      "lighting": "low-key sidelight with deep readable shadows; shape the primary stage area first, then separate secondary planes with controlled edge detail.",
+      "negative": "clean showroom surfaces, playful pastel colour, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "film noir environment film still with azure accents and controlled edge detail",
+      "tags": [
+        "好莱坞黑白电影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923850_style",
+      "title": "3D卡通微缩景观",
+      "render": "High-end PBR visualization with measured scale; use amber accents only at narrative focal points, with rhythmic repetition.",
+      "surface": "calibrated metal, glass, stone and fabric roughness; maintain believable scale, wear and contact shadows, with amber notes used sparingly.",
+      "lighting": "studio three-point lighting with grounded contact shadows; shape the primary stage area first, then separate secondary planes with rhythmic repetition.",
+      "negative": "low-poly artifacts, warped geometry, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with amber accents and rhythmic repetition",
+      "tags": [
+        "3D卡通微缩景观",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923826_style",
+      "title": "3D西方卡通风格的绘制",
+      "render": "Miniature diorama rendering with handcrafted charm; use indigo accents only at narrative focal points, with tactile focal prop.",
+      "surface": "painted resin, foam, tiny timber and model foliage; maintain believable scale, wear and contact shadows, with indigo notes used sparingly.",
+      "lighting": "soft tabletop light with a gentle vignette; shape the primary stage area first, then separate secondary planes with tactile focal prop.",
+      "negative": "photorealistic people, full-size architecture, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with indigo accents and tactile focal prop",
+      "tags": [
+        "3D西方卡通风格的绘制",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923843_style",
+      "title": "欧美风格化3D渲染",
+      "render": "Toy-like 3D cartoon environment with bold readable shapes; use jade accents only at narrative focal points, with balanced asymmetry.",
+      "surface": "satin polymer, molded plastic and simplified wood grain; maintain believable scale, wear and contact shadows, with jade notes used sparingly.",
+      "lighting": "bright studio key with soft fill; shape the primary stage area first, then separate secondary planes with balanced asymmetry.",
+      "negative": "gritty realism, complex photographic clutter, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with jade accents and balanced asymmetry",
+      "tags": [
+        "欧美风格化3D渲染",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923806_style",
+      "title": "3D数字雕刻风格",
+      "render": "Digital sculpting presentation with sculpted silhouettes; use crimson accents only at narrative focal points, with quiet visual pause.",
+      "surface": "clay, stone, carved wood and controlled surface roughness; maintain believable scale, wear and contact shadows, with crimson notes used sparingly.",
+      "lighting": "neutral turntable light with a clean rim; shape the primary stage area first, then separate secondary planes with quiet visual pause.",
+      "negative": "flat 2D line art, watercolor paper, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with crimson accents and quiet visual pause",
+      "tags": [
+        "3D数字雕刻风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923784_style",
+      "title": "二次元概念艺术风格",
+      "render": "High-energy shonen-inspired environment illustration; use violet accents only at narrative focal points, with architectural rhythm.",
+      "surface": "bold architectural planes, painted metal and kinetic debris; maintain believable scale, wear and contact shadows, with violet notes used sparingly.",
+      "lighting": "dramatic directional light with controlled bloom; shape the primary stage area first, then separate secondary planes with architectural rhythm.",
+      "negative": "pastel wash, static showroom composition, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "2D animation environment film still with violet accents and architectural rhythm",
+      "tags": [
+        "二次元概念艺术风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923812_style",
+      "title": "3D国风高清渲染风格",
+      "render": "High-end PBR visualization with measured scale; use saffron accents only at narrative focal points, with foreground-to-background depth.",
+      "surface": "calibrated metal, glass, stone and fabric roughness; maintain believable scale, wear and contact shadows, with saffron notes used sparingly.",
+      "lighting": "studio three-point lighting with grounded contact shadows; shape the primary stage area first, then separate secondary planes with foreground-to-background depth.",
+      "negative": "low-poly artifacts, warped geometry, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with saffron accents and foreground-to-background depth",
+      "tags": [
+        "3D国风高清渲染风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923758_style",
+      "title": "紫色色调电影风格",
+      "render": "documentary realism with natural imperfections; use teal accents only at narrative focal points, with material storytelling.",
+      "surface": "scuffed concrete, oxidized metal and dusty glass; maintain believable scale, wear and contact shadows, with teal notes used sparingly.",
+      "lighting": "available light with subtle atmospheric haze; shape the primary stage area first, then separate secondary planes with material storytelling.",
+      "negative": "sterile perfection, fantasy ornament, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with teal accents and material storytelling",
+      "tags": [
+        "紫色色调电影风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923847_style",
+      "title": "3D美式卡通游戏美术",
+      "render": "Toy-like 3D cartoon environment with bold readable shapes; use silver accents only at narrative focal points, with graphic negative space.",
+      "surface": "satin polymer, molded plastic and simplified wood grain; maintain believable scale, wear and contact shadows, with silver notes used sparingly.",
+      "lighting": "bright studio key with soft fill; shape the primary stage area first, then separate secondary planes with graphic negative space.",
+      "negative": "gritty realism, complex photographic clutter, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with silver accents and graphic negative space",
+      "tags": [
+        "3D美式卡通游戏美术",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923841_style",
+      "title": "3D盲盒涂装风",
+      "render": "Digital sculpting presentation with sculpted silhouettes; use ochre accents only at narrative focal points, with layered atmospheric perspective.",
+      "surface": "clay, stone, carved wood and controlled surface roughness; maintain believable scale, wear and contact shadows, with ochre notes used sparingly.",
+      "lighting": "neutral turntable light with a clean rim; shape the primary stage area first, then separate secondary planes with layered atmospheric perspective.",
+      "negative": "flat 2D line art, watercolor paper, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with ochre accents and layered atmospheric perspective",
+      "tags": [
+        "3D盲盒涂装风",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923845_style",
+      "title": "动漫三渲二风格",
+      "render": "Dynamic 2D animation layout with expressive graphic shapes; use rose accents only at narrative focal points, with controlled edge detail.",
+      "surface": "flat colour blocks, ink contours and selective hatching; maintain believable scale, wear and contact shadows, with rose notes used sparingly.",
+      "lighting": "graphic key light with a decisive rim; shape the primary stage area first, then separate secondary planes with controlled edge detail.",
+      "negative": "3D render, soft photographic blur, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "2D animation environment film still with rose accents and controlled edge detail",
+      "tags": [
+        "动漫三渲二风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923801_style",
+      "title": "超现实3D渲染风格",
+      "render": "High-end PBR visualization with measured scale; use copper accents only at narrative focal points, with rhythmic repetition.",
+      "surface": "calibrated metal, glass, stone and fabric roughness; maintain believable scale, wear and contact shadows, with copper notes used sparingly.",
+      "lighting": "studio three-point lighting with grounded contact shadows; shape the primary stage area first, then separate secondary planes with rhythmic repetition.",
+      "negative": "low-poly artifacts, warped geometry, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with copper accents and rhythmic repetition",
+      "tags": [
+        "超现实3D渲染风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923842_style",
+      "title": "UE5写实渲染",
+      "render": "Miniature diorama rendering with handcrafted charm; use azure accents only at narrative focal points, with tactile focal prop.",
+      "surface": "painted resin, foam, tiny timber and model foliage; maintain believable scale, wear and contact shadows, with azure notes used sparingly.",
+      "lighting": "soft tabletop light with a gentle vignette; shape the primary stage area first, then separate secondary planes with tactile focal prop.",
+      "negative": "photorealistic people, full-size architecture, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with azure accents and tactile focal prop",
+      "tags": [
+        "UE5写实渲染",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923848_style",
+      "title": "国风3D高清渲染风格",
+      "render": "Toy-like 3D cartoon environment with bold readable shapes; use amber accents only at narrative focal points, with balanced asymmetry.",
+      "surface": "satin polymer, molded plastic and simplified wood grain; maintain believable scale, wear and contact shadows, with amber notes used sparingly.",
+      "lighting": "bright studio key with soft fill; shape the primary stage area first, then separate secondary planes with balanced asymmetry.",
+      "negative": "gritty realism, complex photographic clutter, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with amber accents and balanced asymmetry",
+      "tags": [
+        "国风3D高清渲染风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923849_style",
+      "title": "3D卡通渲染风格",
+      "render": "Digital sculpting presentation with sculpted silhouettes; use indigo accents only at narrative focal points, with quiet visual pause.",
+      "surface": "clay, stone, carved wood and controlled surface roughness; maintain believable scale, wear and contact shadows, with indigo notes used sparingly.",
+      "lighting": "neutral turntable light with a clean rim; shape the primary stage area first, then separate secondary planes with quiet visual pause.",
+      "negative": "flat 2D line art, watercolor paper, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with indigo accents and quiet visual pause",
+      "tags": [
+        "3D卡通渲染风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923821_style",
+      "title": "美国卡通3D渲染风格",
+      "render": "Stylized 3D environment art with clean bevelled forms; use jade accents only at narrative focal points, with architectural rhythm.",
+      "surface": "physically based plaster, painted metal and matte plastic; maintain believable scale, wear and contact shadows, with jade notes used sparingly.",
+      "lighting": "large softbox key with ambient occlusion; shape the primary stage area first, then separate secondary planes with architectural rhythm.",
+      "negative": "flat sketch, watercolor bleed, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with jade accents and architectural rhythm",
+      "tags": [
+        "美国卡通3D渲染风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923822_style",
+      "title": "3D厚涂风格",
+      "render": "High-end PBR visualization with measured scale; use crimson accents only at narrative focal points, with foreground-to-background depth.",
+      "surface": "calibrated metal, glass, stone and fabric roughness; maintain believable scale, wear and contact shadows, with crimson notes used sparingly.",
+      "lighting": "studio three-point lighting with grounded contact shadows; shape the primary stage area first, then separate secondary planes with foreground-to-background depth.",
+      "negative": "low-poly artifacts, warped geometry, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with crimson accents and foreground-to-background depth",
+      "tags": [
+        "3D厚涂风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923827_style",
+      "title": "3D真实感PBR渲染风格",
+      "render": "Miniature diorama rendering with handcrafted charm; use violet accents only at narrative focal points, with material storytelling.",
+      "surface": "painted resin, foam, tiny timber and model foliage; maintain believable scale, wear and contact shadows, with violet notes used sparingly.",
+      "lighting": "soft tabletop light with a gentle vignette; shape the primary stage area first, then separate secondary planes with material storytelling.",
+      "negative": "photorealistic people, full-size architecture, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with violet accents and material storytelling",
+      "tags": [
+        "3D真实感PBR渲染风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923844_style",
+      "title": "3D游戏渲染风格",
+      "render": "Toy-like 3D cartoon environment with bold readable shapes; use saffron accents only at narrative focal points, with graphic negative space.",
+      "surface": "satin polymer, molded plastic and simplified wood grain; maintain believable scale, wear and contact shadows, with saffron notes used sparingly.",
+      "lighting": "bright studio key with soft fill; shape the primary stage area first, then separate secondary planes with graphic negative space.",
+      "negative": "gritty realism, complex photographic clutter, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with saffron accents and graphic negative space",
+      "tags": [
+        "3D游戏渲染风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923825_style",
+      "title": "3D人物(简约卡通风）",
+      "render": "Digital sculpting presentation with sculpted silhouettes; use teal accents only at narrative focal points, with layered atmospheric perspective.",
+      "surface": "clay, stone, carved wood and controlled surface roughness; maintain believable scale, wear and contact shadows, with teal notes used sparingly.",
+      "lighting": "neutral turntable light with a clean rim; shape the primary stage area first, then separate secondary planes with layered atmospheric perspective.",
+      "negative": "flat 2D line art, watercolor paper, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with teal accents and layered atmospheric perspective",
+      "tags": [
+        "3D人物(简约卡通风）",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923803_style",
+      "title": "3D卡通动画风格",
+      "render": "Stylized 3D environment art with clean bevelled forms; use silver accents only at narrative focal points, with controlled edge detail.",
+      "surface": "physically based plaster, painted metal and matte plastic; maintain believable scale, wear and contact shadows, with silver notes used sparingly.",
+      "lighting": "large softbox key with ambient occlusion; shape the primary stage area first, then separate secondary planes with controlled edge detail.",
+      "negative": "flat sketch, watercolor bleed, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with silver accents and controlled edge detail",
+      "tags": [
+        "3D卡通动画风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923816_style",
+      "title": "美国游戏概念艺术风格",
+      "render": "Western game environment concept art with cinematic world-building and strong landmark silhouettes",
+      "surface": "weathered stone, forged metal, leather, timber and controlled foliage clusters",
+      "lighting": "dramatic key light with volumetric atmosphere and grounded contact shadows",
+      "negative": "modern stock photography, plastic surfaces, incoherent scale",
+      "phrase": "western game environment concept film still with landmark silhouettes",
+      "tags": [
+        "美国游戏概念艺术风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923790_style",
+      "title": "复古Y2K奇幻风格",
+      "render": "Retro Y2K fantasy environment design mixing glossy optimism with surreal digital motifs",
+      "surface": "translucent acrylic, chrome, iridescent plastics and soft synthetic textiles",
+      "lighting": "magenta-cyan ambient glow balanced by a clean neutral key",
+      "negative": "medieval grime, muddy monochrome, distressed realism",
+      "phrase": "retro Y2K fantasy environment film still with iridescent accents",
+      "tags": [
+        "复古Y2K奇幻风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923834_style",
+      "title": "日系平涂插画风格",
+      "render": "Editorial watercolor environment illustration with delicate ink contour; use copper accents only at narrative focal points, with balanced asymmetry.",
+      "surface": "granulating pigments, wet-on-wet blooms, paper tooth and preserved white; maintain believable scale, wear and contact shadows, with copper notes used sparingly.",
+      "lighting": "diffused window light with airy atmospheric perspective; shape the primary stage area first, then separate secondary planes with balanced asymmetry.",
+      "negative": "glossy CGI, hard vector edges, neon glow, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "watercolor illustration environment film still with copper accents and balanced asymmetry",
+      "tags": [
+        "日系平涂插画风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923838_style",
+      "title": "插画蒸汽波风格",
+      "render": "Textured mixed-media illustration with visible print processes; use azure accents only at narrative focal points, with quiet visual pause.",
+      "surface": "dry-brush pigment, rough paper, collage fibres and restrained overprint; maintain believable scale, wear and contact shadows, with azure notes used sparingly.",
+      "lighting": "soft gallery light with gentle vignette; shape the primary stage area first, then separate secondary planes with quiet visual pause.",
+      "negative": "photorealistic polish, plastic sheen, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "watercolor illustration environment film still with azure accents and quiet visual pause",
+      "tags": [
+        "插画蒸汽波风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923808_style",
+      "title": "3D魔幻角色扮演游戏",
+      "render": "Stylized 3D environment art with clean bevelled forms; use amber accents only at narrative focal points, with architectural rhythm.",
+      "surface": "physically based plaster, painted metal and matte plastic; maintain believable scale, wear and contact shadows, with amber notes used sparingly.",
+      "lighting": "large softbox key with ambient occlusion; shape the primary stage area first, then separate secondary planes with architectural rhythm.",
+      "negative": "flat sketch, watercolor bleed, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with amber accents and architectural rhythm",
+      "tags": [
+        "3D魔幻角色扮演游戏",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923836_style",
+      "title": "赛博朋克数字插画风格",
+      "render": "Retro-futurist atomic-punk production design with optimistic machinery; use indigo accents only at narrative focal points, with foreground-to-background depth.",
+      "surface": "bakelite, chrome, riveted steel, analogue dials and coloured glass; maintain believable scale, wear and contact shadows, with indigo notes used sparingly.",
+      "lighting": "warm tungsten practicals with a cool fill; shape the primary stage area first, then separate secondary planes with foreground-to-background depth.",
+      "negative": "gritty dystopia, organic medieval textures, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cyberpunk environment film still with indigo accents and foreground-to-background depth",
+      "tags": [
+        "赛博朋克数字插画风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923817_style",
+      "title": "游戏概念艺术风格",
+      "render": "amber-gold period film palette with gentle halation; use jade accents only at narrative focal points, with material storytelling.",
+      "surface": "aged brass, lacquered wood, wool and paper; maintain believable scale, wear and contact shadows, with jade notes used sparingly.",
+      "lighting": "late-afternoon side light with practical glow; shape the primary stage area first, then separate secondary planes with material storytelling.",
+      "negative": "cyan-magenta neon, clinical white, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "cinematic realism environment film still with jade accents and material storytelling",
+      "tags": [
+        "游戏概念艺术风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923828_style",
+      "title": "国漫二次元常用风格",
+      "render": "Dynamic 2D animation layout with expressive graphic shapes; use crimson accents only at narrative focal points, with graphic negative space.",
+      "surface": "flat colour blocks, ink contours and selective hatching; maintain believable scale, wear and contact shadows, with crimson notes used sparingly.",
+      "lighting": "graphic key light with a decisive rim; shape the primary stage area first, then separate secondary planes with graphic negative space.",
+      "negative": "3D render, soft photographic blur, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "2D animation environment film still with crimson accents and graphic negative space",
+      "tags": [
+        "国漫二次元常用风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923799_style",
+      "title": "粘土动画风格",
+      "render": "Stop-motion clay animation environment with hand-built charm and visible thumbprint forms",
+      "surface": "painted clay, felt, cardboard, miniature timber and fabric props",
+      "lighting": "soft tabletop studio light with gentle falloff and practical miniature glow",
+      "negative": "photorealistic people, glossy CGI, sterile architecture",
+      "phrase": "stop-motion clay environment film still with hand-built textures",
+      "tags": [
+        "粘土动画风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923807_style",
+      "title": "3D加强版卡通渲染风格",
+      "render": "Stylized 3D environment art with clean bevelled forms; use saffron accents only at narrative focal points, with controlled edge detail.",
+      "surface": "physically based plaster, painted metal and matte plastic; maintain believable scale, wear and contact shadows, with saffron notes used sparingly.",
+      "lighting": "large softbox key with ambient occlusion; shape the primary stage area first, then separate secondary planes with controlled edge detail.",
+      "negative": "flat sketch, watercolor bleed, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with saffron accents and controlled edge detail",
+      "tags": [
+        "3D加强版卡通渲染风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923805_style",
+      "title": "3D中国奇幻动画",
+      "render": "High-end PBR visualization with measured scale; use teal accents only at narrative focal points, with rhythmic repetition.",
+      "surface": "calibrated metal, glass, stone and fabric roughness; maintain believable scale, wear and contact shadows, with teal notes used sparingly.",
+      "lighting": "studio three-point lighting with grounded contact shadows; shape the primary stage area first, then separate secondary planes with rhythmic repetition.",
+      "negative": "low-poly artifacts, warped geometry, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with teal accents and rhythmic repetition",
+      "tags": [
+        "3D中国奇幻动画",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923810_style",
+      "title": "3D光泽乳胶渲染风格",
+      "render": "Miniature diorama rendering with handcrafted charm; use silver accents only at narrative focal points, with tactile focal prop.",
+      "surface": "painted resin, foam, tiny timber and model foliage; maintain believable scale, wear and contact shadows, with silver notes used sparingly.",
+      "lighting": "soft tabletop light with a gentle vignette; shape the primary stage area first, then separate secondary planes with tactile focal prop.",
+      "negative": "photorealistic people, full-size architecture, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with silver accents and tactile focal prop",
+      "tags": [
+        "3D光泽乳胶渲染风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923811_style",
+      "title": "3D果冻状塑料风格",
+      "render": "Toy-like 3D cartoon environment with bold readable shapes; use ochre accents only at narrative focal points, with balanced asymmetry.",
+      "surface": "satin polymer, molded plastic and simplified wood grain; maintain believable scale, wear and contact shadows, with ochre notes used sparingly.",
+      "lighting": "bright studio key with soft fill; shape the primary stage area first, then separate secondary planes with balanced asymmetry.",
+      "negative": "gritty realism, complex photographic clutter, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with ochre accents and balanced asymmetry",
+      "tags": [
+        "3D果冻状塑料风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923833_style",
+      "title": "达利风格",
+      "render": "Textured mixed-media illustration with visible print processes; use rose accents only at narrative focal points, with quiet visual pause.",
+      "surface": "dry-brush pigment, rough paper, collage fibres and restrained overprint; maintain believable scale, wear and contact shadows, with rose notes used sparingly.",
+      "lighting": "soft gallery light with gentle vignette; shape the primary stage area first, then separate secondary planes with quiet visual pause.",
+      "negative": "photorealistic polish, plastic sheen, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "watercolor illustration environment film still with rose accents and quiet visual pause",
+      "tags": [
+        "达利风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923798_style",
+      "title": "定格动画风格",
+      "render": "Stop-motion animation set with handcrafted miniature staging and tactile frame-by-frame detail",
+      "surface": "painted foam, wire, paper, wood and fabric miniatures",
+      "lighting": "controlled stage lighting with visible practical pools and soft bounce",
+      "negative": "photorealistic scale, glossy CGI, random modern clutter",
+      "phrase": "stop-motion miniature environment film still with handcrafted textures",
+      "tags": [
+        "定格动画风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923792_style",
+      "title": "黑白水墨风格",
+      "render": "Classical Chinese fantasy landscape with gongbi detail; use azure accents only at narrative focal points, with foreground-to-background depth.",
+      "surface": "inked timber, jade, silk banners and layered mountain washes; maintain believable scale, wear and contact shadows, with azure notes used sparingly.",
+      "lighting": "moonlit haze with a cool rim and warm lantern pools; shape the primary stage area first, then separate secondary planes with foreground-to-background depth.",
+      "negative": "modern signage, industrial plastics, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "ink-wash environment film still with azure accents and foreground-to-background depth",
+      "tags": [
+        "黑白水墨风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923809_style",
+      "title": "3D西方卡通风格",
+      "render": "Miniature diorama rendering with handcrafted charm; use amber accents only at narrative focal points, with material storytelling.",
+      "surface": "painted resin, foam, tiny timber and model foliage; maintain believable scale, wear and contact shadows, with amber notes used sparingly.",
+      "lighting": "soft tabletop light with a gentle vignette; shape the primary stage area first, then separate secondary planes with material storytelling.",
+      "negative": "photorealistic people, full-size architecture, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with amber accents and material storytelling",
+      "tags": [
+        "3D西方卡通风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923793_style",
+      "title": "高清3D真实渲染风格",
+      "render": "Toy-like 3D cartoon environment with bold readable shapes; use indigo accents only at narrative focal points, with graphic negative space.",
+      "surface": "satin polymer, molded plastic and simplified wood grain; maintain believable scale, wear and contact shadows, with indigo notes used sparingly.",
+      "lighting": "bright studio key with soft fill; shape the primary stage area first, then separate secondary planes with graphic negative space.",
+      "negative": "gritty realism, complex photographic clutter, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "stylized 3D environment film still with indigo accents and graphic negative space",
+      "tags": [
+        "高清3D真实渲染风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923814_style",
+      "title": "美国漫画动画插画风格",
+      "render": "Polished anime background art with clean cel planes; use jade accents only at narrative focal points, with layered atmospheric perspective.",
+      "surface": "painted wood, tiled roofs, grouped foliage and crisp props; maintain believable scale, wear and contact shadows, with jade notes used sparingly.",
+      "lighting": "even daylight with one soft cel shadow; shape the primary stage area first, then separate secondary planes with layered atmospheric perspective.",
+      "negative": "photorealistic texture, lens dirt, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "2D animation environment film still with jade accents and layered atmospheric perspective",
+      "tags": [
+        "美国漫画动画插画风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923840_style",
+      "title": "复古肌理迷幻插画风格",
+      "render": "Textured mixed-media illustration with visible print processes; use crimson accents only at narrative focal points, with controlled edge detail.",
+      "surface": "dry-brush pigment, rough paper, collage fibres and restrained overprint; maintain believable scale, wear and contact shadows, with crimson notes used sparingly.",
+      "lighting": "soft gallery light with gentle vignette; shape the primary stage area first, then separate secondary planes with controlled edge detail.",
+      "negative": "photorealistic polish, plastic sheen, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "watercolor illustration environment film still with crimson accents and controlled edge detail",
+      "tags": [
+        "复古肌理迷幻插画风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923839_style",
+      "title": "儿童蜡笔手绘插画风",
+      "render": "Editorial watercolor environment illustration with delicate ink contour; use violet accents only at narrative focal points, with rhythmic repetition.",
+      "surface": "granulating pigments, wet-on-wet blooms, paper tooth and preserved white; maintain believable scale, wear and contact shadows, with violet notes used sparingly.",
+      "lighting": "diffused window light with airy atmospheric perspective; shape the primary stage area first, then separate secondary planes with rhythmic repetition.",
+      "negative": "glossy CGI, hard vector edges, neon glow, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "watercolor illustration environment film still with violet accents and rhythmic repetition",
+      "tags": [
+        "儿童蜡笔手绘插画风",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923815_style",
+      "title": "黑白二维漫画动画风格",
+      "render": "Retro hand-drawn animation background with simplified detail; use saffron accents only at narrative focal points, with tactile focal prop.",
+      "surface": "gouache paint, paper grain and economical line accents; maintain believable scale, wear and contact shadows, with saffron notes used sparingly.",
+      "lighting": "warm diffuse daylight with gentle falloff; shape the primary stage area first, then separate secondary planes with tactile focal prop.",
+      "negative": "hyperreal micro-detail, glossy CGI, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "2D animation environment film still with saffron accents and tactile focal prop",
+      "tags": [
+        "黑白二维漫画动画风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923835_style",
+      "title": "高质量2D热血漫风格",
+      "render": "American comic-book environment illustration with bold contour shapes; use teal accents only at narrative focal points, with balanced asymmetry.",
+      "surface": "flat saturated colour blocks, halftone print texture and crosshatch shadows; maintain believable scale, wear and contact shadows, with teal notes used sparingly.",
+      "lighting": "graphic three-point lighting with hard-edged silhouettes; shape the primary stage area first, then separate secondary planes with balanced asymmetry.",
+      "negative": "soft watercolor blur, photorealistic rendering, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "2D animation environment film still with teal accents and balanced asymmetry",
+      "tags": [
+        "高质量2D热血漫风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923831_style",
+      "title": "大友克洋风格",
+      "render": "Dark graphic-novel setting with heavy ink masses; use silver accents only at narrative focal points, with quiet visual pause.",
+      "surface": "matte brick, distressed paper, oxidized metal and dense blacks; maintain believable scale, wear and contact shadows, with silver notes used sparingly.",
+      "lighting": "chiaroscuro key with narrow highlights; shape the primary stage area first, then separate secondary planes with quiet visual pause.",
+      "negative": "cheerful pastel palette, glossy surfaces, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "2D animation environment film still with silver accents and quiet visual pause",
+      "tags": [
+        "大友克洋风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923818_style",
+      "title": "暗色调厚涂风格插画",
+      "render": "Dark impasto illustration environment with dense painted masses and expressive brush texture",
+      "surface": "thick oil pigment, rough canvas, worn stone and matte timber",
+      "lighting": "single dramatic key cutting through deep painterly shadows",
+      "negative": "clean vector flatness, glossy CGI, cheerful pastel palette",
+      "phrase": "dark impasto environment film still with dense brush texture",
+      "tags": [
+        "暗色调厚涂风格插画",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923830_style",
+      "title": "手冢治虫时代卡通画风",
+      "render": "Dynamic 2D animation layout with expressive graphic shapes; use rose accents only at narrative focal points, with foreground-to-background depth.",
+      "surface": "flat colour blocks, ink contours and selective hatching; maintain believable scale, wear and contact shadows, with rose notes used sparingly.",
+      "lighting": "graphic key light with a decisive rim; shape the primary stage area first, then separate secondary planes with foreground-to-background depth.",
+      "negative": "3D render, soft photographic blur, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "2D animation environment film still with rose accents and foreground-to-background depth",
+      "tags": [
+        "手冢治虫时代卡通画风",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923832_style",
+      "title": "上美画风",
+      "render": "Shadow-puppet inspired flat illustration with cut-paper silhouettes; use copper accents only at narrative focal points, with material storytelling.",
+      "surface": "translucent leather, carved patterns, parchment and vermilion accents; maintain believable scale, wear and contact shadows, with copper notes used sparingly.",
+      "lighting": "backlit lantern glow with crisp silhouette edges; shape the primary stage area first, then separate secondary planes with material storytelling.",
+      "negative": "photorealistic depth, rounded 3D forms, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "ink-wash environment film still with copper accents and material storytelling",
+      "tags": [
+        "上美画风",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923819_style",
+      "title": "中国神话风格",
+      "render": "Chinese mythic environment painting with celestial architecture and poetic scale",
+      "surface": "aged timber, jade, cinnabar lacquer, cloud motifs and mineral pigments",
+      "lighting": "layered mountain mist with warm ceremonial light and a cool atmospheric rim",
+      "negative": "modern signage, synthetic plastics, photorealistic city detail",
+      "phrase": "Chinese mythic environment film still with jade and cinnabar accents",
+      "tags": [
+        "中国神话风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923800_style",
+      "title": "二维卡通插画风格",
+      "render": "American comic-book environment illustration with bold contour shapes; use amber accents only at narrative focal points, with layered atmospheric perspective.",
+      "surface": "flat saturated colour blocks, halftone print texture and crosshatch shadows; maintain believable scale, wear and contact shadows, with amber notes used sparingly.",
+      "lighting": "graphic three-point lighting with hard-edged silhouettes; shape the primary stage area first, then separate secondary planes with layered atmospheric perspective.",
+      "negative": "soft watercolor blur, photorealistic rendering, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "2D animation environment film still with amber accents and layered atmospheric perspective",
+      "tags": [
+        "二维卡通插画风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923786_style",
+      "title": "黑暗原画概念风格",
+      "render": "Cold suspense cinematography with desaturated production design; use indigo accents only at narrative focal points, with controlled edge detail.",
+      "surface": "concrete, frosted glass, aged steel and damp wood; maintain believable scale, wear and contact shadows, with indigo notes used sparingly.",
+      "lighting": "cool top light with isolated practical pools; shape the primary stage area first, then separate secondary planes with controlled edge detail.",
+      "negative": "warm romance palette, ornate fantasy decor, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "film noir environment film still with indigo accents and controlled edge detail",
+      "tags": [
+        "黑暗原画概念风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923797_style",
+      "title": "皮影戏插画风格",
+      "render": "Classical Chinese fantasy landscape with gongbi detail; use jade accents only at narrative focal points, with rhythmic repetition.",
+      "surface": "inked timber, jade, silk banners and layered mountain washes; maintain believable scale, wear and contact shadows, with jade notes used sparingly.",
+      "lighting": "moonlit haze with a cool rim and warm lantern pools; shape the primary stage area first, then separate secondary planes with rhythmic repetition.",
+      "negative": "modern signage, industrial plastics, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "ink-wash environment film still with jade accents and rhythmic repetition",
+      "tags": [
+        "皮影戏插画风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923788_style",
+      "title": "美式黑暗插画风格",
+      "render": "Textured mixed-media illustration with visible print processes; use crimson accents only at narrative focal points, with tactile focal prop.",
+      "surface": "dry-brush pigment, rough paper, collage fibres and restrained overprint; maintain believable scale, wear and contact shadows, with crimson notes used sparingly.",
+      "lighting": "soft gallery light with gentle vignette; shape the primary stage area first, then separate secondary planes with tactile focal prop.",
+      "negative": "photorealistic polish, plastic sheen, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "watercolor illustration environment film still with crimson accents and tactile focal prop",
+      "tags": [
+        "美式黑暗插画风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923787_style",
+      "title": "黑暗奇幻插画风格",
+      "render": "Editorial watercolor environment illustration with delicate ink contour; use violet accents only at narrative focal points, with balanced asymmetry.",
+      "surface": "granulating pigments, wet-on-wet blooms, paper tooth and preserved white; maintain believable scale, wear and contact shadows, with violet notes used sparingly.",
+      "lighting": "diffused window light with airy atmospheric perspective; shape the primary stage area first, then separate secondary planes with balanced asymmetry.",
+      "negative": "glossy CGI, hard vector edges, neon glow, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "watercolor illustration environment film still with violet accents and balanced asymmetry",
+      "tags": [
+        "黑暗奇幻插画风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923785_style",
+      "title": "暗黑漫画风格",
+      "render": "Retro hand-drawn animation background with simplified detail; use saffron accents only at narrative focal points, with quiet visual pause.",
+      "surface": "gouache paint, paper grain and economical line accents; maintain believable scale, wear and contact shadows, with saffron notes used sparingly.",
+      "lighting": "warm diffuse daylight with gentle falloff; shape the primary stage area first, then separate secondary planes with quiet visual pause.",
+      "negative": "hyperreal micro-detail, glossy CGI, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "2D animation environment film still with saffron accents and quiet visual pause",
+      "tags": [
+        "暗黑漫画风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923791_style",
+      "title": "简洁插画风格",
+      "render": "Editorial watercolor environment illustration with delicate ink contour; use teal accents only at narrative focal points, with architectural rhythm.",
+      "surface": "granulating pigments, wet-on-wet blooms, paper tooth and preserved white; maintain believable scale, wear and contact shadows, with teal notes used sparingly.",
+      "lighting": "diffused window light with airy atmospheric perspective; shape the primary stage area first, then separate secondary planes with architectural rhythm.",
+      "negative": "glossy CGI, hard vector edges, neon glow, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "watercolor illustration environment film still with teal accents and architectural rhythm",
+      "tags": [
+        "简洁插画风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923796_style",
+      "title": "复古半色调暗色调哥特风格",
+      "render": "Cold suspense cinematography with desaturated production design; use silver accents only at narrative focal points, with foreground-to-background depth.",
+      "surface": "concrete, frosted glass, aged steel and damp wood; maintain believable scale, wear and contact shadows, with silver notes used sparingly.",
+      "lighting": "cool top light with isolated practical pools; shape the primary stage area first, then separate secondary planes with foreground-to-background depth.",
+      "negative": "warm romance palette, ornate fantasy decor, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "film noir environment film still with silver accents and foreground-to-background depth",
+      "tags": [
+        "复古半色调暗色调哥特风格",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923789_style",
+      "title": "东方水墨画风",
+      "render": "Classical Chinese fantasy landscape with gongbi detail; use ochre accents only at narrative focal points, with material storytelling.",
+      "surface": "inked timber, jade, silk banners and layered mountain washes; maintain believable scale, wear and contact shadows, with ochre notes used sparingly.",
+      "lighting": "moonlit haze with a cool rim and warm lantern pools; shape the primary stage area first, then separate secondary planes with material storytelling.",
+      "negative": "modern signage, industrial plastics, people, human figures, crowds, text, watermark, signature, mismatched art styles.",
+      "phrase": "ink-wash environment film still with ochre accents and material storytelling",
+      "tags": [
+        "东方水墨画风",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    },
+    {
+      "id": "1779094923783_style",
+      "title": "像素风",
+      "render": "Pixel-art environment with deliberate grid geometry, limited palette and readable tile clusters",
+      "surface": "hard-edged pixel tiles, dithered gradients, chunky stone, wood and metal clusters",
+      "lighting": "stepped pixel light ramps with a restrained emissive highlight",
+      "negative": "smooth gradients, photorealistic texture, anti-aliased vector blur",
+      "phrase": "pixel-art environment still with a limited palette and crisp tile geometry",
+      "tags": [
+        "像素风",
+        "environment design",
+        "narrative asset",
+        "independent visual contract"
+      ]
+    }
+  ]
+}

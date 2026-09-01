@@ -205,7 +205,7 @@ export const DEFAULT_LANG = 'zh';
 /*
  * 换风格是整套换，不是只换一句「画风」。
  *
- * 最容易踩的坑：两个预设的 negativePrompt 几乎是相反的。写实那套刚把
+ * 最容易踩的坑：realistic 与 ghibli 两个结构范本的 negativePrompt 几乎相反；其他预设也必须维护自己的完整反向词。写实那套刚把
  * photorealistic 从反向词里删掉，吉卜力恰恰要禁它。毛孔、皮下散射、
  * 顺表情肌的皱纹在写实里是加分项，在吉卜力里是反效果。
  *
@@ -246,10 +246,110 @@ export const STYLE_PRESETS = {
       'photorealistic, 3d render, hyperrealistic skin texture, visible pores, subsurface scattering, harsh contrast, heavy painterly rendering, muddy or desaturated colours, gritty texture overlay, extra fingers, malformed hands, text, watermark, signature, busy or patterned background',
     tags: ['ghibli-like', 'cel shading', 'hand-painted', 'character sheet', 'flat daylight'],
   },
+
+  ink: {
+    label: { zh: '东方水墨', en: 'Chinese ink wash', ja: '水墨画' },
+    render: 'Chinese ink wash character illustration, expressive brush lines, layered grey washes, restrained vermilion accent, elegant negative space',
+    surface: 'Absorbent xuan paper texture, dry-brush edges, pooled ink gradients, simplified facial planes and fabric folds, deliberate blank space',
+    lighting: 'Soft diffuse studio light with a controlled ink value range; no glossy highlights or hard cast shadows',
+    negative: 'photorealistic, 3d render, neon colours, glossy plastic, dense background, gradient mesh, extra fingers, malformed hands, text, watermark, signature',
+    tags: ['ink wash', 'brush line', 'xuan paper', 'monochrome', 'negative space'],
+  },
+  cyberpunk: {
+    label: { zh: '霓虹赛博朋克', en: 'Neon cyberpunk', ja: 'ネオン・サイバーパンク' },
+    render: 'Cinematic cyberpunk character concept art, crisp graphic shapes, neon rim lighting, high-detail industrial costume design',
+    surface: 'Brushed metal, translucent plastics, rain-slick synthetic fabric, emissive cyan and magenta accents, controlled film grain',
+    lighting: 'Strong cyan and magenta rim lights with a neutral readable key light; grounded contact shadows and no blown highlights',
+    negative: 'medieval costume, pastoral palette, flat daylight, muddy details, plastic mannequin, extra fingers, malformed hands, text, watermark, signature',
+    tags: ['cyberpunk', 'neon rim light', 'industrial design', 'cinematic', 'film grain'],
+  },
+  comic: {
+    label: { zh: '美漫漫画', en: 'American comic', ja: 'アメコミ' },
+    render: 'American comic-book character illustration, bold clean contour ink, dynamic anatomy, selective halftone shading, graphic silhouette',
+    surface: 'Flat saturated colour blocks, printed halftone texture, controlled crosshatch shadows, crisp costume emblems without readable text',
+    lighting: 'Graphic three-point lighting with a decisive key and rim separation; shadows remain clean and shape-defining',
+    negative: 'photorealistic, soft blurry edges, pastel wash, painterly smears, 3d render, extra fingers, malformed hands, text, watermark, signature',
+    tags: ['comic book', 'ink contour', 'halftone', 'graphic shadow', 'bold silhouette'],
+  },
+  anime: {
+    label: { zh: '美型二次元', en: 'Stylized anime', ja: 'アニメ・スタイライズ' },
+    render: 'Polished stylized anime character design, clean confident line art, appealing expressive proportions, refined cel rendering',
+    surface: 'Smooth cel-colour planes, simplified skin, grouped hair locks, selective gradient accents, readable costume details',
+    lighting: 'Even soft key light with one controlled cel shadow and a subtle coloured rim; no photographic micro-texture',
+    negative: 'photorealistic, pore detail, gritty skin, 3d render, muddy painterly texture, extra fingers, malformed hands, text, watermark, signature',
+    tags: ['anime', 'cel shading', 'clean line art', 'stylized', 'character sheet'],
+  },
+  watercolor: {
+    label: { zh: '水彩插画', en: 'Watercolor illustration', ja: '水彩イラスト' },
+    render: 'Editorial watercolor character illustration, delicate ink contour, transparent layered washes, tactile paper grain, graceful gesture',
+    surface: 'Granulating pigments, wet-on-wet blooms, dry-brush paper tooth, translucent fabric washes, preserved white highlights',
+    lighting: 'Natural window light diffused through paper-like softness, gentle value grouping and no harsh cast shadows',
+    negative: 'photorealistic, 3d render, glossy plastic, hard vector edges, neon glow, muddy overworked wash, extra fingers, malformed hands, text, watermark, signature',
+    tags: ['watercolor', 'paper grain', 'ink contour', 'transparent wash', 'editorial'],
+  },
+  wuxia: {
+    label: { zh: '武侠国风', en: 'Chinese wuxia', ja: '武侠・中国風' },
+    render: 'Chinese wuxia character concept painting, elegant flowing silhouette, refined gongbi-and-ink influence, cinematic historical costume detail',
+    surface: 'Silk weave, weathered leather, brushed metal fittings, layered ink-and-colour washes, restrained jade and cinnabar accents',
+    lighting: 'Atmospheric moonlit or dawn key light with soft mist, readable edge light and grounded shadows',
+    negative: 'modern clothing, sci-fi neon, photorealistic, 3d render, random calligraphy, extra fingers, malformed hands, text, watermark, signature',
+    tags: ['wuxia', 'Chinese ink', 'historical costume', 'silk texture', 'cinematic mist'],
+  },
+  noir: {
+    label: { zh: '黑白电影', en: 'Film noir', ja: 'フィルム・ノワール' },
+    render: 'Film-noir character portrait, monochrome cinematic illustration, hard graphic silhouette, subtle charcoal grain, 1940s cinematography',
+    surface: 'Matte wool, worn leather, cigarette-smoke haze, charcoal and silver-grey tonal range, restrained texture',
+    lighting: 'Hard venetian-blind key light with deep but readable shadows, narrow edge highlights and controlled falloff',
+    negative: 'bright candy colours, cheerful daylight, glossy 3d render, oversaturated neon, extra fingers, malformed hands, text, watermark, signature',
+    tags: ['film noir', 'monochrome', 'chiaroscuro', 'charcoal grain', 'cinematic'],
+  },
+  '3d': {
+    label: { zh: '风格化三维', en: 'Stylized 3D', ja: 'スタイライズド3D' },
+    render: 'Stylized 3D character model sheet, clean physically based forms, appealing proportions, polished sculpted surfaces, studio presentation',
+    surface: 'Readable PBR materials, controlled roughness, subtle subsurface skin, fabric weave and bevelled props, no uncanny over-detail',
+    lighting: 'Soft studio key, broad fill and clean rim light with grounded contact shadow; neutral seamless background',
+    negative: 'flat 2d sketch, watercolor bleed, photorealistic pores, distorted anatomy, extra fingers, malformed hands, text, watermark, signature',
+    tags: ['stylized 3d', 'PBR', 'model sheet', 'studio light', 'clean silhouette'],
+  },
 };
 
+// Every homepage library item is a first-class canonical style id. Each
+// catalog entry owns its complete rendering contract; no family lookup or
+// fallback is performed at runtime.
+const STYLE_CATALOG = JSON.parse(readFileSync(new URL('../references/style-catalog.json', import.meta.url), 'utf8'));
+for (const entry of STYLE_CATALOG.styles ?? []) {
+  for (const field of ['render', 'surface', 'lighting', 'negative', 'phrase']) {
+    if (typeof entry[field] !== 'string' || !entry[field].trim()) {
+      throw new Error(`style catalog entry ${entry.id} missing ${field}`);
+    }
+  }
+  STYLE_PRESETS[entry.id] = {
+    label: { zh: entry.title, en: entry.title, ja: entry.title },
+    render: entry.render,
+    surface: entry.surface,
+    lighting: entry.lighting,
+    negative: entry.negative,
+    phrase: entry.phrase,
+    tags: Array.isArray(entry.tags) ? [...entry.tags] : [entry.id],
+  };
+}
+STYLE_PRESETS.custom = {
+  label: { zh: '自定义画风', en: 'Custom style', ja: 'カスタム画風' },
+  render: 'Custom character illustration directed by the user brief, with coherent anatomy and a clean production-ready silhouette',
+  surface: 'Material, texture and finish specified by the user brief; preserve readable forms and consistent character identity',
+  lighting: 'Lighting design specified by the user brief with clear subject separation and measurable model-sheet presentation',
+  negative: 'extra fingers, malformed hands, text, watermark, signature, accidental style mixing',
+  phrase: 'custom cinematic character style',
+  tags: ['custom brief'],
+};
+
+// Register every homepage template as an addressable skill preset.
 export const SUPPORTED_STYLES = Object.keys(STYLE_PRESETS);
-export const stylePreset = (id) => STYLE_PRESETS[id] ?? STYLE_PRESETS[DEFAULT_STYLE];
+export const stylePreset = (id) => {
+  const preset = STYLE_PRESETS[id];
+  if (!preset) throw new Error(`unknown style preset: ${id}`);
+  return preset;
+};
 
 const STRINGS = {
   zh: {
@@ -268,13 +368,13 @@ const STRINGS = {
     },
     image: {
       style: '画风',
-      prompt: '出图提示词 · 喂出图模型用这条', promptLocal: '出图提示词（中文对照）',
+      prompt: '出图提示词 EN', promptLocal: '出图提示词',
       negative: '反向提示词', sheet: '角色设定图提示词 EN',
     },
     voice: {
       timbre: '音色', pitch: '音高', pace: '语速', accent: '口音',
       emotion: '情绪', referenceHint: '类比',
-      prompt: '音色提示词 · 喂 TTS 引擎用这条',
+      prompt: '音色提示词 EN', promptLocal: '音色提示词',
     },
     importance: { protagonist: '主角', major: '主要角色', supporting: '配角', minor: '龙套' },
     graphTitle: '关系图谱',
@@ -321,13 +421,13 @@ const STRINGS = {
     },
     image: {
       style: 'Style',
-      prompt: 'Image prompt · feed this to the image model', promptLocal: 'Image prompt (local translation)',
+      prompt: 'Image prompt', promptLocal: 'Image prompt (local)',
       negative: 'Negative prompt', sheet: 'Model sheet prompt',
     },
     voice: {
       timbre: 'Timbre', pitch: 'Pitch', pace: 'Pace', accent: 'Accent',
       emotion: 'Emotion', referenceHint: 'Sounds like',
-      prompt: 'Voice prompt · feed this to the TTS engine',
+      prompt: 'Voice prompt', promptLocal: 'Voice prompt (local)',
     },
     importance: { protagonist: 'Lead', major: 'Major', supporting: 'Supporting', minor: 'Minor' },
     graphTitle: 'Relationship map',
@@ -373,13 +473,13 @@ const STRINGS = {
     },
     image: {
       style: '画風',
-      prompt: '画像プロンプト · 画像モデルにはこれを', promptLocal: '画像プロンプト（対訳）',
+      prompt: '画像プロンプト EN', promptLocal: '画像プロンプト',
       negative: 'ネガティブプロンプト', sheet: 'キャラ設定画プロンプト EN',
     },
     voice: {
       timbre: '声質', pitch: '音域', pace: '話速', accent: '訛り',
       emotion: '感情', referenceHint: 'たとえるなら',
-      prompt: '音声プロンプト · TTS にはこれを',
+      prompt: '音声プロンプト EN', promptLocal: '音声プロンプト',
     },
     importance: { protagonist: '主役', major: '主要人物', supporting: '脇役', minor: '端役' },
     graphTitle: '相関図',
@@ -451,69 +551,6 @@ export function uiTemplate() {
     out[k] = v && typeof v === 'object' ? { ...v } : v;
   }
   return out;
-}
-
-/* ------------------------------------------------------------------ */
-/* seed — 从大纲预填角色表骨架                                          */
-/* ------------------------------------------------------------------ */
-
-/**
- * outline 的 tier 映射成 cast 的 importance。
- *
- * 注意两边粒度不一样：outline 的 `lead` 是「主角组」，男女主与主反派都在里面，
- * 对应 cast 的 protagonist 与 major 两档。这里一律给 protagonist，由模型照
- * seedNote 里的 role（女主 / 男主 / 反派）把主角之外的改成 major——**分档本身
- * 不推翻，只在主角组内部细分**。
- */
-export const TIER_TO_IMPORTANCE = { lead: 'protagonist', support: 'supporting', functional: 'minor' };
-
-/**
- * 从 outline.json 预填 cast.json 骨架。
- *
- * 大纲是角色设定的上游：谁进谁不进、谁是主角组，在改编阶段就拍板了，这一层
- * 不再判断一遍。搬过来的是**大纲已经定死的事实**（角色码、名字、分档、人物线、
- * 由原著的谁合并而来），留空的是**这一层才该做的设计**（别名、画像、形象提示词、
- * 音色提示词）——别名要读原文才知道，大纲里没有。
- *
- * 与 novel-art / novel-script 的 seedFromOutline 同一个形状：搬事实、留设计、
- * 附一条 seedNote 带上下文。产出是骨架不是成品，直接跑 validate 会报一堆
- * 字段缺失，那是预期的。
- */
-export function seedFromOutline(outline) {
-  const characters = (outline?.characters ?? []).map((c) => {
-    const note = [
-      c?.id ? `角色码 ${c.id}` : null,
-      c?.role ? `大纲定位：${c.role}` : null,
-      c?.tier ? `大纲分档：${c.tier}` : null,
-      (c?.from ?? []).length ? `合并自：${(c.from ?? []).join('、')}` : null,
-    ].filter(Boolean).join('　');
-    return {
-      // 从大纲搬来的事实，不用再想
-      ...(c?.id ? { id: c.id } : {}),
-      name: c?.name ?? '',
-      importance: TIER_TO_IMPORTANCE[c?.tier] ?? 'supporting',
-      // 这一层才该做的设计，先占位
-      aliases: [],
-      oneLiner: '',
-      persona: {
-        gender: '', ageRange: '', identity: '', appearance: '',
-        personality: [], temperament: '', motivation: '',
-        // 人物弧光大纲已经写了，直接用；觉得不对回去改大纲，别在这里改一个不一样的
-        arc: c?.arc ?? '',
-        relationships: [], evidence: [],
-      },
-      image: { style: '', prompt: '', promptLocal: '', negativePrompt: '', tags: [], sheet: '' },
-      voice: { timbre: '', pitch: '', pace: '', accent: '', emotion: '', prompt: '', referenceHint: '' },
-      ...(note ? { seedNote: note } : {}),
-    };
-  });
-  return {
-    source: outline?.source ?? '',
-    lang: outline?.lang ?? DEFAULT_LANG,
-    style: DEFAULT_STYLE,
-    summary: '',
-    characters,
-  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -651,31 +688,6 @@ export function validateCast(characters, sourceText, lang = DEFAULT_LANG, style 
     } else {
       for (const f of [...HUMAN_VOICE_FIELDS, 'prompt']) {
         if (typeof voice[f] !== 'string' || !voice[f].trim()) at(name, `voice.${f} 缺失或为空`);
-      }
-      /*
-       * 音色提示词里不许出现引号包起来的台词。
-       * profile-pass.md 第 7 条写着「描述乐器本身，不是某一句台词的演绎」，
-       * 但模型会写出「杀意藏在『规矩就是规矩』这类客套话里」这种句子——
-       * 台词一进去，有些 TTS 引擎会把它当成要朗读的内容（生产里踩过）。
-       * 只查成对的引号，判定干净：正常的音色描述不需要引任何一句话。
-       */
-      /*
-       * 音色提示词要紧凑，不要散文。
-       * voice design 引擎（Qwen3-TTS Voice Design / ElevenLabs / MiniMax）吃的是
-       * 参数密度：年龄性别、音色、音区、共鸣、动态、音量、语速、语调、口音、默认情绪。
-       * 写成流畅的英文散文会把这些参数稀释掉——生产里实测对比过，紧凑版明显更好。
-       *
-       * 上限 400 字符是量出来的：自带样例四个角色 218–245，而被实测判为过冗余的
-       * 散文版是 490–514，中间余量很大。它拦的是「写成小作文」，不是「写得细」。
-       */
-      if (typeof voice.prompt === 'string' && voice.prompt.length > 400) {
-        at(name, `voice.prompt ${voice.prompt.length} 字符，超过 400——音色提示词要紧凑的参数串，不是散文；参数写全但别铺陈`);
-      }
-      if (typeof voice.prompt === 'string') {
-        const quoted = voice.prompt.match(/[「『"“][^」』"”]{2,}[」』"”]/);
-        if (quoted) {
-          at(name, `voice.prompt 里出现了引号台词「${quoted[0].slice(0, 24)}」——音色提示词描述的是嗓子本身，不是某一句台词的演绎`);
-        }
       }
     }
 
@@ -837,6 +849,7 @@ export function renderMarkdown(characters, source, summary = '', lang = DEFAULT_
     for (const f of HUMAN_VOICE_FIELDS) out.push(`- **${t.voice[f]}**：${voice[f]}`);
     out.push('');
     out.push(`**${t.voice.prompt}**`, '', '```text', voice.prompt, '```', '');
+    if (voice.promptLocal) out.push(`${voice.promptLocal}`, '');
   }
 
   return out.join('\n');
@@ -988,12 +1001,13 @@ function renderCharacter(c, index, t) {
 
   <div class="prompts">
     <div class="pgroup">
+      ${promptRow(t.image.promptLocal, image.promptLocal)}
       ${promptRow(t.image.prompt, image.prompt)}
       ${promptRow(t.image.sheet, image.sheet)}
       ${promptRow(t.image.negative, image.negativePrompt)}
-      ${promptRow(t.image.promptLocal, image.promptLocal)}
     </div>
     <div class="pgroup">
+      ${promptRow(t.voice.promptLocal, voice.promptLocal)}
       ${promptRow(t.voice.prompt, voice.prompt)}
       <div class="pgroup-f">
         <button class="copy wide" data-copy="${esc(JSON.stringify(c, null, 2))}">${esc(t.copyJson)}</button>
@@ -1694,7 +1708,6 @@ document.addEventListener('click', async (e) => {
 
 const USAGE = `novel-characters.mjs — novel-characters skill 的确定性工具
 
-  seed <outline.json>              从大纲预填角色表骨架（打印到 stdout，画像与提示词留空待填）
   chunk <book.txt> <workdir>       段落感知重叠切块，写 chunk-NN.txt，打印块数
   merge <workdir>                  归并 roster-*.json，打印 {characters, mergeCandidates}
         [--apply merges.json]      落地复核后的合并决定：{"merges":[{"keep":…,"absorb":[…]}]}
@@ -1747,13 +1760,6 @@ function main(argv) {
   if (!cmd || cmd === '-h' || cmd === '--help') {
     console.log(USAGE);
     process.exit(cmd ? 0 : 1);
-  }
-
-  if (cmd === 'seed') {
-    const [path] = rest;
-    if (!path) throw new Error('用法：seed <outline.json>');
-    console.log(JSON.stringify(seedFromOutline(readJson(path)), null, 2));
-    return;
   }
 
   if (cmd === 'chunk') {

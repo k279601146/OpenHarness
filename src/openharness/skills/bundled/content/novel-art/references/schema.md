@@ -1,6 +1,6 @@
 # art.json 结构
 
-美术设定集（场景 + 叙事道具）的载体。**模型只填设计字段**，场景与道具的出现集、承载爽点都由 `seed` 从 outline.json 搬运；大纲没有 `props` 时道具表留空，由模型按 `prop-pass.md` 从原文提取。Markdown 和报告由 `render` 渲染。
+美术设定集（场景 + 叙事道具）的载体。**模型只填设计字段**，场景的出现集与承载爽点由 `seed` 从 outline.json 搬运；道具表大纲里没有，由模型按 `prop-pass.md` 从原文提取。Markdown 和报告由 `render` 渲染。
 
 ```json
 {
@@ -32,7 +32,7 @@
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
 | `source` | 是 | 剧名/书名 |
-| `style` | 是 | `realistic` / `ghibli`，与 novel-characters 的画风同名对齐（内容是环境版，不带皮肤毛孔那套） |
+| `style` | 是 | 使用首页 `style-catalog.json` 中的模板 ID，或 `realistic` / `ghibli` / `custom`；每个模板拥有独立环境提示词，与 novel-characters 同名对齐 |
 | `scenes` | 是 | 场景数组 |
 | `props` | 否 | **叙事道具**数组——只收有特写、跨集、承载剧情的（3–8 件为宜），场景陈设归场景锚点。选法见 `prop-pass.md` |
 
@@ -79,7 +79,7 @@
 4. 出图提示词（主图/反向/设定图/光照）全部英文
 5. 提示词不含角色名（`validate --cast cast.json` 才查，不给就明说跳过）
 6. 变体引用完整：`variantOf` 指向存在的场景且带 `changes`
-7. 风格与反向词匹配：`realistic` 不禁 photorealistic、`ghibli` 必须禁；`sheet` 必须含渲染句
+7. 风格与反向词匹配：每个注册模板必须使用其预设渲染句和反向词；`sheet` 必须含当前预设渲染句
 
 道具专属四道：
 

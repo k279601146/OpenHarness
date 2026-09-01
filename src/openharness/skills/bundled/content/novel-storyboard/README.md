@@ -38,7 +38,7 @@
 | **H3 结构** | 首行对齐指令**由分镜结构按语言推导、逐字对账**；三字段按序；每个 `[Shot k]` 的切点时刻等于前面分镜秒数的累计 |
 | **H3 台词逐字** | 认领的每句台词逐字出现在 `<d>` 块里，改一个标点都过不去 |
 | **提示词语言一致** | 正文语言与 `promptLang` 双向对账：设定中文写成英文、设定英文混进中文，都拦 |
-| **风格短语统一** | `style` 预设（realistic / ghibli，与角色/场景 skill 同名对齐）的英文短语必须出现在每条分镜图提示词里——同剧不许画风漂 |
+| **风格短语统一** | `style` 预设（与角色/场景 skill 同名对齐，含 realistic / ghibli 及注册扩展）的英文短语必须出现在每条分镜图提示词里——同剧不许画风漂 |
 | 分镜图提示词卫生 | 全英文非空 |
 | 提示词不含角色名 | 分镜图提示词恒查；H3 提示词仅英文模式查（中文放行，身份靠分镜图锚定）。给 `--outline` / `--cast` 才查，不给**明说跳过** |
 | 引用对账 | 场次/人物/道具全部对账剧本该场 |
@@ -46,7 +46,7 @@
 
 自测里每道门都有**击穿用例**——证明它真的会拦。
 
-**镜头配方是可选挂载的语汇层**：cut 上可以写一个可选的 `recipe`（外部可选卡库中的卡片 id，**cut 级不是 segment 级**，**多格配方靠连续同 id 的分镜表达**，不是数组）。没装外部卡库照跑不误——本 skill 自包含，连解析卡片 frontmatter 的那 25 行都是自己写的，不跨目录 import。卡片的**建议景别与运镜刻意不设门**，只在报告的「配方」列加 `≠` 标记（悬停看建议值）、`checkup` 末尾出一段提示：配方是语汇不是法条，可选挂载的东西一旦变严就没人挂了，**误拦的门比没有门更糟**。
+**镜头配方是可选挂载的语汇层**：cut 上可以写一个可选的 `recipe`（[shot-recipes](../shot-recipes) 的卡片 id，**cut 级不是 segment 级**，**多格配方靠连续同 id 的分镜表达**，不是数组）。没装 shot-recipes 照跑不误——本 skill 自包含，连解析卡片 frontmatter 的那 25 行都是自己写的，不跨目录 import。卡片的**建议景别与运镜刻意不设门**，只在报告的「配方」列加 `≠` 标记（悬停看建议值）、`checkup` 末尾出一段提示：配方是语汇不是法条，可选挂载的东西一旦变严就没人挂了，**误拦的门比没有门更糟**。
 
 ## 门失败会累积，`stats` 告诉你模型最常违反哪条规则
 
@@ -84,8 +84,8 @@ node scripts/novel-storyboard.mjs stats
 ## 五个 skill 的接力（管线到此闭环）
 
 ```
-novel-outline    → outline.json    （什么：结构与分集）
 novel-characters → cast.json       （谁：角色设定图）
+novel-outline    → outline.json    （什么：结构与分集）
 novel-art        → art.json        （哪里：场景/道具设定图）
 novel-script     → script.json     （戏：场次、节拍、台词）
 novel-storyboard → storyboard.json （怎么拍：段、分镜、分镜图、H3 提示词）
@@ -103,7 +103,7 @@ node scripts/novel-storyboard.mjs validate sb.json \
      --script script.json --outline outline.json --cast cast.json
 node scripts/novel-storyboard.mjs checkup sb.json --script script.json
 node scripts/novel-storyboard.mjs validate sb.json --script script.json \
-     --shots /path/to/cards                                              # 可选：开第 17 道配方门
+     --shots ../shot-recipes/references/cards                            # 可选：开第 17 道配方门
 node scripts/novel-storyboard.mjs render sb.json --html \
      --script script.json --outline outline.json --art art.json > storyboard-report.html
 node scripts/novel-storyboard.mjs render sb.json --html --lang en \

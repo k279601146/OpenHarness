@@ -68,12 +68,30 @@ export const CAMERA_MOVES = {
   'Roll Counterclockwise': '逆旋',
 };
 
-/** 分镜图风格预设：与 novel-characters / novel-art 同名对齐（realistic / ghibli）。
+/** 分镜图风格预设：与 novel-characters / novel-art 同名对齐（包含 realistic / ghibli 及扩展预设）。
  *  短语必须出现在每条分镜图提示词里——同一部剧的分镜图不许画风漂。 */
 export const STYLE_PRESETS = {
   realistic: { zh: '半写实电影感', phrase: 'cinematic film still' },
   ghibli: { zh: '吉卜力手绘', phrase: 'hand-painted anime film still' },
+  ink: { zh: '东方水墨', phrase: 'Chinese ink wash film still' },
+  cyberpunk: { zh: '霓虹赛博朋克', phrase: 'cinematic cyberpunk neon film still' },
+  comic: { zh: '美漫漫画', phrase: 'American comic-book film still' },
+  anime: { zh: '美型二次元', phrase: 'polished stylized anime film still' },
+  watercolor: { zh: '水彩插画', phrase: 'editorial watercolor film still' },
+  wuxia: { zh: '武侠国风', phrase: 'Chinese wuxia film still' },
+  noir: { zh: '黑白电影', phrase: 'monochrome film noir film still' },
+  '3d': { zh: '风格化三维', phrase: 'stylized 3D cinematic film still' },
 };
+const STYLE_CATALOG = JSON.parse(readFileSync(new URL('../references/style-catalog.json', import.meta.url), 'utf8'));
+for (const entry of STYLE_CATALOG.styles ?? []) {
+  for (const field of ['render', 'surface', 'lighting', 'negative', 'phrase']) {
+    if (typeof entry[field] !== 'string' || !entry[field].trim()) {
+      throw new Error(`style catalog entry ${entry.id} missing ${field}`);
+    }
+  }
+  STYLE_PRESETS[entry.id] = { zh: entry.title, phrase: entry.phrase };
+}
+STYLE_PRESETS.custom = { zh: '自定义画风', phrase: 'custom cinematic film still' };
 export const DEFAULT_STYLE = 'realistic';
 
 const CJK = /[㐀-鿿぀-ヿ가-힯]/;
@@ -532,7 +550,9 @@ export function gateReport(board, ctx = {}) {
         const frame = String(cut?.frame ?? '');
         if (!frame.trim()) bad.english.push(`${cid} 的分镜图提示词为空`);
         if (CJK.test(frame)) bad.english.push(`${cid} 的分镜图提示词混入了非英文`);
-        if (style && !frame.toLowerCase().includes(style.phrase)) {
+        // Normalize both sides because style catalog phrases may start with
+        // uppercase characters while generated prompts can use any casing.
+        if (style && !frame.toLowerCase().includes(String(style.phrase).toLowerCase())) {
           bad.style.push(`${cid} 的分镜图提示词缺风格短语「${style.phrase}」`);
         }
         for (const name of banned) {

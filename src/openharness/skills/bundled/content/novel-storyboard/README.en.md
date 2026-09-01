@@ -39,7 +39,7 @@ Same stance as the other four skills in this repo: **a checklist the model grade
 | **H3 structure** | the alignment line is **derived from the cut structure and audited verbatim**; three fields in order; every `[Shot k]` cut time equals the running sum of prior cut durations |
 | **H3 dialogue verbatim** | every claimed line appears verbatim inside a `<d>` block — one changed punctuation mark fails |
 | **Prompt language consistency** | prose audited both ways against `promptLang`: Chinese drama written in English fails, English mode mixing Chinese fails |
-| **Style phrase** | the `style` preset's English phrase (realistic / ghibli, name-aligned with the character and art skills) must appear in every frame prompt — one drama, one look |
+| **Style phrase** | the `style` preset's English phrase (name-aligned with the character and art skills, including registered extensions) must appear in every frame prompt — one drama, one look |
 | Frame-prompt hygiene | English-only, non-empty |
 | No character names | frame prompts always; the H3 prompt only in English mode (Chinese prompts allow names — identity is anchored by the frames). Checked with `--outline` / `--cast`; skipping is **announced** |
 | Reference integrity | scene index / characters / props all audited against the script scene |
@@ -47,7 +47,7 @@ Same stance as the other four skills in this repo: **a checklist the model grade
 
 The selftest **defeats every gate on purpose** to prove each one actually blocks.
 
-**Shot recipes are an optional vocabulary layer.** A cut may carry an optional `recipe` — a card id from an external optional card library, **per cut, not per segment**, with **multi-cut recipes expressed as a run of consecutive cuts sharing the id** rather than an array. Without an external card library installed everything still runs: this skill is self-contained, down to its own 25-line restricted frontmatter parser instead of a cross-directory import. A card's suggested sizes and cameras are **deliberately not gated** — the report's Recipe column marks deviations with `≠` (hover for the suggestion) and `checkup` prints a note. A recipe is vocabulary, not law; make an optional mount stricter and nobody mounts it, and **a gate that blocks wrongly is worse than no gate**.
+**Shot recipes are an optional vocabulary layer.** A cut may carry an optional `recipe` — a card id from [shot-recipes](../shot-recipes), **per cut, not per segment**, with **multi-cut recipes expressed as a run of consecutive cuts sharing the id** rather than an array. Without shot-recipes installed everything still runs: this skill is self-contained, down to its own 25-line restricted frontmatter parser instead of a cross-directory import. A card's suggested sizes and cameras are **deliberately not gated** — the report's Recipe column marks deviations with `≠` (hover for the suggestion) and `checkup` prints a note. A recipe is vocabulary, not law; make an optional mount stricter and nobody mounts it, and **a gate that blocks wrongly is worse than no gate**.
 
 ## Gate failures accumulate, and `stats` tells you which rule the model breaks most
 
@@ -84,8 +84,8 @@ A single-page, 1600px-wide review document. Reports render with a Chinese UI by 
 ## The relay — the pipeline closes here
 
 ```
-novel-outline    → outline.json    (what: structure)
 novel-characters → cast.json       (who: character sheets)
+novel-outline    → outline.json    (what: structure)
 novel-art        → art.json        (where: scene & prop sheets)
 novel-script     → script.json     (the drama: scenes, beats, lines)
 novel-storyboard → storyboard.json (how to shoot: segments, cuts, frames, H3 prompts)
@@ -99,7 +99,7 @@ novel-storyboard → storyboard.json (how to shoot: segments, cuts, frames, H3 p
 node scripts/novel-storyboard.mjs seed script.json --eps 1
 node scripts/novel-storyboard.mjs validate sb.json --script script.json --outline outline.json --cast cast.json
 node scripts/novel-storyboard.mjs checkup sb.json --script script.json
-node scripts/novel-storyboard.mjs validate sb.json --script script.json --shots /path/to/cards   # optional: the 17th gate
+node scripts/novel-storyboard.mjs validate sb.json --script script.json --shots ../shot-recipes/references/cards   # optional: the 17th gate
 node scripts/novel-storyboard.mjs render sb.json --html --script script.json --outline outline.json --art art.json > storyboard-report.html
 node scripts/novel-storyboard.mjs render sb.json --html --lang en --script script.json --outline outline.json --art art.json > storyboard-report.html   # English report UI
 node scripts/novel-storyboard.mjs export sb.json --script script.json   # per-segment folders: f1..fN.png + prompt.md

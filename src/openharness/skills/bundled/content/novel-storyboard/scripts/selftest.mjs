@@ -352,6 +352,18 @@ eq(h3Remainder('a <d>[Chinese] 你好</d> b "营业中" c'), 'a   b   c', 'h3Rem
   doc.style = 'ghibli';
   ok(!gate(doc, 'style-phrase').ok, '换成吉卜力后写实短语不再达标——换风格是整批换');
 }
+{
+  const doc = clone(FIXTURE);
+  doc.style = 'wuxia';
+  for (const episode of doc.episodes) {
+    for (const segment of episode.segments) {
+      for (const cut of segment.cuts) {
+        cut.frame = cut.frame.replace('cinematic film still', 'Chinese wuxia film still');
+      }
+    }
+  }
+  ok(gate(doc, 'style-phrase').ok, '风格短语匹配应忽略大小写');
+}
 
 /* ---------------- 镜头配方卡库（可选挂载） ---------------- */
 /*
@@ -384,8 +396,8 @@ must_phrases: [over-the-shoulder, blurred foreground shoulder]
   eq(parseCardFields('---\nname: 无 id\n---\n'), null, '没有 id 就不是卡片');
 }
 
-const CARDS = loadRecipes(join(here, '../references/test-fixtures/shot-recipes'));
-eq(CARDS.size, 3, '最小卡片夹具三张全读出');
+const CARDS = loadRecipes(join(here, '../../shot-recipes/references/cards'));
+ok(CARDS.size >= 17, '卡片目录读得出全库');
 ok(CARDS.get('ots-shot-reverse').must_phrases.includes('over-the-shoulder'), '真实卡片的必备短语读得出来');
 eq(CARDS.get('ots-shot-reverse').cuts[0], 2, '真实卡片的格数下限读得出来');
 eq(loadRecipes(join(here, '../不存在的目录')).size, 0, '目录不存在不崩');

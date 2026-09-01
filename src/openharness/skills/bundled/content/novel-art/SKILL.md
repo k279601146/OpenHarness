@@ -1,6 +1,6 @@
 ---
 name: novel-art
-version: 1.2.0
+version: 1.1.0
 description: |
   给 AI 短剧出美术设定集（场景 + 叙事道具）：场景的设计意图、一致性锚点、光照时段变体、
   空景提示词；道具的戏剧功能、状态变体、尺度参照、白底无手提示词。
@@ -66,7 +66,7 @@ metadata:
 2. 小说原文——自己归纳场景清单（主舞台优先，参考 novel-outline 的主场景上限思路：别贪多）
 3. 用户手写的场景清单
 
-画风：**默认 `realistic`**（半写实厚涂），动画质感用 `ghibli`。**跟角色 skill 保持同一档**——角色是吉卜力、场景是半写实，合成的时候没法看。跑 `node {baseDir}/scripts/novel-art.mjs styles` 看预设全文，整块取用不混搭。
+画风：**默认 `realistic`**（半写实厚涂）；`realistic` 与 `ghibli` 只是结构范本，另有 `ink`、`cyberpunk`、`comic`、`anime`、`watercolor`、`wuxia`、`noir`、`3d`。**跟角色 skill 保持同一档**，整块取用不混搭。跑 `node {baseDir}/scripts/novel-art.mjs styles` 看预设全文。
 
 有 cast.json（novel-characters 的产出）也带上——校验「提示词不含角色名」要用。
 
@@ -91,7 +91,7 @@ node {baseDir}/scripts/novel-art.mjs seed <outline.json> > <workdir>/art.json
 
 核心要求都在 scene-pass.md 里，最重的三条：锚点要**可画可认可核对**（「补丁船篷」是锚点，「陈旧的氛围」是形容词）；光照状态**从分集反推**，不写用不上的全家桶；**能做变体就别开新景**。
 
-**叙事道具优先吃大纲**：`outline.json` 从 1.1.0 起带 `props`，`seed` 会把道具表连同「承载什么」「托起哪几个爽点」「哪几集出现」一起搬过来，这一层只填设计字段（尺度、锚点、状态变体、白底提示词）。**大纲没有 props 就从原文提取**，那时这步是模型的活：只收**有特写、跨集出现、承载剧情**的，通常 3–8 件，跟主角数量一个量级。每件按 `references/prop-pass.md` 填：戏剧功能、锚点、状态变体、尺度、白底无手提示词。皮箱这种「跟人走的道具」就该在这——塞进场景锚点和角色画像都不对。
+**叙事道具**从原文/大纲提取（大纲没有现成道具表，这步是模型的活）：只收**有特写、跨集出现、承载剧情**的，通常 3–8 件，跟主角数量一个量级。每件按 `references/prop-pass.md` 填：戏剧功能、锚点、状态变体、尺度、白底无手提示词。皮箱这种「跟人走的道具」就该在这——塞进场景锚点和角色画像都不对。
 
 ### Step 3 — 校验 ⛔ 不能跳
 
@@ -140,12 +140,12 @@ node {baseDir}/scripts/novel-art.mjs render <剧名>-art.json --html > art-repor
 ## 三个 skill 的接力
 
 ```
-novel-outline    → outline.json （什么：结构与分集）
 novel-characters → cast.json    （谁：角色资产）
+novel-outline    → outline.json （什么：结构与分集）
 novel-art        → art.json     （哪里 + 手里拿的：美术资产）
 ```
 
-seed 吃 outline.json 的场景与道具两块（大纲没有 `props` 时道具留空，模型从原文提取），`--cast` 吃 cast.json。三份 JSON 各自的报告都带导出按钮，改完都能喂回各自的 render/validate。
+seed 吃 outline.json（场景部分；道具表大纲里没有，模型从原文提取），`--cast` 吃 cast.json。三份 JSON 各自的报告都带导出按钮，改完都能喂回各自的 render/validate。
 
 ## 边界
 
@@ -161,7 +161,7 @@ seed 吃 outline.json 的场景与道具两块（大纲没有 `props` 时道具�
 node {baseDir}/scripts/selftest.mjs
 ```
 
-158 项断言，不调模型、不花额度。11 道质量门每一道都有击穿用例。改完脚本先跑这个。
+144 项断言，不调模型、不花额度。11 道质量门每一道都有击穿用例。改完脚本先跑这个。
 
 ## 自带样例
 

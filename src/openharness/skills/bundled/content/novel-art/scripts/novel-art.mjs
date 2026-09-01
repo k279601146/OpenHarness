@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 /* 画风预设（环境版）                                                    */
 /* ------------------------------------------------------------------ */
 /*
- * 与 novel-characters 的两档画风同名对齐（realistic / ghibli），
+ * 与 novel-characters 的画风注册表同名对齐（包含 realistic / ghibli 及扩展预设），
  * 但内容是环境的表面处理，不是皮肤毛孔——把角色那套带进环境是错的。
  * 换风格是整套换：render / surface / negative / tags 整块取用，不混搭。
  *
@@ -45,10 +45,101 @@ export const SCENE_STYLE_PRESETS = {
       'people, human figures, characters, crowds, photorealistic, 3d render, hyperrealistic texture, harsh contrast, gritty grime, lens effects, text, watermark, signature',
     tags: ['ghibli-like', 'background art', 'watercolour', 'environment sheet', 'warm palette'],
   },
+
+  ink: {
+    label: '东方水墨环境',
+    render: 'Chinese ink wash environment concept art, expressive brushwork, layered grey washes, restrained cinnabar accent, elegant negative space',
+    surface: 'Xuan-paper grain, dry-brush edges, pooled ink gradients, simplified architectural planes and deliberate blank space',
+    negative: 'people, human figures, characters, crowds, photorealistic, neon colours, glossy 3d render, text, watermark, signature',
+    tags: ['ink wash', 'brushwork', 'xuan paper', 'monochrome', 'negative space'],
+  },
+  cyberpunk: {
+    label: '霓虹赛博环境',
+    render: 'Cinematic cyberpunk environment concept art, industrial architecture, crisp graphic shapes, cyan and magenta neon rim light, cinematic depth',
+    surface: 'Rain-slick asphalt, brushed metal, translucent signage panels, emissive reflections, controlled film grain and atmospheric haze',
+    negative: 'people, human figures, characters, crowds, pastoral setting, medieval architecture, flat daylight, muddy geometry, text, watermark, signature',
+    tags: ['cyberpunk', 'neon', 'industrial', 'rain-slick', 'cinematic'],
+  },
+  comic: {
+    label: '美漫漫画环境',
+    render: 'American comic-book environment illustration, bold contour shapes, graphic perspective, selective halftone shading, cinematic composition',
+    surface: 'Flat saturated colour blocks, printed halftone texture, crisp architectural edges, controlled crosshatch shadows',
+    negative: 'people, human figures, characters, crowds, photorealistic, soft blurry edges, pastel wash, text, watermark, signature',
+    tags: ['comic book', 'halftone', 'graphic perspective', 'ink contour', 'environment sheet'],
+  },
+  anime: {
+    label: '美型二次元环境',
+    render: 'Polished stylized anime background art, clean readable shapes, refined cel rendering, cinematic composition, soft atmospheric depth',
+    surface: 'Smooth colour planes, grouped foliage and props, selective line accents, gentle gradients without photographic micro-detail',
+    negative: 'people, human figures, characters, crowds, photorealistic, 3d render, gritty texture, warped perspective, text, watermark, signature',
+    tags: ['anime background', 'cel shading', 'clean shapes', 'stylized', 'cinematic'],
+  },
+  watercolor: {
+    label: '水彩插画环境',
+    render: 'Editorial watercolor environment concept art, delicate ink contour, transparent layered washes, tactile paper grain, cinematic depth',
+    surface: 'Granulating pigments, wet-on-wet blooms, dry-brush paper tooth, preserved white highlights and airy atmospheric perspective',
+    negative: 'people, human figures, characters, crowds, photorealistic, glossy 3d render, hard vector edges, neon glow, text, watermark, signature',
+    tags: ['watercolor', 'paper grain', 'ink contour', 'transparent wash', 'editorial'],
+  },
+  wuxia: {
+    label: '武侠国风环境',
+    render: 'Chinese wuxia environment concept painting, elegant architectural silhouette, refined gongbi-and-ink influence, cinematic historical atmosphere',
+    surface: 'Weathered timber, tiled roofs, silk banners, brushed metal, layered ink-and-colour washes, restrained jade and cinnabar accents',
+    negative: 'people, human figures, characters, crowds, modern signage, sci-fi neon, photorealistic, 3d render, text, watermark, signature',
+    tags: ['wuxia', 'Chinese ink', 'historical architecture', 'mist', 'cinematic'],
+  },
+  noir: {
+    label: '黑白电影环境',
+    render: 'Film-noir environment concept art, monochrome cinematic composition, hard graphic silhouettes, subtle charcoal grain, 1940s cinematography',
+    surface: 'Wet pavement, matte plaster, cigarette-smoke haze, charcoal and silver-grey tonal range, restrained texture',
+    negative: 'people, human figures, characters, crowds, bright candy colours, cheerful daylight, glossy 3d render, text, watermark, signature',
+    tags: ['film noir', 'monochrome', 'chiaroscuro', 'charcoal grain', 'cinematic'],
+  },
+  '3d': {
+    label: '风格化三维环境',
+    render: 'Stylized 3D environment concept art, clean physically based forms, polished sculpted surfaces, studio-grade composition, cinematic depth',
+    surface: 'Readable PBR materials, controlled roughness, bevelled architecture, soft ambient occlusion and no uncanny over-detail',
+    negative: 'people, human figures, characters, crowds, flat 2d sketch, watercolor bleed, warped geometry, text, watermark, signature',
+    tags: ['stylized 3d', 'PBR', 'environment sheet', 'studio light', 'clean geometry'],
+  },
 };
 
+// Register all homepage library templates explicitly. Every entry contains
+// its complete environment contract; no family lookup or fallback is used.
+const STYLE_CATALOG = JSON.parse(readFileSync(new URL('../references/style-catalog.json', import.meta.url), 'utf8'));
+for (const entry of STYLE_CATALOG.styles ?? []) {
+  for (const field of ['render', 'surface', 'lighting', 'negative', 'phrase']) {
+    if (typeof entry[field] !== 'string' || !entry[field].trim()) {
+      throw new Error(`style catalog entry ${entry.id} missing ${field}`);
+    }
+  }
+  SCENE_STYLE_PRESETS[entry.id] = {
+    label: entry.title,
+    render: entry.render,
+    surface: entry.surface,
+    lighting: entry.lighting,
+    negative: entry.negative,
+    phrase: entry.phrase,
+    tags: Array.isArray(entry.tags) ? [...entry.tags] : [entry.id],
+  };
+}
+SCENE_STYLE_PRESETS.custom = {
+  label: '自定义环境画风',
+  render: 'Custom environment concept art directed by the user brief, with coherent perspective and production-ready asset readability',
+  surface: 'Materials, texture and finish specified by the user brief; preserve scale cues and consistent environment identity',
+  lighting: 'Lighting design specified by the user brief with clear spatial depth and readable subject separation',
+  negative: 'people, human figures, characters, crowds, text, watermark, signature, accidental style mixing',
+  phrase: 'custom cinematic environment style',
+  tags: ['custom brief'],
+};
+
+// Register every homepage template as an addressable scene/prop preset.
 export const SUPPORTED_STYLES = Object.keys(SCENE_STYLE_PRESETS);
-export const scenePreset = (id) => SCENE_STYLE_PRESETS[id] ?? SCENE_STYLE_PRESETS[DEFAULT_STYLE];
+export const scenePreset = (id) => {
+  const preset = SCENE_STYLE_PRESETS[id];
+  if (!preset) throw new Error(`unknown scene style preset: ${id}`);
+  return preset;
+};
 
 /* ------------------------------------------------------------------ */
 /* slug                                                                */
@@ -94,31 +185,7 @@ export function seedFromOutline(outline) {
     };
   });
 
-  // 道具：大纲从 1.1.0 起带 props（id / name / function / beatIds），有就预填。
-  // 搬过来的是改编阶段拍板的事实——哪几件物件承载剧情、各自承载什么、托起哪几个
-  // 爽点、在哪几集出现。留空的是美术层的活：尺度、锚点、状态变体、白底提示词。
-  // 大纲没有 props 字段就返回空数组，模型照 prop-pass.md 从原文提取，跟以前一样。
-  const beatType = new Map((outline?.beats ?? []).map((b) => [b?.id, b?.type]));
-  const props = (outline?.props ?? []).map((pr) => {
-    const episodes = eps.filter((e) => (e?.propIds ?? []).includes(pr.id)).map((e) => e.ep);
-    return {
-      id: pr.id,
-      name: pr.name,
-      // 大纲的 function 就是这里的 summary：两边都指「它在戏里干什么」，不是材质描述
-      summary: pr.function ?? '',
-      // 模型要填的设计字段，先占位
-      scale: '',
-      anchors: [],
-      states: [],
-      relatedScenes: [],
-      carriedBy: [],
-      image: { prompt: '', negativePrompt: '', sheet: '', tags: [] },
-      // 从 outline 搬来的事实，不用再想
-      usage: { episodes, beats: (pr.beatIds ?? []).map((id) => beatType.get(id)).filter(Boolean) },
-    };
-  });
-
-  return { source: outline?.source ?? '', style: DEFAULT_STYLE, scenes, props };
+  return { source: outline?.source ?? '', style: DEFAULT_STYLE, scenes };
 }
 
 /* ------------------------------------------------------------------ */
@@ -464,7 +531,7 @@ const I18N = {
     langCode: 'en',
     kicker: 'Art Bible',
     docTitle: (s) => `${s} · Art Bible`,
-    styleLine: (id) => `Style: ${({ realistic: 'semi-realistic painterly', ghibli: 'Ghibli-style animation' })[id] ?? id}`,
+    styleLine: (id) => `Style: ${({ realistic: 'semi-realistic painterly', ghibli: 'Ghibli-style animation', ink: 'Chinese ink wash', cyberpunk: 'cinematic cyberpunk neon', comic: 'American comic-book', anime: 'polished stylized anime', watercolor: 'editorial watercolor', wuxia: 'Chinese wuxia', noir: 'film noir monochrome', '3d': 'stylized 3D' })[id] ?? id}`,
     exportJson: 'Export JSON',
     gates: 'Quality gates',
     gatesPass: 'All passed',
