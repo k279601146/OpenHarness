@@ -520,6 +520,16 @@ export function validateOutline(outline, stage = 'full') {
   return problems;
 }
 
+function structuredValidationErrors(problems) {
+  return problems.map((message) => {
+    const text = String(message);
+    const code = /时长|秒/.test(text) ? 'duration' : /角色|人物/.test(text) ? 'character_reference' : /场景/.test(text) ? 'scene_reference' : /爽点|钩子|悬念/.test(text) ? 'story_beat' : 'schema';
+    const match = text.match(/(第\s*\d+\s*集|ep(?:isode)?\s*\d+)/i);
+    const fields = code === 'duration' ? ['targetSeconds', 'beats'] : code === 'character_reference' ? ['characters'] : code === 'scene_reference' ? ['scenes'] : code === 'story_beat' ? ['hook', 'cliffhanger', 'payoff'] : [];
+    return { code, path: match ? match[1] : null, message: text, fields, repair_scope: match ? 'episode' : 'artifact' };
+  });
+}
+
 /* ------------------------------------------------------------------ */
 /* 资产清单 — 算出来的，不让模型写                                        */
 /* ------------------------------------------------------------------ */
@@ -1612,9 +1622,17 @@ function main(argv) {
     if (!STAGES.includes(stage)) throw new Error(`--stage 只能是 ${STAGES.join('/')}`);
     const problems = validateOutline(readJson(path), stage);
     if (problems.length) {
+      if (rest.includes('--json')) {
+        console.log(JSON.stringify({ ok: false, stage, errors: structuredValidationErrors(problems), gate_count: problems.length }));
+        process.exit(1);
+      }
       console.error(`✗ ${problems.length} 处违规（stage=${stage}）：\n`);
       for (const x of problems) console.error('  ' + x);
       process.exit(1);
+    }
+    if (rest.includes('--json')) {
+      console.log(JSON.stringify({ ok: true, stage, errors: [], gate_count: 0 }));
+      return;
     }
     console.log(`✓ 通过校验（stage=${stage}）`);
     return;

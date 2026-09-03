@@ -296,6 +296,16 @@ export function validateScript(doc, ctx = {}) {
   return problems;
 }
 
+function structuredValidationErrors(problems) {
+  return problems.map((message) => {
+    const text = String(message);
+    const code = /时长|秒/.test(text) ? 'duration' : /台词|对白/.test(text) ? 'dialogue' : /角色|人物/.test(text) ? 'character_reference' : /场景|光照|道具/.test(text) ? 'scene_reference' : 'schema';
+    const match = text.match(/(第\s*\d+\s*集|S\d+)/);
+    const fields = code === 'duration' ? ['flow', 'targetSeconds'] : code === 'dialogue' ? ['line', 'speaker', 'delivery'] : code === 'character_reference' ? ['characters', 'speaker'] : code === 'scene_reference' ? ['sceneId', 'lighting', 'props'] : [];
+    return { code, path: match ? match[1] : null, message: text, fields, repair_scope: match ? 'item' : 'artifact' };
+  });
+}
+
 /* ------------------------------------------------------------------ */
 /* seed — 从 outline.json 确定性预填骨架                                 */
 /* ------------------------------------------------------------------ */
@@ -1037,9 +1047,17 @@ function main(argv) {
 
     const problems = validateScript(doc, ctx);
     if (problems.length) {
+      if (rest.includes('--json')) {
+        console.log(JSON.stringify({ ok: false, stage: 'script', errors: structuredValidationErrors(problems), gate_count: problems.length }));
+        process.exit(1);
+      }
       console.error(`✗ ${problems.length} 处违规：\n`);
       for (const x of problems) console.error('  ' + x);
       process.exit(1);
+    }
+    if (rest.includes('--json')) {
+      console.log(JSON.stringify({ ok: true, stage: 'script', errors: [], gate_count: 0 }));
+      return;
     }
     const st = computeStats(doc);
     console.log(`✓ ${st.totals.episodes} 集 / ${st.totals.scenes} 场 / ${st.totals.lines} 句台词全部通过校验（预估 ${st.totals.estSeconds}s / 目标 ${st.totals.targetSeconds}s）`);

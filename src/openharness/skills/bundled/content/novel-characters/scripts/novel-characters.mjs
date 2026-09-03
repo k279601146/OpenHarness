@@ -768,6 +768,15 @@ export function validateCast(characters, sourceText, lang = DEFAULT_LANG, style 
   return problems;
 }
 
+function structuredValidationErrors(problems) {
+  return problems.map((message) => {
+    const text = String(message);
+    const code = /style|画风/.test(text) ? 'style' : /引用|引文|名字|角色/.test(text) ? 'character_reference' : /语言|lang|ui/.test(text) ? 'localization' : 'schema';
+    const fields = code === 'style' ? ['style', 'image'] : code === 'character_reference' ? ['name', 'aliases', 'quotes'] : code === 'localization' ? ['lang', 'ui'] : [];
+    return { code, path: null, message: text, fields, repair_scope: 'character' };
+  });
+}
+
 /* ------------------------------------------------------------------ */
 /* assemble                                                            */
 /* ------------------------------------------------------------------ */
@@ -1907,9 +1916,17 @@ function main(argv) {
       );
     }
     if (problems.length) {
+      if (rest.includes('--json')) {
+        console.log(JSON.stringify({ ok: false, stage: 'characters', errors: structuredValidationErrors(problems), gate_count: problems.length }));
+        process.exit(1);
+      }
       console.error(`✗ ${problems.length} 处违规：\n`);
       for (const p of problems) console.error('  ' + p);
       process.exit(1);
+    }
+    if (rest.includes('--json')) {
+      console.log(JSON.stringify({ ok: true, stage: 'characters', errors: [], gate_count: 0 }));
+      return;
     }
     console.log(`✓ ${characters.length} 个角色全部通过校验（lang=${lang}, style=${style}）`);
     return;

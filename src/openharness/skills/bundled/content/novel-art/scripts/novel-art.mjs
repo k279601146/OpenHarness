@@ -422,6 +422,16 @@ export function validateArt(doc, castNames = null) {
   return problems;
 }
 
+function structuredValidationErrors(problems) {
+  return problems.map((message) => {
+    const text = String(message);
+    const code = /提示词|prompt|英文/.test(text) ? 'prompt' : /锚点|anchor|光照|lighting/.test(text) ? 'asset_prompt' : /角色|人物/.test(text) ? 'character_reference' : /道具|prop/.test(text) ? 'prop' : 'schema';
+    const match = text.match(/(S\d+|P\d+)/i);
+    const fields = code === 'prompt' ? ['prompt', 'negativePrompt'] : code === 'asset_prompt' ? ['anchors', 'lighting', 'prompt'] : code === 'character_reference' ? ['prompt'] : code === 'prop' ? ['props', 'states'] : [];
+    return { code, path: match ? match[1] : null, message: text, fields, repair_scope: match ? 'item' : 'artifact' };
+  });
+}
+
 /** 从 cast.json 提取名字 + 别名，给「提示词不含角色名」那道门用。 */
 export function castNamesOf(cast) {
   const chars = Array.isArray(cast) ? cast : (cast?.characters ?? []);
@@ -1111,9 +1121,17 @@ function main(argv) {
 
     const problems = validateArt(doc, names);
     if (problems.length) {
+      if (rest.includes('--json')) {
+        console.log(JSON.stringify({ ok: false, stage: 'art', errors: structuredValidationErrors(problems), gate_count: problems.length }));
+        process.exit(1);
+      }
       console.error(`✗ ${problems.length} 处违规：\n`);
       for (const x of problems) console.error('  ' + x);
       process.exit(1);
+    }
+    if (rest.includes('--json')) {
+      console.log(JSON.stringify({ ok: true, stage: 'art', errors: [], gate_count: 0 }));
+      return;
     }
     console.log(`✓ ${doc.scenes.length} 个场景${(doc.props ?? []).length ? ` + ${doc.props.length} 件道具` : ''}全部通过校验（style=${doc.style}）`);
     return;

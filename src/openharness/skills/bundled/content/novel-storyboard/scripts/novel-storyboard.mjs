@@ -745,6 +745,16 @@ export function validateStoryboard(board, ctx = {}) {
   return problems;
 }
 
+function structuredValidationErrors(problems) {
+  return problems.map((message) => {
+    const text = String(message);
+    const code = /台词|dialogue/i.test(text) ? 'dialogue_fit' : /时长|seconds|秒/.test(text) ? 'duration' : /h3/i.test(text) ? 'h3_structure' : /提示词|prompt/i.test(text) ? 'prompt' : /场景|人物|道具|script/i.test(text) ? 'reference' : 'schema';
+    const match = text.match(/(第\s*\d+\s*集|E\d{2}-\d{2}(?:#\d+)?)/);
+    const fields = code === 'dialogue_fit' ? ['seconds', 'beats'] : code === 'duration' ? ['seconds', 'cuts'] : code === 'h3_structure' ? ['h3Prompt', 'cuts'] : code === 'prompt' ? ['frame', 'h3Prompt'] : [];
+    return { code, path: match ? match[1] : null, message: text, fields, repair_scope: match ? 'item' : 'artifact' };
+  });
+}
+
 /* ------------------------------------------------------------------ */
 /* seed — 从 script.json 确定性预填                                      */
 /* ------------------------------------------------------------------ */
@@ -1748,9 +1758,17 @@ function main(argv) {
     logGates(gateReport(board, ctx));
     const problems = validateStoryboard(board, ctx);
     if (problems.length) {
+      if (rest.includes('--json')) {
+        console.log(JSON.stringify({ ok: false, stage: 'storyboard', errors: structuredValidationErrors(problems), gate_count: problems.length }));
+        process.exit(1);
+      }
       console.error(`✗ ${problems.length} 处违规：\n`);
       for (const x of problems) console.error('  ' + x);
       process.exit(1);
+    }
+    if (rest.includes('--json')) {
+      console.log(JSON.stringify({ ok: true, stage: 'storyboard', errors: [], gate_count: 0 }));
+      return;
     }
     const st = computeStats(board, ctx.script);
     console.log(`✓ ${st.episodes.length} 集 / ${st.totals.segments} 段 / ${st.totals.cuts} 个分镜全部通过校验（共 ${st.totals.seconds}s / 目标 ${st.totals.targetSeconds}s / ${st.batches.length} 个生成批次）`);
