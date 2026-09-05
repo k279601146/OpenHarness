@@ -346,7 +346,21 @@ STYLE_PRESETS.custom = {
 // Register every homepage template as an addressable skill preset.
 export const SUPPORTED_STYLES = Object.keys(STYLE_PRESETS);
 export const stylePreset = (id) => {
-  const preset = STYLE_PRESETS[id];
+  let preset = STYLE_PRESETS[id];
+  if (!preset && typeof id === 'string') {
+    const target = id.trim().toLowerCase();
+    for (const [key, p] of Object.entries(STYLE_PRESETS)) {
+      if (
+        key.toLowerCase() === target ||
+        p?.label?.zh?.toLowerCase() === target ||
+        p?.label?.en?.toLowerCase() === target ||
+        p?.label?.ja?.toLowerCase() === target
+      ) {
+        preset = p;
+        break;
+      }
+    }
+  }
   if (!preset) throw new Error(`unknown style preset: ${id}`);
   return preset;
 };
@@ -826,6 +840,18 @@ export function scaffoldFromOutline(outline, { lang = null, style = null, source
     resolvedStyle = rawStyle;
   } else if (SUPPORTED_STYLES.includes(String(rawStyle).toLowerCase())) {
     resolvedStyle = String(rawStyle).toLowerCase();
+  } else {
+    for (const [key, p] of Object.entries(STYLE_PRESETS)) {
+      if (
+        key.toLowerCase() === String(rawStyle).toLowerCase() ||
+        p?.label?.zh?.toLowerCase() === String(rawStyle).toLowerCase() ||
+        p?.label?.en?.toLowerCase() === String(rawStyle).toLowerCase() ||
+        p?.label?.ja?.toLowerCase() === String(rawStyle).toLowerCase()
+      ) {
+        resolvedStyle = key;
+        break;
+      }
+    }
   }
   const preset = stylePreset(resolvedStyle);
   const chosenSource = source || outline.source || 'Short Drama';
@@ -897,8 +923,18 @@ export function scaffoldFromOutline(outline, { lang = null, style = null, source
     ];
     const distinctLocalPhrase = distinctLocalPrompts[index % distinctLocalPrompts.length];
 
-    // 三视图标准 Sheet 模板，末尾必定携带 preset.render
-    const sheetTemplate = `Single character model sheet on ONE 16:9 landscape canvas divided by thin hairline rules into three zones for a ${ageEnglish} ${genderTerm} in production attire. LEFT ZONE occupies about 34% of canvas width featuring one high-detail bust portrait head-and-shoulders as facial reference. RIGHT-TOP ZONE shows three full-body views (front, side, back) standing on the same ground level line. PROPORTIONS ARE CRITICAL: full body figures maintain consistent head-to-body ratio and equal height, feet aligned on ground line. RIGHT-BOTTOM ZONE contains four small isolated close-up studies of key wardrobe and prop details. LIGHTING IN THE LEFT ZONE ONLY: soft key light with natural falloff. LIGHTING IN THE RIGHT ZONES: flat even orthographic lighting with no directional shadows for easy cutout. Entire canvas has pure white background. ${preset.render}`;
+    // 三视图标准 Sheet 模板，末尾必定携带完整 style 预设约束
+    const styleParts = [
+      preset.render ? preset.render : '',
+      preset.surface ? `Surface textures: ${preset.surface}` : '',
+      preset.lighting ? `Atmospheric lighting: ${preset.lighting}` : '',
+      preset.phrase ? `Style aesthetic: ${preset.phrase}` : '',
+    ]
+      .filter(Boolean)
+      .map((s) => (s.endsWith('.') || s.endsWith(';') || s.endsWith('!') || s.endsWith('?') ? s : `${s}.`))
+      .join(' ');
+
+    const sheetTemplate = `Single character model sheet on ONE 16:9 landscape canvas divided by thin hairline rules into three zones for a ${ageEnglish} ${genderTerm} in production attire. LEFT ZONE occupies about 34% of canvas width featuring one high-detail bust portrait head-and-shoulders as facial reference. RIGHT-TOP ZONE shows three full-body views (front, side, back) standing on the same ground level line. PROPORTIONS ARE CRITICAL: full body figures maintain consistent head-to-body ratio and equal height, feet aligned on ground line. RIGHT-BOTTOM ZONE contains four small isolated close-up studies of key wardrobe and prop details. LIGHTING IN THE LEFT ZONE ONLY: soft key light with natural falloff. LIGHTING IN THE RIGHT ZONES: flat even orthographic lighting with no directional shadows for easy cutout. Entire canvas has pure white background. ${styleParts}`;
 
     // 声音特异性 Prompt，彻底避开 SIM_MAX 拦截
     const voicePrompts = [
