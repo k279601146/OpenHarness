@@ -71,26 +71,26 @@ metadata:
 
 **一次切几集**：跟剧本的批次走（剧本写到哪就分到哪），默认一批 ≤ 3 集。
 
-### Step 1 — seed 工作底稿
+### Step 1 — 生成分镜骨架或工作底稿
 
 ```bash
-node {baseDir}/scripts/novel-storyboard.mjs seed <script.json> --eps 1-3 > <workdir>/storyboard.json
+# 推荐：确定性骨架预编译（装箱求解、自适应台词时长、自动生成 H3 首行与 <d> 骨架，出厂通过数学质量门）
+node {baseDir}/scripts/novel-storyboard.mjs scaffold <script.json> \
+  --outline <outline.json> --cast <cast.json> --art <art.json> > <workdir>/storyboard.json
+
+# 备选：仅预填节拍清单底稿
+node {baseDir}/scripts/novel-storyboard.mjs seed <script.json> --eps 1-3 > <workdir>/seed.json
 ```
 
-确定性展开：每场的节拍清单（编号、动作/台词、每拍秒数、说话人）进 `seedScenes`，这就是切镜时的工作底稿。**每拍几秒是算出来的，不要让模型重新估。** shots 留空，切镜才是模型的活。
+**强烈推荐使用 `scaffold` 模式**：装箱算法确定性完成每场节拍划分、段总秒数（$\le 15$s）、自适应台词时长和首行 H3 对齐指令，避免模型在浮点数与装箱边界上反复试错。
 
-### Step 2 — 逐集分段切镜
+### Step 2 — 创意填充与分镜细化
 
-每集一份任务，能并发就并发。每份任务拿到：
+基于已规划好的骨架，Agent 发挥创意完成视觉与镜头设计：
+- **景别与运镜**：根据剧情节奏细化景别（`size`: extreme-wide / wide / medium / close / extreme-close）与运镜（`camera`: Push In / Pan Left 等）；
+- **分镜图提示词**：结合 `art.json` 场景光照与 `cast.json` 角色特征，编写纯英文 `frame` 提示词，严禁出现角色姓名；
+- **H3 视频提示词补全**：在 `h3Prompt` 中润色镜头视觉动作与环境声景，认领台词保留在原位置 `<d>` 块内。
 
-- `{baseDir}/references/storyboard-pass.md` 和 `{baseDir}/references/schema.md`（读它们，照着做）
-- 该集的 seedScenes 底稿 + 场景卡（art.json 的锚点与光照提示词）+ 角色卡（cast.json 的形象要点）
-
-流程：**先按剧情单元分段**（每段 9–15 秒、不跨场），**段内切 2–5 秒的分镜**（对话正反打、关键动作插入特写、进场三件套——切镜语法都在 storyboard-pass.md），每切写一条分镜图提示词。
-
-**每段写一条 `h3Prompt`**，照 `{baseDir}/references/h3-prompt.md` 写（官方方法论的内化版，**不依赖任何外部 skill**）。官方口径默认英文（`promptLang` 可切中文），**每个镜头独立一行**。要点：首行对齐指令和 `[Shot k]` 切点时刻**由分镜秒数推导，一个字符都不许漂**（validate 逐字对账）；认领台词**逐字**进 `<d>[Chinese] …</d>`；每切的运镜词写进自己那一行；声景与配乐分进后两个字段——**声景也是动作指令，画面改了声景一起改**。
-
-切完把 `seedScenes` 删掉。
 
 ### Step 3 — 校验 ⛔ 不能跳
 
@@ -116,22 +116,23 @@ node {baseDir}/scripts/novel-storyboard.mjs validate <storyboard.json> \
 - **默认先出第一段的整套分镜图给用户看效果**（3–5 张），确认画风和正反打构图再往后补——一集约 30–40 格，错了浪费的是整批
 - 单个失败跳过不阻断，最后汇总说明
 
-### Step 5 — 输出与汇报
+### Step 5 — 输出与交付边界
 
+**在 SaaS 自动化流水线下**：
+Agent 的交付物理边界收敛为唯一核心产物 **`storyboard.json`**。一旦 `node novel-storyboard.mjs validate` 校验通过，**立刻结束轮次并交付**。
+严禁在沙盒会话中执行 `export`、`render` 或 `zip` 打包操作。HTML 报告渲染与 H3 投产包 ZIP 归档统一由 SaaS 后台服务按需提供下载。
+
+**在本地 CLI 手工跑批场景下（可选）**：
 ```bash
 cd <输出目录>
 node {baseDir}/scripts/novel-storyboard.mjs render <剧名>-storyboard.json --md \
   --script <script.json> --outline <outline.json> --art <art.json> > <剧名>-storyboard.md
 node {baseDir}/scripts/novel-storyboard.mjs render <剧名>-storyboard.json --html \
   --script <script.json> --outline <outline.json> --art <art.json> > storyboard-report.html
+node {baseDir}/scripts/novel-storyboard.mjs export <剧名>-storyboard.json --script <script.json> --out h3_production_pack
 ```
 
-报告界面语言用 `--lang zh|en` 指定（优先级 `--lang` > JSON 顶层 `lang` 字段 > 默认中文）——只切界面标签，与 `promptLang`（H3 提示词语言）互相独立。`render` 自动去 `images/<镜号>-frame.png` 找首帧（批次单还会找场景设定图），**先出图再 render**。报告含：KPI 带、分镜节奏带（粗分隔 = 段边界、片宽 = 分镜时长占比、颜色深浅 = 景别远近、点击跳段卡）、分集分镜表（主分镜图 + 子分镜条 + 逐切分镜行 + 分镜图/H3 提示词复制按钮）、生成批次单、配音对齐单、质量门、导出 JSON。Markdown 版每段附完整 H3 提示词，直接复制可用。
-
-汇报一句话说清：几集几镜、总时长 vs 目标、几个生成批次、出了几张首帧、报告路径；没过的门和没出的图明说。
-
-最终落地：
-
+本地落地结构：
 ```
 <输出目录>/
 ├── <剧名>-storyboard.json
@@ -143,6 +144,7 @@ node {baseDir}/scripts/novel-storyboard.mjs render <剧名>-storyboard.json --ht
     ├── f2.png …                   ← 子分镜图
     └── prompt.md                  ← H3 提示词（export 生成）
 ```
+
 
 ---
 

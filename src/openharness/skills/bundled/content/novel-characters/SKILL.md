@@ -66,27 +66,31 @@ metadata:
 
 支持的语言不受内置表限制，法语韩语西班牙语都能出完整报告。
 
-### Step 0.5 — 确定画风
+### Step 0.5 — 画风与渲染契约（强制继承上游）
 
-用户可以指定出图风格：**默认 `realistic`**（半写实厚涂）。`realistic` 与 `ghibli` 是结构范本；还可使用 `ink`、`cyberpunk`、`comic`、`anime`、`watercolor`、`wuxia`、`noir`、`3d` 等已注册预设。每个预设必须整套提供 render / surface / lighting / negative / tags。
+在短剧 / SaaS 流水线中，出图画风**严格继承自上游 `outline.json`（或项目输入配置）中的 `params.stylePreset`**。平台支持 94 项标准化风格库注册模板及显式 `custom` 自定义风格。
 
+**核心原则与约束**：
+- **严禁私自变更或默认回退到 `realistic`**，必须严格使用上游指定的 canonical ID；
+- 当前画风的全部渲染元数据（包含精确渲染句 `render`、反向提示词 `negative`、风格短语 `phrase` 等）已由平台在输入配置（`config.stylePresetMeta`）和 Preflight 规则中结构化下发；
+- **严禁在沙盒中执行 `styles` 命令探测或读取 `style-presets.md`**，直接使用下发的元数据或由 `scaffold` 自动绑定；
+- 反向提示词严格匹配：`realistic` 绝不能禁 `photorealistic`，`ghibli` 必须禁，其余风格使用预设自带 negative；
+- 版面规则（16:9 三区、比例、细节让位）**不随风格变**，变的只有渲染质感。
+
+### Step 1 — 定位输入与骨架生成
+
+**SaaS / 短剧流水线推荐（优先）**：如果上游已有 `outline.json`，直接使用确定性脚手架命令生成预编译骨架：
 ```bash
-node {baseDir}/scripts/novel-characters.mjs styles   # 打印预设的完整内容
+node {baseDir}/scripts/novel-characters.mjs scaffold <outline.json> [--lang zh] [--style <style>] > cast.json
 ```
+脚手架引擎会自动解构角色层级、填入标准 16:9 三分区三视图规范模板，并注入当前风格所需的精确渲染句。Agent 随后仅需对 `cast.json` 中各个角色的独有外貌特征、性格与音色做创意填充。
 
-读 `{baseDir}/references/style-presets.md`。**换风格是整套换**——每个预设自带 render / surface / lighting / negative / tags 五块，整块取用，不要混搭。
-
-最容易搞反的是反向提示词：`realistic` 绝不能禁 `photorealistic`，`ghibli` 必须禁。`validate` 会拦这个。
-
-版面规则（16:9 三区、比例、细节让位）**不随风格变**，变的只有渲染质感。
-
-### Step 1 — 定位输入
-
+**传统长文本小说全量抽取模式**：
 用户给文件路径就直接用。直接粘正文的，**先落到一个临时 .txt**——后面校验「引文是否逐字」要拿原文比对，没有原文文件这步就没法做。
 
 确定输出目录：用户指定就用；没指定就用原书同级目录。
 
-### Step 2 — 分块
+### Step 2 — 分块（仅长文本模式）
 
 ```bash
 node {baseDir}/scripts/novel-characters.mjs chunk <book.txt> <workdir>
@@ -211,8 +215,13 @@ node {baseDir}/scripts/novel-characters.mjs render <cast.json> --html > report.h
 
 report.html 的样式约定见 `{baseDir}/references/report-style.md`——要改样式先读它，别把它改回通用卡片墙。
 
-最终落地：
+### Step 10 — 输出与交付边界
 
+**在 SaaS 自动化流水线下**：
+Agent 的交付物理边界收敛为唯一核心产物 **`cast.json`**。一旦 `node novel-characters.mjs validate` 校验通过，**立刻结束轮次并交付**。
+严禁在沙盒会话中执行 `selftest.mjs`、`render` 或出图操作。HTML 报告渲染由 SaaS 后台服务统一提供。
+
+**在本地 CLI 完整跑批场景下（可选）**：
 ```
 <输出目录>/
 ├── <书名>-cast.json
@@ -222,28 +231,21 @@ report.html 的样式约定见 `{baseDir}/references/report-style.md`——要�
     └── <slug>-sheet.png           ← 有 codex 才有
 ```
 
-### Step 10 — 汇报
-
-一句话说清：角色数、出图数、报告路径。校验一次没过的话，说明修了什么。有角色出图失败、被截断、或因为没有 codex 而没出图，明确说清楚。
-
 ---
 
-## 边界
+## 边界与约束
 
+- **SaaS 自动化运行约束**：禁止读取 `schema.md`、`profile-pass.md` 或运行 `selftest.mjs`，所有 schema 与画风渲染参数已在系统提示词和输入配置中结构化下发
 - 单次上限 24 块（净覆盖约 93 万字符），超了会明确报 `truncated`，不静默截断
 - 人类可读字段跟随 `--lang`（默认中文）；出图和 TTS 提示词**永远英文**，那些引擎吃英文最稳
 - 设定图最容易出的两个问题：**一张图里两个长相**、**为了塞细节把人物压扁**。拿到图先扫一眼，见 `references/sheet.md`
 - 出图只走 codex built-in `$imagegen`。**不用它的 CLI fallback**（要 `OPENAI_API_KEY`）
-- 想要能实时编辑、边跑边看的交互界面，那是另一个东西，不在这个 skill 里
 
-## 自测
+## 本地开发自测（仅限本地代码开发，Agent 线上运行严禁调用）
 
 ```bash
 node {baseDir}/scripts/selftest.mjs
 ```
 
-316 项断言，不调模型、不花额度，覆盖分块 / 归并 / 合成 / 多语言 / 校验 / 渲染的全部确定性逻辑。改完脚本先跑这个。
+覆盖分块 / 归并 / 合成 / 多语言 / 校验 / 渲染的全部确定性逻辑。
 
-## 自带样例
-
-`{baseDir}/examples/渡口.txt` 是一篇短故事，4 个角色，其中货郎全程只有绰号、船夫只被叫过「老伯」——专门用来验别名归并。对应产出 `渡口-cast.json` / `渡口-cast.md` 可以当质量基准，也是校验的自检夹具。

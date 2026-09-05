@@ -66,7 +66,7 @@ metadata:
 2. 小说原文——自己归纳场景清单（主舞台优先，参考 novel-outline 的主场景上限思路：别贪多）
 3. 用户手写的场景清单
 
-画风：**默认 `realistic`**（半写实厚涂）；`realistic` 与 `ghibli` 只是结构范本，另有 `ink`、`cyberpunk`、`comic`、`anime`、`watercolor`、`wuxia`、`noir`、`3d`。**跟角色 skill 保持同一档**，整块取用不混搭。跑 `node {baseDir}/scripts/novel-art.mjs styles` 看预设全文。
+画风：**严格继承自上游 `outline.json`（或项目输入配置）中的 `params.stylePreset`**，与角色阶段保持同档同预设。平台支持 94 项标准化风格库注册模板及显式 `custom` 自定义风格。当前风格的全部渲染元数据已由平台在输入配置（`config.stylePresetMeta`）中完整提供，**严禁在沙盒中执行 `styles` 命令探测，严禁私自修改或默认回退到 `realistic`**。
 
 有 cast.json（novel-characters 的产出）也带上——校验「提示词不含角色名」要用。
 
@@ -87,7 +87,8 @@ node {baseDir}/scripts/novel-art.mjs seed <outline.json> > <workdir>/art.json
 - `{baseDir}/references/scene-pass.md` 和 `{baseDir}/references/schema.md`（读它们，照着做）
 - 该场景的骨架 + 原文/大纲里关于这个空间的全部信息
 - **同批其他场景的名字**（空间气质要区分开，别都写成同一种破旧）
-- 画风预设全文（`styles` 命令的输出）
+- 画风元数据（直接使用平台下发的 `config.stylePresetMeta`）
+
 
 核心要求都在 scene-pass.md 里，最重的三条：锚点要**可画可认可核对**（「补丁船篷」是锚点，「陈旧的氛围」是形容词）；光照状态**从分集反推**，不写用不上的全家桶；**能做变体就别开新景**。
 

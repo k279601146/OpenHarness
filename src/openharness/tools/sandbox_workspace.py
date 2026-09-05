@@ -290,13 +290,20 @@ async def _ensure_named_skills_installed(context: ToolExecutionContext, session:
     metadata = context.metadata or {}
     session_key = str(getattr(session, "sandbox_id", "") or id(session))
     ensured = metadata.setdefault("_sandbox_skills_ensured", set())
+    session_ensured = getattr(session, "_sandbox_skills_ensured", None)
+    if session_ensured is None:
+        session_ensured = set()
+        try:
+            setattr(session, "_sandbox_skills_ensured", session_ensured)
+        except Exception:
+            pass
     pending = []
     for name in names:
         normalized = name.strip()
         if not normalized:
             continue
         cache_key = f"{session_key}:{normalized}"
-        if cache_key not in ensured:
+        if cache_key not in ensured and normalized not in session_ensured:
             pending.append((normalized, cache_key))
     if not pending:
         return
@@ -306,9 +313,11 @@ async def _ensure_named_skills_installed(context: ToolExecutionContext, session:
         skill = registry.get(name)
         if skill is None:
             ensured.add(cache_key)
+            session_ensured.add(name)
             continue
         await _install_skill_in_sandbox_session(context, session, skill)
         ensured.add(cache_key)
+        session_ensured.add(name)
 
 
 def _load_context_skill_registry(context: ToolExecutionContext):
@@ -338,6 +347,17 @@ def _skill_name_from_sandbox_path(context: ToolExecutionContext, sandbox_path: s
     return first_part or None
 
 
+def _mark_skill_ensured_on_session(session: Any, skill_name: str) -> None:
+    session_ensured = getattr(session, "_sandbox_skills_ensured", None)
+    if session_ensured is None:
+        session_ensured = set()
+        try:
+            setattr(session, "_sandbox_skills_ensured", session_ensured)
+        except Exception:
+            pass
+    session_ensured.add(skill_name)
+
+
 async def _install_skill_in_sandbox_session(context: ToolExecutionContext, session: Any, skill: Any) -> str:
     skill_name = str(getattr(skill, "command_name", None) or getattr(skill, "name", None) or "skill")
     target_root = sandbox_skill_dir(context, skill)
@@ -351,6 +371,7 @@ async def _install_skill_in_sandbox_session(context: ToolExecutionContext, sessi
             path=target_root,
             metadata={"skill": skill_name},
         )
+        _mark_skill_ensured_on_session(session, skill_name)
         return target_root
 
     source_dir = Path(str(base_dir)).expanduser().resolve()
@@ -379,6 +400,7 @@ async def _install_skill_in_sandbox_session(context: ToolExecutionContext, sessi
                     path=target_root,
                     metadata={"skill": skill_name, "cache_hit": True},
                 )
+                _mark_skill_ensured_on_session(session, skill_name)
                 return target_root
         except json.JSONDecodeError:
             pass
@@ -395,6 +417,7 @@ async def _install_skill_in_sandbox_session(context: ToolExecutionContext, sessi
             path=target_root,
             metadata={"skill": skill_name, **manifest},
         )
+        _mark_skill_ensured_on_session(session, skill_name)
         return target_root
 
     await _emit_progress(
@@ -439,6 +462,7 @@ async def _install_skill_in_sandbox_session(context: ToolExecutionContext, sessi
         path=target_root,
         metadata={"skill": skill_name, **manifest},
     )
+    _mark_skill_ensured_on_session(session, skill_name)
     return target_root
 
 

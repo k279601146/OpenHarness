@@ -788,6 +788,204 @@ export function seedFromScript(script, epRange = null) {
 }
 
 /* ------------------------------------------------------------------ */
+/* scaffold — 从 script.json 确定性生成合规分镜骨架 (Scaffold)           */
+/* ------------------------------------------------------------------ */
+
+export function scaffoldFromScript(script, { outline = null, cast = null, art = null, lang = 'en', style: styleOpt = null, epRange = null } = {}) {
+  const expanded = expandScript(script);
+  const inRange = (n) => !epRange || (n >= epRange[0] && n <= epRange[1]);
+
+  // 1. 确定画风
+  const rawStyle = styleOpt || script?.params?.stylePreset || outline?.params?.stylePreset || outline?.params?.style || DEFAULT_STYLE;
+  let styleKey = 'realistic';
+  if (STYLE_PRESETS[rawStyle]) {
+    styleKey = rawStyle;
+  } else {
+    for (const [k, v] of Object.entries(STYLE_PRESETS)) {
+      if (k.toLowerCase() === String(rawStyle).toLowerCase() || (v.zh && v.zh === rawStyle)) {
+        styleKey = k;
+        break;
+      }
+    }
+  }
+  const styleObj = STYLE_PRESETS[styleKey] ?? STYLE_PRESETS.realistic;
+  const stylePhrase = styleObj.phrase;
+
+  // 2. 统计全剧最长台词，动态自适应 maxCutSeconds
+  let maxBeatSeconds = 0;
+  for (const [_, sEp] of expanded) {
+    for (const sc of sEp.scenes) {
+      for (const b of sc.beats) {
+        if (b.seconds > maxBeatSeconds) maxBeatSeconds = b.seconds;
+      }
+    }
+  }
+  const dynamicMaxCut = Math.max(5.0, Math.ceil(maxBeatSeconds * 10) / 10);
+  const p = {
+    ...DEFAULT_PARAMS,
+    maxCutSeconds: dynamicMaxCut,
+  };
+
+  const tk = H3_TOKENS[lang] ?? H3_TOKENS.en;
+  const episodes = [];
+
+  for (const [epNo, sEp] of expanded) {
+    if (!inRange(epNo)) continue;
+    let segNum = 1;
+    const segments = [];
+
+    for (const sc of sEp.scenes) {
+      // 对该场节拍生成切片候选
+      const sceneCuts = [];
+      for (const b of sc.beats) {
+        const isLine = b.kind === 'line';
+        const cutSec = r1(Math.max(2.0, b.seconds));
+        const size = isLine ? 'medium' : 'wide';
+        const camera = isLine ? 'Push In' : 'Static Shot';
+        let charRef = [];
+        if (isLine && b.speaker && b.speaker !== 'VO' && sc.characters.includes(b.speaker)) {
+          charRef = [b.speaker];
+        } else if (sc.characters.length > 0) {
+          charRef = sc.characters.slice(0, 1);
+        }
+        sceneCuts.push({
+          beats: [b.n, b.n],
+          seconds: cutSec,
+          size,
+          camera,
+          characters: charRef,
+          beat: b,
+        });
+      }
+
+      // 贪心装箱：保证每段 <= 15.0 秒，换场必开新段
+      let currentSegCuts = [];
+      let currentSegSec = 0;
+
+      const finalizeSeg = (cutsToFinalize) => {
+        if (!cutsToFinalize.length) return;
+        const segId = `E${String(epNo).padStart(2, '0')}-${String(segNum).padStart(2, '0')}`;
+        segNum += 1;
+
+        const finalCuts = cutsToFinalize.map((c) => {
+          const sizeObj = SHOT_SIZES[c.size] || SHOT_SIZES.medium;
+          const framePrompt = `${sizeObj.phrase}, cinematic composition in atmospheric lighting, ${stylePhrase}.`;
+          return {
+            beats: c.beats,
+            seconds: c.seconds,
+            size: c.size,
+            camera: c.camera,
+            characters: c.characters,
+            frame: framePrompt,
+          };
+        });
+
+        const alignLine = h3AlignmentLine(finalCuts, lang);
+        const starts = cutStarts(finalCuts);
+
+        const shotLines = finalCuts.map((c, i) => {
+          const k = i + 1;
+          const mark = k === 1 ? tk.shot(1) : tk.cutMark(k, h3CutTime(starts[i]));
+          const origBeat = cutsToFinalize[i].beat;
+          const camTerm = lang === 'en' ? String(c.camera).toLowerCase() : CAMERA_MOVES[c.camera];
+          let dlgPart = '';
+          if (origBeat.kind === 'line' && origBeat.speaker) {
+            dlgPart = ` <d>[${origBeat.speaker}] ${origBeat.text}</d>`;
+          }
+          return `${mark} ${c.size} shot, camera moves with ${camTerm}.${dlgPart}`;
+        });
+
+        const descBody = shotLines.join('\n');
+        const soundscape = lang === 'en'
+          ? 'Atmospheric environmental audio, subtle room tone, natural footsteps and movement sounds.'
+          : '环境环境音，微弱的房间氛围，自然脚步声与动作声。';
+        const music = lang === 'en'
+          ? 'Subtle cinematic underscore matching scene emotional pacing.'
+          : '契合场景情绪节奏的电影配乐。';
+
+        const h3Prompt = `${alignLine}\n\n${tk.fields[0]}\n${descBody}\n\n${tk.fields[1]}\n${soundscape}\n\n${tk.fields[2]}\n${music}\n`;
+
+        segments.push({
+          id: segId,
+          sceneIndex: sc.sceneIndex,
+          cuts: finalCuts,
+          h3Prompt,
+        });
+      };
+
+      for (const c of sceneCuts) {
+        if (currentSegCuts.length > 0 && r1(currentSegSec + c.seconds) > 15.0) {
+          finalizeSeg(currentSegCuts);
+          currentSegCuts = [];
+          currentSegSec = 0;
+        }
+        currentSegCuts.push(c);
+        currentSegSec = r1(currentSegSec + c.seconds);
+      }
+      if (currentSegCuts.length > 0) {
+        finalizeSeg(currentSegCuts);
+      }
+    }
+
+    // 针对单集总目标时长进行微调配平（容差内）
+    if (sEp.targetSeconds > 0) {
+      const lo = sEp.targetSeconds * (1 - p.tolerance);
+      let total = segments.reduce((n, s) => n + segSeconds(s), 0);
+
+      if (total < lo) {
+        for (const seg of segments) {
+          if (total >= lo + 1.0) break;
+          let changed = false;
+          for (const cut of seg.cuts) {
+            const segSec = segSeconds(seg);
+            if (segSec + 0.5 <= 15.0 && cut.seconds + 0.5 <= p.maxCutSeconds) {
+              cut.seconds = r1(cut.seconds + 0.5);
+              total = r1(total + 0.5);
+              changed = true;
+              if (total >= lo + 1.0) break;
+            }
+          }
+          if (changed) {
+            const alignLine = h3AlignmentLine(seg.cuts, lang);
+            const starts = cutStarts(seg.cuts);
+            const bodyStart = seg.h3Prompt.indexOf(tk.fields[0]);
+            if (bodyStart >= 0) {
+              const slices = h3CutSlices(seg.h3Prompt, seg.cuts.length, lang);
+              const rebuiltShots = seg.cuts.map((c, idx) => {
+                const k = idx + 1;
+                const mark = k === 1 ? tk.shot(1) : tk.cutMark(k, h3CutTime(starts[idx]));
+                const sl = slices[idx] || '';
+                const shotWithoutMark = sl.replace(/^\[(?:Shot|镜头)\s*\d+\](?: At \d+:\d+\.\d+,| 于 \d+:\d+\.\d+，)?\s*/i, '');
+                return `${mark} ${shotWithoutMark}`;
+              });
+              const soundscapeIdx = seg.h3Prompt.indexOf(tk.fields[1]);
+              const musicIdx = seg.h3Prompt.indexOf(tk.fields[2]);
+              const soundscape = soundscapeIdx >= 0 && musicIdx >= 0 ? seg.h3Prompt.slice(soundscapeIdx + tk.fields[1].length, musicIdx).trim() : 'Natural audio.';
+              const music = musicIdx >= 0 ? seg.h3Prompt.slice(musicIdx + tk.fields[2].length).trim() : 'Cinematic score.';
+              seg.h3Prompt = `${alignLine}\n\n${tk.fields[0]}\n${rebuiltShots.join('\n')}\n\n${tk.fields[1]}\n${soundscape}\n\n${tk.fields[2]}\n${music}\n`;
+            }
+          }
+        }
+      }
+    }
+
+    episodes.push({
+      ep: epNo,
+      segments,
+    });
+  }
+
+  return {
+    source: script?.source ?? '',
+    lang,
+    style: styleKey,
+    params: p,
+    episodes,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+
 /* export — H3 投产包                                                   */
 /* ------------------------------------------------------------------ */
 /*
@@ -1633,6 +1831,9 @@ document.querySelector('.expo').addEventListener('click', (e) => {
 const USAGE = `novel-storyboard.mjs — novel-storyboard skill 的确定性工具（分镜）
 
   seed <script.json> [--eps 1-3]              从剧本预填节拍工作底稿（打印到 stdout）
+  scaffold <script.json> [--eps 1-3]          从剧本确定性生成完全合规的分镜骨架（输出到 stdout）
+           [--outline] [--art] [--cast]       自动进行一维装箱规划、动态适配台词时长、生成 H3 骨架
+           [--lang zh|en] [--style <style>]
   validate <sb.json> --script <script.json>   校验；有违规逐条打印并 exit 1
            [--outline] [--cast] [--art]       outline/cast 查提示词人名；art 只管显示名字
            [--shots <卡片目录>]                挂载镜头配方卡库，开 shot-recipe 门（不给就跳过）
@@ -1706,6 +1907,31 @@ function main(argv) {
       epRange = m[2] ? [Number(m[1]), Number(m[2])] : [Number(m[1]), Number(m[1])];
     }
     console.log(JSON.stringify(seedFromScript(readJson(path), epRange), null, 2));
+    return;
+  }
+
+  if (cmd === 'scaffold') {
+    const [path] = rest;
+    if (!path) throw new Error('用法：scaffold <script.json> [--outline <outline.json>] [--art <art.json>] [--cast <cast.json>] [--lang en|zh] [--style <style>] [--eps 1-3]');
+    const range = flag(rest, '--eps');
+    let epRange = null;
+    if (range) {
+      const m = String(range).match(/^(\d+)-(\d+)$/) ?? String(range).match(/^(\d+)$/);
+      if (!m) throw new Error('--eps 形如 3 或 1-6');
+      epRange = m[2] ? [Number(m[1]), Number(m[2])] : [Number(m[1]), Number(m[1])];
+    }
+    const ctx = loadCtx(rest);
+    const lang = flag(rest, '--lang', 'en');
+    const style = flag(rest, '--style', null);
+    const sc = scaffoldFromScript(readJson(path), {
+      outline: ctx.outline,
+      cast: ctx.cast,
+      art: ctx.art,
+      lang,
+      style,
+      epRange,
+    });
+    console.log(JSON.stringify(sc, null, 2));
     return;
   }
 

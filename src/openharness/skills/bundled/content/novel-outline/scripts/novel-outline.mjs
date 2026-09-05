@@ -230,8 +230,10 @@ export function gateReport(outline) {
     for (const id of e?.propIds ?? []) if (propUse.has(id)) propUse.set(id, propUse.get(id) + 1);
   }
 
-  // G3 一次性场景要有规避方案
-  const onceNoPlan = scenes.filter((s) => sceneUse.get(s?.id) === 1 && !thText(s?.reusePlan));
+  // G3 一次性场景要有规避方案（仅多集剧需要检查；单集短视频场景只出现 1 次是正常的）
+  const onceNoPlan = total > 1
+    ? scenes.filter((s) => sceneUse.get(s?.id) === 1 && !thText(s?.reusePlan))
+    : [];
   add(
     'once-scene',
     '一次性场景已标注规避方案',
@@ -264,12 +266,12 @@ export function gateReport(outline) {
   // G5 第 1 集有钩子
   add('ep1-hook', '第 1 集有钩子', eps.length > 0 && thText(eps[0]?.hook), '');
 
-  // G6 大爆点不能到最后一集才第一次出现
+  // G6 大爆点不能到最后一集才第一次出现（单集短视频允许落在唯一的一集）
   const majors = beats.filter((b) => (b?.weight ?? 'minor') === 'major').map((b) => b.episode);
   add(
     'major-early',
     '大爆点不在最后一集才首次出现',
-    majors.length > 0 && Math.min(...majors) < total,
+    majors.length > 0 && (total <= 1 || Math.min(...majors) < total),
     majors.length ? `最早在第 ${Math.min(...majors)} 集` : '没有 major 爽点',
   );
 
