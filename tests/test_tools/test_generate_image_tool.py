@@ -257,3 +257,19 @@ async def test_generate_image_requires_saas_backend(tmp_path: Path) -> None:
 
     assert result.is_error
     assert result.metadata["media_billing_status"] == "skipped"
+
+
+def test_generate_image_supports_gpt_image_2_5_quality_and_models() -> None:
+    data = GenerateImageInput(
+        prompt="A vibrant sunburst.",
+        brief={},
+        output={"quality_goal": "xhigh", "quality": "max", "transparent_background": True},
+        edit_policy={},
+        text_policy={},
+        model_id="gpt-image-2.5-sunburst",
+    )
+    assert data.model_id == "gpt-image-2.5-sunburst"
+    assert data.output.quality_goal == "xhigh"
+    assert data.output.quality == "max"
+    assert data.output.transparent_background is True
+

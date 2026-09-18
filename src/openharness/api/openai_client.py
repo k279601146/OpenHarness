@@ -1680,7 +1680,7 @@ class OpenAICompatibleClient:
             "api_key": api_key,
             "default_headers": {
                 "Authorization": f"Bearer {api_key}",
-                "User-Agent": "OpenHarness/1.0",
+                "User-Agent": "OpenAI/Python 1.50.0",
             },
         }
         normalized_base_url = _normalize_openai_base_url(base_url)

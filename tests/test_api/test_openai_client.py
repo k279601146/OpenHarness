@@ -715,7 +715,7 @@ def test_openai_client_uses_bearer_authorization_header():
 def test_openai_client_overrides_sdk_user_agent():
     client = OpenAICompatibleClient(api_key="test-key", base_url="https://example.com/v1")
 
-    assert client._client.default_headers["User-Agent"] == "OpenHarness/1.0"
+    assert client._client.default_headers["User-Agent"] == "OpenAI/Python 1.50.0"
 
 
 @pytest.mark.asyncio

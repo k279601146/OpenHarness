@@ -124,7 +124,8 @@ class ImageGenerationOutput(BaseModel):
     size_tier: Literal["512px", "1K", "2K", "4K"] | None = None
     width: int | None = Field(default=None, ge=1)
     height: int | None = Field(default=None, ge=1)
-    quality_goal: Literal["auto", "draft", "balanced", "high_quality", "text_accuracy"] | None = None
+    quality_goal: Literal["auto", "draft", "balanced", "high_quality", "text_accuracy", "xhigh", "max"] | None = None
+    quality: Literal["auto", "low", "medium", "high", "xhigh", "max"] | None = None
     output_format: Literal["png", "jpeg", "webp"] | None = Field(
         default=None,
         description="Desired image output format. Compression is only valid for jpeg and webp.",

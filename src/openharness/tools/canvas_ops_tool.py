@@ -80,22 +80,35 @@ class CanvasApplyOpsInput(_CanvasModel):
 
 
 class CanvasCreateNodeInput(_CanvasModel):
-    nodeType: NodeType
-    title: str | None = None
-    x: float | None = None
-    y: float | None = None
-    width: float | None = None
-    height: float | None = None
-    metadata: dict[str, Any] | None = None
+    nodeType: NodeType = Field(description="节点类型：text、image、video、audio")
+    title: str | None = Field(default=None, description="节点标题")
+    x: float | None = Field(default=None, description="绝对X坐标。若希望相对排版请省略该参数")
+    y: float | None = Field(default=None, description="绝对Y坐标")
+    width: float | None = Field(default=None, description="节点宽度")
+    height: float | None = Field(default=None, description="节点高度")
+    metadata: dict[str, Any] | None = Field(default=None, description="附加元数据字典")
+    relative_to_node_id: str | None = Field(default=None, description="相对排版的基准节点ID。若省略且有选区/焦点节点，默认以焦点节点为基准")
+    placement: Literal["right", "bottom", "left", "top"] | None = Field(default="right", description="相对基准节点的方向（默认为'right'向右展开，也可选'bottom'向下排列）")
+    gap: float | None = Field(default=40.0, description="与基准节点的间距，默认 40")
+    connect_from_node_id: str | None = Field(default=None, description="自动建立连线：从该指定节点连向新创建的节点")
+    auto_connect: bool | None = Field(default=False, description="若为 True，自动从基准节点连向新创建的节点")
+    content_role: ContentRole | None = Field(default=None, description="连线语义角色：'context', 'prompt', 'reference_image' 等")
 
 
 class CanvasCreateTextNodeInput(_CanvasModel):
-    text: str = ""
-    title: str | None = None
-    x: float | None = None
-    y: float | None = None
-    width: float | None = None
-    height: float | None = None
+    text: str = Field(default="", description="文本内容")
+    title: str | None = Field(default=None, description="卡片标题")
+    x: float | None = Field(default=None, description="绝对X坐标。建议省略改用 relative_to_node_id 进行相对排版")
+    y: float | None = Field(default=None, description="绝对Y坐标")
+    width: float | None = Field(default=None, description="卡片宽度")
+    height: float | None = Field(default=None, description="卡片高度")
+    color: str | None = Field(default=None, description="卡片色彩高亮（如 'blue', 'green', 'amber', 'red', 'purple', 'gray'）")
+    relative_to_node_id: str | None = Field(default=None, description="相对排版的基准节点ID。若省略且有焦点节点，默认以焦点节点为基准")
+    placement: Literal["right", "bottom", "left", "top"] | None = Field(default="right", description="相对基准节点的方向：'right'（右侧展开），'bottom'（下方排列）")
+    gap: float | None = Field(default=40.0, description="与基准节点的间距，默认 40")
+    connect_from_node_id: str | None = Field(default=None, description="自动建立连线：从该指定节点连向新卡片")
+    auto_connect: bool | None = Field(default=False, description="若为 True，自动从基准节点连向新卡片")
+    content_role: ContentRole | None = Field(default="context", description="连线语义角色：'context', 'prompt' 等")
 
 
 class TextNodeItem(_CanvasModel):
@@ -105,14 +118,21 @@ class TextNodeItem(_CanvasModel):
     y: float | None = None
     width: float | None = None
     height: float | None = None
+    color: str | None = None
 
 
 class CanvasCreateTextNodesInput(_CanvasModel):
-    items: list[TextNodeItem] = Field(min_length=1)
-    x: float | None = None
-    y: float | None = None
-    gap: float | None = None
-    direction: Literal["row", "column"] | None = None
+    items: list[TextNodeItem] = Field(min_length=1, description="待创建的文本节点列表")
+    x: float | None = Field(default=None, description="起始绝对X坐标")
+    y: float | None = Field(default=None, description="起始绝对Y坐标")
+    gap: float | None = Field(default=40.0, description="卡片之间的间距，默认 40")
+    direction: Literal["row", "column"] | None = Field(default=None, description="简单排布方向")
+    relative_to_node_id: str | None = Field(default=None, description="基准父节点ID。留空时默认检测当前焦点节点")
+    connect_from_parent: bool | None = Field(default=False, description="是否自动从父节点向每个子卡片建立连线（形成脑图/树状分支）")
+    layout: Literal["tree_right", "tree_bottom", "grid", "row", "column"] | None = Field(
+        default=None,
+        description="高级布局模式：'tree_right'（向右树状辐射），'tree_bottom'（向下树状分支），'grid'（网格并排）",
+    )
 
 
 class GenerationOptions(_CanvasModel):
@@ -159,9 +179,10 @@ class CanvasUpdateNodeInput(_CanvasModel):
 
 
 class CanvasUpdateNodeTextInput(_CanvasModel):
-    id: str
-    text: str
-    title: str | None = None
+    id: str = Field(description="目标节点ID")
+    text: str = Field(description="更新后的文本内容")
+    title: str | None = Field(default=None, description="更新后的标题")
+    color: str | None = Field(default=None, description="更新卡片色彩标签（如 'blue', 'green', 'amber', 'red', 'purple', 'gray'）")
 
 
 class MoveNodeItem(_CanvasModel):
@@ -284,8 +305,83 @@ def _connections(state: dict[str, Any]) -> list[dict[str, Any]]:
     return connections if isinstance(connections, list) else []
 
 
+def _normalize_node_id(node_id: Any) -> str:
+    if not node_id:
+        return ""
+    val = str(node_id).strip()
+    if val.startswith("canvas-"):
+        return val[len("canvas-"):]
+    return val
+
+
+def _node_ids_match(id_a: Any, id_b: Any) -> bool:
+    if not id_a or not id_b:
+        return False
+    str_a = str(id_a).strip()
+    str_b = str(id_b).strip()
+    if str_a == str_b:
+        return True
+    norm_a = _normalize_node_id(str_a)
+    norm_b = _normalize_node_id(str_b)
+    return norm_a == norm_b or str_a == norm_b or norm_a == str_b
+
+
 def _find_node(state: dict[str, Any], node_id: str) -> dict[str, Any] | None:
-    return next((node for node in _nodes(state) if isinstance(node, dict) and node.get("id") == node_id), None)
+    return next((node for node in _nodes(state) if isinstance(node, dict) and _node_ids_match(node.get("id"), node_id)), None)
+
+
+def _get_default_anchor_node(
+    context: ToolExecutionContext,
+    state: dict[str, Any],
+    relative_to_node_id: str | None = None,
+) -> dict[str, Any] | None:
+    if relative_to_node_id:
+        found = _find_node(state, relative_to_node_id)
+        if found:
+            return found
+    # 从 canvas_request 中提取聚焦节点
+    req = _canvas_request(context)
+    for key in ("sourceNodeId", "source_node_id", "targetNodeId", "target_node_id"):
+        val = req.get(key)
+        if val:
+            found = _find_node(state, str(val))
+            if found:
+                return found
+    # 从 selectedNodeIds 提取
+    selected = state.get("selectedNodeIds") or []
+    if selected and isinstance(selected, list) and selected[0]:
+        found = _find_node(state, str(selected[0]))
+        if found:
+            return found
+    return None
+
+
+def _resolve_placement_position(
+    state: dict[str, Any],
+    anchor_node: dict[str, Any] | None,
+    placement: str | None = "right",
+    gap: float | None = None,
+    new_width: float = 340.0,
+    new_height: float = 240.0,
+) -> tuple[float, float]:
+    effective_gap = 40.0 if gap is None else float(gap)
+    if anchor_node and isinstance(anchor_node, dict):
+        pos = anchor_node.get("position") if isinstance(anchor_node.get("position"), dict) else {}
+        ax = float(pos.get("x", 0))
+        ay = float(pos.get("y", 0))
+        aw = float(anchor_node.get("width", 340))
+        ah = float(anchor_node.get("height", 240))
+        direction = (placement or "right").lower()
+        if direction == "bottom":
+            return (ax, ay + ah + effective_gap)
+        elif direction == "left":
+            return (ax - new_width - effective_gap, ay)
+        elif direction == "top":
+            return (ax, ay - new_height - effective_gap)
+        else:  # "right"
+            return (ax + aw + effective_gap, ay)
+    # 无锚点时排在最右侧
+    return (_next_canvas_x(state), 0.0)
 
 
 def _canvas_request(context: ToolExecutionContext) -> dict[str, Any]:
@@ -532,7 +628,7 @@ def _apply_ops_to_state(state: dict[str, Any], ops: list[dict[str, Any]]) -> dic
             metadata = op.get("metadata") if isinstance(op.get("metadata"), dict) else {}
             next_nodes = []
             for node in nodes:
-                if not isinstance(node, dict) or node.get("id") != node_id:
+                if not isinstance(node, dict) or not _node_ids_match(node.get("id"), node_id):
                     next_nodes.append(node)
                     continue
                 merged = {**node, **patch}
@@ -544,35 +640,44 @@ def _apply_ops_to_state(state: dict[str, Any], ops: list[dict[str, Any]]) -> dic
             node_type = op.get("nodeType")
             if node_type:
                 ids.update(str(node.get("id")) for node in nodes if isinstance(node, dict) and node.get("type") == node_type)
-            nodes = [node for node in nodes if not isinstance(node, dict) or node.get("id") not in ids]
+            nodes = [node for node in nodes if not isinstance(node, dict) or not any(_node_ids_match(node.get("id"), target_id) for target_id in ids)]
             connections = [
                 conn
                 for conn in connections
-                if not isinstance(conn, dict) or (conn.get("fromNodeId") not in ids and conn.get("toNodeId") not in ids)
+                if not isinstance(conn, dict)
+                or (not any(_node_ids_match(conn.get("fromNodeId"), tid) for tid in ids) and not any(_node_ids_match(conn.get("toNodeId"), tid) for tid in ids))
             ]
-            selected_ids = [node_id for node_id in selected_ids if node_id not in ids]
+            selected_ids = [node_id for node_id in selected_ids if not any(_node_ids_match(node_id, tid) for tid in ids)]
         elif op_type == "delete_connections":
             if op.get("all"):
                 connections = []
             else:
                 ids = set(op.get("ids") or ([op["id"]] if op.get("id") else []))
-                connections = [conn for conn in connections if not isinstance(conn, dict) or conn.get("id") not in ids]
+                connections = [conn for conn in connections if not isinstance(conn, dict) or not any(_node_ids_match(conn.get("id"), tid) for tid in ids)]
         elif op_type == "connect_nodes":
             from_id = op.get("fromNodeId")
             to_id = op.get("toNodeId")
-            if not from_id or not to_id or from_id == to_id:
+            if not from_id or not to_id or _node_ids_match(from_id, to_id):
                 continue
-            has_nodes = any(isinstance(node, dict) and node.get("id") == from_id for node in nodes) and any(
-                isinstance(node, dict) and node.get("id") == to_id for node in nodes
+            from_node = next((node for node in nodes if isinstance(node, dict) and _node_ids_match(node.get("id"), from_id)), None)
+            to_node = next((node for node in nodes if isinstance(node, dict) and _node_ids_match(node.get("id"), to_id)), None)
+            if not from_node or not to_node:
+                continue
+            real_from_id = str(from_node.get("id"))
+            real_to_id = str(to_node.get("id"))
+            exists = any(
+                isinstance(conn, dict)
+                and _node_ids_match(conn.get("fromNodeId"), real_from_id)
+                and _node_ids_match(conn.get("toNodeId"), real_to_id)
+                for conn in connections
             )
-            exists = any(isinstance(conn, dict) and conn.get("fromNodeId") == from_id and conn.get("toNodeId") == to_id for conn in connections)
-            if has_nodes and not exists:
+            if not exists:
                 connections.append(
                     _clean_record(
                         {
                             "id": op.get("id") or _uid("conn"),
-                            "fromNodeId": from_id,
-                            "toNodeId": to_id,
+                            "fromNodeId": real_from_id,
+                            "toNodeId": real_to_id,
                             "contentRole": op.get("contentRole"),
                         }
                     )
@@ -792,8 +897,24 @@ class _CanvasEmitter:
         except Exception as exc:
             return ToolResult(output=f"Failed to send canvas operations: {exc}", is_error=True)
 
+        summary = _summarize_ops(ops) or f"已发送 {len(ops)} 个画布操作。"
+        details: list[str] = []
+        added_nodes = [op for op in ops if op.get("type") == "add_node"]
+        for n in added_nodes:
+            nid = n.get("id")
+            title = n.get("title") or n.get("nodeType") or "节点"
+            pos = n.get("position") if isinstance(n.get("position"), dict) else {"x": n.get("x", 0), "y": n.get("y", 0)}
+            details.append(f"- 新建节点: id=\"{nid}\", title=\"{title}\", position={pos}, width={n.get('width')}, height={n.get('height')}")
+        connected_ops = [op for op in ops if op.get("type") == "connect_nodes"]
+        for c in connected_ops:
+            details.append(f"- 建立连线: from=\"{c.get('fromNodeId')}\" -> to=\"{c.get('toNodeId')}\" ({c.get('contentRole') or 'connect'})")
+
+        output_text = summary
+        if details:
+            output_text += "\n" + "\n".join(details)
+
         return ToolResult(
-            output=_summarize_ops(ops) or f"已发送 {len(ops)} 个画布操作。",
+            output=output_text,
             metadata={"canvas_ops": ops, "canvas_state": _compact_state(state)},
         )
 
@@ -873,55 +994,226 @@ class CanvasApplyOpsTool(BaseTool):
 
 class CanvasCreateNodeTool(BaseTool):
     name = "canvas_create_node"
-    description = "创建内容节点：text、image、video、audio。"
+    description = (
+        "在画布创建内容节点（text、image、video、audio）。"
+        "推荐使用 relative_to_node_id 和 placement（如 'right' / 'bottom'）进行智能排版；"
+        "若省略坐标且当前有聚焦节点，系统默认自动排在焦点节点右侧，避免重叠；"
+        "支持 connect_from_node_id 或 auto_connect=True 一键创建并连线。"
+    )
     input_model = CanvasCreateNodeInput
 
     async def execute(self, arguments: CanvasCreateNodeInput, context: ToolExecutionContext) -> ToolResult:
         state = _state_from_context(context)
-        x = arguments.x if arguments.x is not None else _next_canvas_x(state)
-        y = arguments.y if arguments.y is not None else 0
-        data = arguments.model_dump(exclude_none=True)
+        spec = NODE_DEFAULTS.get(arguments.nodeType, NODE_DEFAULTS["text"])
+        node_w = _normalize_node_dimension(arguments.width, float(spec["width"]))
+        node_h = _normalize_node_dimension(arguments.height, float(spec["height"]))
+
+        anchor_node = None
+        if arguments.x is not None and arguments.y is not None:
+            x, y = float(arguments.x), float(arguments.y)
+        else:
+            anchor_node = _get_default_anchor_node(context, state, arguments.relative_to_node_id)
+            x, y = _resolve_placement_position(
+                state, anchor_node, arguments.placement, arguments.gap, node_w, node_h
+            )
+
+        new_id = _uid(arguments.nodeType)
         op = {
             "type": "add_node",
+            "id": new_id,
             "nodeType": arguments.nodeType,
             "title": arguments.title,
             "position": {"x": x, "y": y},
-            "width": arguments.width,
-            "height": arguments.height,
+            "width": node_w,
+            "height": node_h,
             "metadata": arguments.metadata,
         }
-        return await _CanvasEmitter.emit(context, [_clean_record(op)])
+        ops = [_clean_record(op)]
+
+        from_id = None
+        if arguments.connect_from_node_id:
+            from_id = arguments.connect_from_node_id
+        elif arguments.auto_connect and anchor_node:
+            from_id = anchor_node.get("id")
+
+        if from_id:
+            ops.append(
+                _clean_record(
+                    {
+                        "type": "connect_nodes",
+                        "fromNodeId": str(from_id),
+                        "toNodeId": new_id,
+                        "contentRole": arguments.content_role or _content_role_for_connection(state, str(from_id)),
+                    }
+                )
+            )
+
+        return await _CanvasEmitter.emit(context, ops)
 
 
 class CanvasCreateTextNodeTool(BaseTool):
     name = "canvas_create_text_node"
-    description = "在当前画布创建单个文本节点。"
+    description = (
+        "在画布创建单个文本卡片。"
+        "支持 relative_to_node_id 与 placement='right'/'bottom' 进行智能平铺排版；"
+        "若省略坐标且当前有选区/焦点节点，自动排在焦点节点右侧；"
+        "支持 color 色彩高亮与 auto_connect=True 自动连线。"
+    )
     input_model = CanvasCreateTextNodeInput
 
     async def execute(self, arguments: CanvasCreateTextNodeInput, context: ToolExecutionContext) -> ToolResult:
         state = _state_from_context(context)
-        x = arguments.x if arguments.x is not None else _next_canvas_x(state)
-        y = arguments.y if arguments.y is not None else 0
-        return await _CanvasEmitter.emit(context, [_text_node_op(arguments.model_dump(exclude_none=True), x, y)])
+        spec = NODE_DEFAULTS["text"]
+        node_w = _normalize_node_dimension(arguments.width, float(spec["width"]))
+        node_h = _normalize_node_dimension(arguments.height, float(spec["height"]))
+
+        anchor_node = None
+        if arguments.x is not None and arguments.y is not None:
+            x, y = float(arguments.x), float(arguments.y)
+        else:
+            anchor_node = _get_default_anchor_node(context, state, arguments.relative_to_node_id)
+            x, y = _resolve_placement_position(
+                state, anchor_node, arguments.placement, arguments.gap, node_w, node_h
+            )
+
+        new_id = _uid("text")
+        metadata: dict[str, Any] = {"content": arguments.text or "", "status": "success", "fontSize": 14}
+        if arguments.color:
+            metadata["color"] = arguments.color
+
+        op = {
+            "type": "add_node",
+            "id": new_id,
+            "nodeType": "text",
+            "title": arguments.title or "文本",
+            "position": {"x": x, "y": y},
+            "width": node_w,
+            "height": node_h,
+            "metadata": metadata,
+        }
+        ops = [_clean_record(op)]
+
+        from_id = None
+        if arguments.connect_from_node_id:
+            from_id = arguments.connect_from_node_id
+        elif arguments.auto_connect and anchor_node:
+            from_id = anchor_node.get("id")
+
+        if from_id:
+            ops.append(
+                _clean_record(
+                    {
+                        "type": "connect_nodes",
+                        "fromNodeId": str(from_id),
+                        "toNodeId": new_id,
+                        "contentRole": arguments.content_role or "context",
+                    }
+                )
+            )
+
+        return await _CanvasEmitter.emit(context, ops)
 
 
 class CanvasCreateTextNodesTool(BaseTool):
     name = "canvas_create_text_nodes"
-    description = "批量创建文本节点，适合生成标题、段落、脚本、说明等内容块。"
+    description = (
+        "批量创建文本节点卡片，极其适合脑图拆解、章节大纲、分镜表或故事角色清单。"
+        "支持 layout='tree_right'（向右树状辐射对称排布）与 connect_from_parent=True，"
+        "一键生成优雅对齐、自动连线的思维导图树。"
+    )
     input_model = CanvasCreateTextNodesInput
 
     async def execute(self, arguments: CanvasCreateTextNodesInput, context: ToolExecutionContext) -> ToolResult:
         state = _state_from_context(context)
-        x = arguments.x if arguments.x is not None else _next_canvas_x(state)
-        y = arguments.y if arguments.y is not None else 0
-        gap = arguments.gap if arguments.gap is not None else 40
-        direction = arguments.direction or "column"
+        gap = arguments.gap if arguments.gap is not None else 40.0
+        anchor_node = _get_default_anchor_node(context, state, arguments.relative_to_node_id)
+
+        layout_mode = arguments.layout or (
+            "tree_right" if anchor_node and arguments.connect_from_parent else (arguments.direction or "column")
+        )
+
+        items_count = len(arguments.items)
+        default_w = NODE_DEFAULTS["text"]["width"]
+        default_h = NODE_DEFAULTS["text"]["height"]
+
+        if arguments.x is not None and arguments.y is not None:
+            base_x, base_y = float(arguments.x), float(arguments.y)
+        elif anchor_node:
+            pos = anchor_node.get("position") if isinstance(anchor_node.get("position"), dict) else {}
+            ax = float(pos.get("x", 0))
+            ay = float(pos.get("y", 0))
+            aw = float(anchor_node.get("width", default_w))
+            ah = float(anchor_node.get("height", default_h))
+            if layout_mode == "tree_bottom":
+                base_x = ax
+                base_y = ay + ah + 80.0
+            else:  # tree_right or default
+                base_x = ax + aw + 100.0
+                total_h = items_count * default_h + (items_count - 1) * gap
+                base_y = (ay + ah / 2.0) - (total_h / 2.0)
+        else:
+            base_x = _next_canvas_x(state)
+            base_y = 0.0
+
         ops: list[dict[str, Any]] = []
+        parent_id = str(anchor_node.get("id")) if anchor_node else None
+
         for index, item in enumerate(arguments.items):
-            item_data = item.model_dump(exclude_none=True)
-            item_x = item.x if item.x is not None else (x + index * (NODE_DEFAULTS["text"]["width"] + gap) if direction == "row" else x)
-            item_y = item.y if item.y is not None else (y if direction == "row" else y + index * (NODE_DEFAULTS["text"]["height"] + gap))
-            ops.append(_text_node_op(item_data, item_x, item_y))
+            new_id = _uid("text")
+            item_w = _normalize_node_dimension(item.width, float(default_w))
+            item_h = _normalize_node_dimension(item.height, float(default_h))
+
+            if item.x is not None:
+                item_x = float(item.x)
+            elif layout_mode in {"tree_bottom", "row"}:
+                item_x = base_x + index * (default_w + gap)
+            elif layout_mode == "grid":
+                cols = 2 if items_count <= 4 else 3
+                item_x = base_x + (index % cols) * (default_w + gap)
+            else:
+                item_x = base_x
+
+            if item.y is not None:
+                item_y = float(item.y)
+            elif layout_mode in {"tree_bottom", "row"}:
+                item_y = base_y
+            elif layout_mode == "grid":
+                cols = 2 if items_count <= 4 else 3
+                item_y = base_y + (index // cols) * (default_h + gap)
+            else:
+                item_y = base_y + index * (default_h + gap)
+
+            metadata: dict[str, Any] = {"content": item.text or "", "status": "success", "fontSize": 14}
+            if item.color:
+                metadata["color"] = item.color
+
+            ops.append(
+                _clean_record(
+                    {
+                        "type": "add_node",
+                        "id": new_id,
+                        "nodeType": "text",
+                        "title": item.title or f"分支 {index + 1}",
+                        "position": {"x": item_x, "y": item_y},
+                        "width": item_w,
+                        "height": item_h,
+                        "metadata": metadata,
+                    }
+                )
+            )
+
+            if arguments.connect_from_parent and parent_id:
+                ops.append(
+                    _clean_record(
+                        {
+                            "type": "connect_nodes",
+                            "fromNodeId": parent_id,
+                            "toNodeId": new_id,
+                            "contentRole": "context",
+                        }
+                    )
+                )
+
         return await _CanvasEmitter.emit(context, ops)
 
 
@@ -1032,15 +1324,18 @@ class CanvasUpdateNodeTool(BaseTool):
 
 class CanvasUpdateNodeTextTool(BaseTool):
     name = "canvas_update_node_text"
-    description = "更新文本节点内容和标题。"
+    description = "更新文本节点内容、标题或色彩高亮标签。"
     input_model = CanvasUpdateNodeTextInput
 
     async def execute(self, arguments: CanvasUpdateNodeTextInput, context: ToolExecutionContext) -> ToolResult:
+        metadata: dict[str, Any] = {"content": arguments.text, "status": "success"}
+        if arguments.color:
+            metadata["color"] = arguments.color
         op = {
             "type": "update_node",
             "id": arguments.id,
             "patch": {"title": arguments.title} if arguments.title else None,
-            "metadata": {"content": arguments.text, "status": "success"},
+            "metadata": metadata,
         }
         return await _CanvasEmitter.emit(context, [_clean_record(op)])
 

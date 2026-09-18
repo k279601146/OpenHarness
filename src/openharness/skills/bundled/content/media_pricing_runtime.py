@@ -23,11 +23,14 @@ APIMART_SUNO_UNIT_COST_BY_ACTION = {
     "add_instrumental": 0.05,
     "add_instrumental-v5": 0.05,
     "add_instrumental-v5.5": 0.05,
+    "add_instrumental-v6": 0.05,
     "add_stem": 0.05,
     "add_stem-v5.5": 0.05,
+    "add_stem-v6": 0.05,
     "add_vocals": 0.05,
     "add_vocals-v5": 0.05,
     "add_vocals-v5.5": 0.05,
+    "add_vocals-v6": 0.05,
     "adjust_speed": 0.024,
     "aligned_lyrics": 0.0008,
     "bpm": 0.0008,
@@ -40,6 +43,9 @@ APIMART_SUNO_UNIT_COST_BY_ACTION = {
     "cover-v4.5-all": 0.05,
     "cover-v5": 0.05,
     "cover-v5.5": 0.05,
+    "cover-v6": 0.05,
+    "cover-v6-wild": 0.05,
+    "cover-v6-mini": 0.05,
     "create_voice": 0.016,
     "crop": 0.008,
     "extend": 0.05,
@@ -50,8 +56,12 @@ APIMART_SUNO_UNIT_COST_BY_ACTION = {
     "extend-v4.5-all": 0.05,
     "extend-v5": 0.05,
     "extend-v5.5": 0.05,
+    "extend-v6": 0.05,
+    "extend-v6-wild": 0.05,
+    "extend-v6-mini": 0.05,
     "fade_in": 0.008,
     "fade_out": 0.008,
+    "generate": 0.05,
     "generate_video": 0.004,
     "inspo": 0.068,
     "inspo-v4": 0.068,
@@ -60,6 +70,9 @@ APIMART_SUNO_UNIT_COST_BY_ACTION = {
     "inspo-v4.5-all": 0.068,
     "inspo-v5": 0.068,
     "inspo-v5.5": 0.068,
+    "inspo-v6": 0.068,
+    "inspo-v6-wild": 0.068,
+    "inspo-v6-mini": 0.068,
     "lyrics": 0.008,
     "mashup": 0.05,
     "mashup-v3.5": 0.05,
@@ -69,6 +82,7 @@ APIMART_SUNO_UNIT_COST_BY_ACTION = {
     "mashup-v4.5-all": 0.05,
     "mashup-v5": 0.05,
     "mashup-v5.5": 0.05,
+    "mashup-v6": 0.05,
     "midi": 0.05,
     "music": 0.05,
     "music-v3.5": 0.05,
@@ -78,17 +92,22 @@ APIMART_SUNO_UNIT_COST_BY_ACTION = {
     "music-v4.5-all": 0.05,
     "music-v5": 0.05,
     "music-v5.5": 0.05,
+    "music-v6": 0.05,
+    "music-v6-wild": 0.05,
+    "music-v6-mini": 0.05,
     "persona": 0.004,
     "remaster": 0.05,
     "remaster-v4.5+": 0.05,
     "remaster-v5": 0.05,
     "remaster-v5.5": 0.05,
+    "remaster-v6": 0.05,
     "remove_section": 0.008,
     "replace_section": 0.05,
     "replace_section-v4": 0.05,
     "replace_section-v4.5+": 0.05,
     "replace_section-v5": 0.05,
     "replace_section-v5.5": 0.05,
+    "replace_section-v6": 0.05,
     "sample": 0.05,
     "sample-v3.5": 0.05,
     "sample-v4": 0.05,
@@ -97,9 +116,11 @@ APIMART_SUNO_UNIT_COST_BY_ACTION = {
     "sample-v4.5-all": 0.05,
     "sample-v5": 0.05,
     "sample-v5.5": 0.05,
+    "sample-v6": 0.05,
     "sounds": 0.0096,
     "sounds-v5": 0.0096,
     "sounds-v5.5": 0.0096,
+    "sounds-v6": 0.0096,
     "stems": 0.1,
     "stems_all": 0.24,
     "upload": 0.004,
@@ -109,11 +130,58 @@ APIMART_SUNO_UNIT_COST_BY_ACTION = {
 }
 
 
+RECOMMENDED_PROVIDER_MULTIPLIERS: dict[str, float] = {
+    "apimart_media": 1.8,
+    "agnes_media": 1.8,
+    "volcengine_visual": 1.8,
+    "minimax": 1.8,
+    "gemini": 1.8,
+    "openai": 1.8,
+    "kling": 1.8,
+    "fish_audio": 1.8,
+    "elevenlabs": 1.8,
+    "suno": 1.8,
+    "mureka": 1.8,
+    "kolors": 1.8,
+}
+
 DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
     "currency_rates": {"USD": 1.0, "CNY": 0.14},
     "credits_per_usd": DEFAULT_CREDITS_PER_USD,
-    "provider_multipliers": {"apimart_media": 1.0},
+    "provider_multipliers": dict(RECOMMENDED_PROVIDER_MULTIPLIERS),
     "image": {
+        "agnes-image-2.5-flash": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "image_size_tier_pricing",
+            "pricing_basis": "official_public",
+            "official_model_id": "agnes-image-2.5-flash",
+            "allowed_upstream_model_ids": ["agnes-image-2.5-flash"],
+            "source_url": "https://www.agnes-ai.cn/zh-Hans/docs/agnes-image-25-flash",
+            "source_checked_at": "2026-09-14",
+            "default_billing_size_tier": "1K",
+            "price_unit": "usd",
+            "price_by_size_tier": {"1k": 0.01, "2k": 0.02, "3k": 0.03, "4k": 0.04},
+            "original_price": {"default": 0.01, "1k": 0.01, "2k": 0.02, "3k": 0.03, "4k": 0.04},
+            "after_discount": {"default": 0.01, "1k": 0.01, "2k": 0.02, "3k": 0.03, "4k": 0.04},
+            "active_price_basis": "after_discount",
+            "tier_aliases": {
+                "1:1": "1k",
+                "16:9": "1k",
+                "9:16": "1k",
+                "4:3": "1k",
+                "3:4": "1k",
+                "2:3": "1k",
+                "3:2": "1k",
+                "21:9": "1k",
+                "1024x1024": "1k",
+                "2048x2048": "2k",
+                "3072x3072": "3k",
+                "4096x4096": "4k",
+            },
+            "max_output_count": 1,
+        },
         "apimart-gpt-image-2": {
             "enabled": True,
             "currency": "USD",
@@ -145,6 +213,68 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             },
             "max_output_count": 2,
         },
+        "apimart-gpt-image-2.5-flare": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "image_size_tier_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "gpt-image-2.5-flare",
+            "price_model_id": "gpt-image-2.5-flare",
+            "allowed_upstream_model_ids": ["gpt-image-2.5-flare"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-09-11",
+            "default_billing_size_tier": "1K",
+            "price_unit": "usd",
+            "price_by_size_tier": {"1k": 0.013, "2k": 0.026, "4k": 0.045},
+            "original_price": {"default": 0.013, "1k": 0.013, "2k": 0.026, "4k": 0.045},
+            "after_discount": {"default": 0.013, "1k": 0.013, "2k": 0.026, "4k": 0.045},
+            "active_price_basis": "after_discount",
+            "tier_aliases": {
+                "1:1": "1k",
+                "16:9": "1k",
+                "9:16": "1k",
+                "4:3": "1k",
+                "3:4": "1k",
+                "1024x1024": "1k",
+                "2048x2048": "2k",
+                "3840x2160": "4k",
+                "2160x3840": "4k",
+            },
+            "max_output_count": 4,
+        },
+        "apimart-gpt-image-2.5-sunburst": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "image_size_tier_pricing",
+            "pricing_basis": "official_public",
+            "provider_family": APIMART_PROVIDER_FAMILY,
+            "official_model_id": "gpt-image-2.5-sunburst",
+            "price_model_id": "gpt-image-2.5-sunburst",
+            "allowed_upstream_model_ids": ["gpt-image-2.5-sunburst"],
+            "source_url": APIMART_PRICING_SOURCE_URL,
+            "source_checked_at": "2026-09-15",
+            "default_billing_size_tier": "2K",
+            "price_unit": "usd",
+            "price_by_size_tier": {"1k": 0.021, "2k": 0.026, "4k": 0.045},
+            "original_price": {"default": 0.026, "1k": 0.021, "2k": 0.026, "4k": 0.045},
+            "after_discount": {"default": 0.026, "1k": 0.021, "2k": 0.026, "4k": 0.045},
+            "active_price_basis": "after_discount",
+            "tier_aliases": {
+                "1:1": "1k",
+                "16:9": "1k",
+                "9:16": "1k",
+                "4:3": "1k",
+                "3:4": "1k",
+                "1024x1024": "1k",
+                "2048x2048": "2k",
+                "3840x2160": "4k",
+                "2160x3840": "4k",
+            },
+            "max_output_count": 4,
+        },
         "kolors": {
             "enabled": True,
             "currency": "USD",
@@ -155,7 +285,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "source_url": "https://huggingface.co/Kwai-Kolors/Kolors",
             "source_checked_at": "2026-07-05",
             "default_billing_size_tier": "1K",
-            "price_by_size_tier": {"1k": 1.0, "2k": 3.0, "4k": 5.0},
+            "price_by_size_tier": {"1k": 0.8, "2k": 1.6, "4k": 3.2},
             "tier_aliases": {"1024x1024": "1k", "1792x1024": "1k", "1024x1792": "1k"},
             "max_output_count": 4,
         },
@@ -170,7 +300,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "source_url": "https://platform.openai.com/docs/pricing",
             "source_checked_at": "2026-07-11",
             "default_billing_size_tier": "1K",
-            "price_by_size_tier": {"1k": 1.0, "2k": 3.0, "4k": 5.0},
+            "price_by_size_tier": {"1k": 1.2, "2k": 2.5, "4k": 5.0},
             "tier_aliases": {
                 "1024x1024": "1k",
                 "1536x1024": "1k",
@@ -185,6 +315,58 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             },
             "max_output_count": 10,
         },
+        "gpt-image-2.5-flare": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "image_size_tier_pricing",
+            "pricing_basis": "official_public",
+            "official_model_id": "gpt-image-2.5-flare",
+            "allowed_upstream_model_ids": ["gpt-image-2.5-flare"],
+            "source_url": "https://platform.openai.com/docs/pricing",
+            "source_checked_at": "2026-09-11",
+            "default_billing_size_tier": "1K",
+            "price_by_size_tier": {"1k": 0.8, "2k": 1.6, "4k": 3.2},
+            "tier_aliases": {
+                "1024x1024": "1k",
+                "1536x1024": "1k",
+                "1024x1536": "1k",
+                "1792x1024": "1k",
+                "1024x1792": "1k",
+                "2048x2048": "2k",
+                "2048x1152": "2k",
+                "1152x2048": "2k",
+                "3840x2160": "4k",
+                "2160x3840": "4k",
+            },
+            "max_output_count": 4,
+        },
+        "gpt-image-2.5-sunburst": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "image_size_tier_pricing",
+            "pricing_basis": "official_public",
+            "official_model_id": "gpt-image-2.5-sunburst",
+            "allowed_upstream_model_ids": ["gpt-image-2.5-sunburst"],
+            "source_url": "https://platform.openai.com/docs/pricing",
+            "source_checked_at": "2026-09-11",
+            "default_billing_size_tier": "2K",
+            "price_by_size_tier": {"1k": 2.2, "2k": 4.5, "4k": 8.0},
+            "tier_aliases": {
+                "1024x1024": "1k",
+                "1536x1024": "1k",
+                "1024x1536": "1k",
+                "1792x1024": "1k",
+                "1024x1792": "1k",
+                "2048x2048": "2k",
+                "2048x1152": "2k",
+                "1152x2048": "2k",
+                "3840x2160": "4k",
+                "2160x3840": "4k",
+            },
+            "max_output_count": 4,
+        },
         "nano-banana": {
             "enabled": True,
             "currency": "USD",
@@ -196,7 +378,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
             "source_checked_at": "2026-07-09",
             "default_billing_size_tier": "1K",
-            "price_by_size_tier": {"1k": 1.0, "2k": 3.0, "4k": 5.0},
+            "price_by_size_tier": {"1k": 1.2, "2k": 2.5, "4k": 5.0},
             "max_output_count": 1,
         },
         "nano-banana-2": {
@@ -210,7 +392,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
             "source_checked_at": "2026-07-09",
             "default_billing_size_tier": "1K",
-            "price_by_size_tier": {"1k": 1.0, "2k": 3.0, "4k": 5.0},
+            "price_by_size_tier": {"1k": 1.2, "2k": 2.5, "4k": 5.0},
             "tier_aliases": {"0.5k": "1k"},
             "max_output_count": 1,
         },
@@ -225,7 +407,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
             "source_checked_at": "2026-07-09",
             "default_billing_size_tier": "1K",
-            "price_by_size_tier": {"1k": 1.0, "2k": 3.0, "4k": 5.0},
+            "price_by_size_tier": {"1k": 2.2, "2k": 4.5, "4k": 8.0},
             "max_output_count": 1,
         },
         "doubao-seedream-5-0-260128": {
@@ -238,7 +420,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "source_url": "https://www.volcengine.com/docs",
             "source_checked_at": "2026-07-05",
             "default_billing_size_tier": "2K",
-            "price_by_size_tier": {"1k": 1.0, "2k": 3.0, "4k": 5.0},
+            "price_by_size_tier": {"1k": 2.2, "2k": 4.5, "4k": 8.0},
             "tier_aliases": {"2048x2048": "2k", "2848x1600": "2k", "1600x2848": "2k", "2304x1728": "2k", "1728x2304": "2k"},
             "max_output_count": 4,
         },
@@ -252,7 +434,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "source_url": "https://www.volcengine.com/docs",
             "source_checked_at": "2026-07-05",
             "default_billing_size_tier": "2K",
-            "price_by_size_tier": {"1k": 1.0, "2k": 3.0, "4k": 5.0},
+            "price_by_size_tier": {"1k": 1.2, "2k": 2.5, "4k": 5.0},
             "tier_aliases": {"2048x2048": "2k", "2848x1600": "2k", "1600x2848": "2k", "2304x1728": "2k", "1728x2304": "2k"},
             "max_output_count": 4,
         },
@@ -266,7 +448,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "source_url": "https://www.volcengine.com/docs",
             "source_checked_at": "2026-07-05",
             "default_billing_size_tier": "2K",
-            "price_by_size_tier": {"1k": 1.0, "2k": 3.0, "4k": 5.0},
+            "price_by_size_tier": {"1k": 1.2, "2k": 2.5, "4k": 5.0},
             "tier_aliases": {"2048x2048": "2k", "2848x1600": "2k", "1600x2848": "2k", "2304x1728": "2k", "1728x2304": "2k"},
             "max_output_count": 4,
         },
@@ -280,7 +462,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "source_url": "https://www.volcengine.com/docs",
             "source_checked_at": "2026-07-05",
             "default_billing_size_tier": "2K",
-            "price_by_size_tier": {"1k": 1.0, "2k": 3.0, "4k": 5.0},
+            "price_by_size_tier": {"1k": 0.8, "2k": 1.6, "4k": 3.2},
             "tier_aliases": {"2048x2048": "2k", "2848x1600": "2k", "1600x2848": "2k", "2304x1728": "2k", "1728x2304": "2k"},
             "max_output_count": 4,
         },
@@ -335,7 +517,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "provider_family": APIMART_PROVIDER_FAMILY,
             "official_model_id": "grok-imagine-1.5-video-ext",
             "price_model_id": "grok-imagine-1.5-video-apimart",
-            "allowed_upstream_model_ids": ["grok-imagine-1.5-video-apimart", "grok-imagine-1.5-video-ext"],
+            "allowed_upstream_model_ids": ["grok-imagine-1.5-video-apimart", "grok-imagine-1.5-video-ext", "grok-imagine-1.5-video"],
             "source_url": APIMART_PRICING_SOURCE_URL,
             "source_checked_at": "2026-08-07",
             "cost_per_second_by_resolution": {"480p": 0.0068, "720p": 0.012},
@@ -357,7 +539,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "provider_family": APIMART_PROVIDER_FAMILY,
             "official_model_id": "veo3.1-fast",
             "price_model_id": "veo3.1-fast",
-            "allowed_upstream_model_ids": ["veo3.1-fast", "veo3.1-fast-official"],
+            "allowed_upstream_model_ids": ["veo3.1-fast", "veo3.1-fast-ext", "veo-3.1-fast", "veo3.1-fast-official", "apimart-veo3.1-fast"],
             "source_url": APIMART_PRICING_SOURCE_URL,
             "source_checked_at": "2026-08-07",
             "call_cost_by_resolution": {"default": 0.14, "4k": 0.64},
@@ -378,7 +560,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "provider_family": APIMART_PROVIDER_FAMILY,
             "official_model_id": "veo3.1-quality",
             "price_model_id": "veo3.1-quality",
-            "allowed_upstream_model_ids": ["veo3.1-quality", "veo3.1-quality-official"],
+            "allowed_upstream_model_ids": ["veo3.1-quality", "veo3.1-quality-ext", "veo-3.1-quality", "veo3.1-quality-official", "apimart-veo3.1-quality"],
             "source_url": APIMART_PRICING_SOURCE_URL,
             "source_checked_at": "2026-08-07",
             "call_cost_by_resolution": {"default": 1.0, "4k": 1.5},
@@ -433,6 +615,24 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "default_resolution": "1080p",
             "default_mode": "pro",
         },
+        "agnes-video-2.5-flash": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "video_seconds_pricing",
+            "pricing_basis": "official_public",
+            "official_model_id": "agnes-video-2.5-flash",
+            "allowed_upstream_model_ids": ["agnes-video-2.5-flash"],
+            "source_url": "https://www.agnes-ai.cn/zh-Hans/docs/agnes-video-25-flash.md",
+            "source_checked_at": "2026-09-14",
+            "cost_per_second_by_resolution": {"720p": 0.025},
+            "original_price": {"default": 0.025, "720p": 0.025},
+            "after_discount": {"default": 0.025, "720p": 0.025},
+            "active_price_basis": "after_discount",
+            "default_duration_seconds": 5,
+            "default_resolution": "720p",
+            "default_mode": "text",
+        },
         "agnes-video-v2.0": {
             "enabled": True,
             "currency": "USD",
@@ -443,7 +643,10 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "allowed_upstream_model_ids": ["agnes-video-v2.0"],
             "source_url": "https://wiki.agnes-ai.com/llms.txt",
             "source_checked_at": "2026-07-31",
-            "cost_per_second_by_resolution": {"480p": 0.0, "720p": 0.0, "1080p": 0.0},
+            "cost_per_second_by_resolution": {"480p": 0.005, "720p": 0.005, "1080p": 0.005},
+            "original_price": {"default": 0.005, "480p": 0.005, "720p": 0.005, "1080p": 0.005},
+            "after_discount": {"default": 0.005, "480p": 0.005, "720p": 0.005, "1080p": 0.005},
+            "active_price_basis": "after_discount",
             "default_duration_seconds": 5,
             "default_resolution": "720p",
             "default_mode": "standard",
@@ -455,7 +658,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "scheme": "video_seconds_pricing",
             "pricing_basis": "official_public",
             "official_model_id": "veo-3.1-generate-preview",
-            "allowed_upstream_model_ids": ["veo-3.1-generate-preview", "veo-3.1"],
+            "allowed_upstream_model_ids": ["veo-3.1-generate-preview", "veo-3.1", "google-veo-3.1"],
             "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
             "source_checked_at": "2026-07-11",
             "cost_per_second_by_resolution": {"720p": 0.4, "1080p": 0.4, "4k": 0.6},
@@ -470,7 +673,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "scheme": "video_seconds_pricing",
             "pricing_basis": "official_public",
             "official_model_id": "veo-3.1-fast-generate-preview",
-            "allowed_upstream_model_ids": ["veo-3.1-fast-generate-preview", "veo-3.1-fast"],
+            "allowed_upstream_model_ids": ["veo-3.1-fast-generate-preview", "veo-3.1-fast", "google-veo-3.1-fast"],
             "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
             "source_checked_at": "2026-07-11",
             "cost_per_second_by_resolution": {"720p": 0.1, "1080p": 0.12, "4k": 0.3},
@@ -485,7 +688,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "scheme": "video_seconds_pricing",
             "pricing_basis": "official_public",
             "official_model_id": "veo-3.1-fast-generate-preview",
-            "allowed_upstream_model_ids": ["veo-3.1-fast-generate-preview", "veo-3.1-lite"],
+            "allowed_upstream_model_ids": ["veo-3.1-fast-generate-preview", "veo-3.1-lite", "google-veo-3.1-lite"],
             "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
             "source_checked_at": "2026-07-11",
             "cost_per_second_by_resolution": {"720p": 0.05, "1080p": 0.08},
@@ -500,6 +703,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "scheme": "video_seconds_pricing",
             "pricing_basis": "manual_contract",
             "contract_reference": "kling-media-contract",
+            "allowed_upstream_model_ids": ["kling-3.0", "kling-v3", "kling-3-0", "keling-3.0"],
             "source_url": "https://klingai.com/document-api/pricing/base/video",
             "source_checked_at": "2026-07-11",
             "cost_per_second_by_resolution": {"720p": 0.08, "1080p": 0.12, "4k": 0.32},
@@ -514,6 +718,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "scheme": "video_seconds_pricing",
             "pricing_basis": "manual_contract",
             "contract_reference": "kling-media-contract",
+            "allowed_upstream_model_ids": ["kling-3.0-omni", "kling-v3-omni", "keling-3.0-omni", "kling-omni"],
             "source_url": "https://klingai.com/document-api/pricing/base/video",
             "source_checked_at": "2026-07-11",
             "cost_per_second_by_resolution": {"720p": 0.12, "1080p": 0.18, "4k": 0.42},
@@ -528,6 +733,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "scheme": "video_seconds_pricing",
             "pricing_basis": "manual_contract",
             "contract_reference": "kling-media-contract",
+            "allowed_upstream_model_ids": ["kling-2.6", "kling-v2-6", "kling-v2.6", "keling-2.6"],
             "source_url": "https://klingai.com/document-api/pricing/base/video",
             "source_checked_at": "2026-07-11",
             "cost_per_second_by_resolution": {"720p": 0.07, "1080p": 0.1, "4k": 0.28},
@@ -595,6 +801,77 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "default_prompt_chars": 1000,
             "max_output_count": 1,
         },
+        "fish-audio-s2.1-pro": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "audio_tts_character_pricing",
+            "pricing_basis": "official_public",
+            "official_model_id": "s2.1-pro",
+            "allowed_upstream_model_ids": ["s2.1-pro", "fish-audio-s2.1-pro"],
+            "source_url": "https://docs.fish.audio/developer-guide/models-pricing/pricing-and-rate-limits.md",
+            "source_checked_at": "2026-09-15",
+            "cost_per_1k_chars": 0.015,
+            "default_prompt_chars": 1000,
+            "max_output_count": 1,
+        },
+        "fish-audio-s2.1-pro-free": {
+            "enabled": True,
+            "allow_zero": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "audio_tts_character_pricing",
+            "pricing_basis": "official_public",
+            "official_model_id": "s2.1-pro-free",
+            "allowed_upstream_model_ids": ["s2.1-pro-free", "fish-audio-s2.1-pro-free"],
+            "source_url": "https://docs.fish.audio/developer-guide/models-pricing/pricing-and-rate-limits.md",
+            "source_checked_at": "2026-09-15",
+            "cost_per_1k_chars": 0.0,
+            "default_prompt_chars": 1000,
+            "max_output_count": 1,
+        },
+        "fish-audio-s2-pro": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "audio_tts_character_pricing",
+            "pricing_basis": "official_public",
+            "official_model_id": "s2-pro",
+            "allowed_upstream_model_ids": ["s2-pro", "fish-audio-s2-pro"],
+            "source_url": "https://docs.fish.audio/developer-guide/models-pricing/pricing-and-rate-limits.md",
+            "source_checked_at": "2026-09-15",
+            "cost_per_1k_chars": 0.015,
+            "default_prompt_chars": 1000,
+            "max_output_count": 1,
+        },
+        "fish-audio-s1": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "audio_tts_character_pricing",
+            "pricing_basis": "official_public",
+            "official_model_id": "s1",
+            "allowed_upstream_model_ids": ["s1", "fish-audio-s1"],
+            "source_url": "https://docs.fish.audio/developer-guide/models-pricing/pricing-and-rate-limits.md",
+            "source_checked_at": "2026-09-15",
+            "cost_per_1k_chars": 0.015,
+            "default_prompt_chars": 1000,
+            "max_output_count": 1,
+        },
+        "fish-audio-drama-3-preview": {
+            "enabled": True,
+            "currency": "USD",
+            "multiplier": 1.0,
+            "scheme": "audio_tts_character_pricing",
+            "pricing_basis": "official_public",
+            "official_model_id": "drama-3-preview",
+            "allowed_upstream_model_ids": ["drama-3-preview", "fish-audio-drama-3-preview"],
+            "source_url": "https://docs.fish.audio/developer-guide/models-pricing/pricing-and-rate-limits.md",
+            "source_checked_at": "2026-09-15",
+            "cost_per_1k_chars": 0.015,
+            "default_prompt_chars": 1000,
+            "max_output_count": 1,
+        },
     },
     "music": {
         "apimart-flowmusic": {
@@ -612,6 +889,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "unit_cost_by_action": {
                 "default": 0.06,
                 "generate": 0.06,
+                "music": 0.06,
                 "extend": 0.06,
                 "replace": 0.06,
                 "cover": 0.06,
@@ -624,6 +902,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "original_price": {
                 "default": 0.075,
                 "generate": 0.075,
+                "music": 0.075,
                 "extend": 0.075,
                 "replace": 0.075,
                 "cover": 0.075,
@@ -636,6 +915,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "after_discount": {
                 "default": 0.06,
                 "generate": 0.06,
+                "music": 0.06,
                 "extend": 0.06,
                 "replace": 0.06,
                 "cover": 0.06,
@@ -647,7 +927,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             },
             "active_price_basis": "after_discount",
             "default_pricing_action": "generate",
-            "supported_pricing_actions": ("generate", "extend", "replace", "cover", "stems", "upload_audio", "lyrics", "download_audio", "video_clip"),
+            "supported_pricing_actions": ("default", "music", "generate", "extend", "replace", "cover", "stems", "upload_audio", "lyrics", "download_audio", "video_clip"),
             "default_duration_seconds": 60,
             "max_output_count": 1,
         },
@@ -660,9 +940,9 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "provider_family": APIMART_PROVIDER_FAMILY,
             "official_model_id": "suno",
             "price_model_id": "suno",
-            "allowed_upstream_model_ids": ["suno"],
-            "source_url": APIMART_PRICING_SOURCE_URL,
-            "source_checked_at": "2026-08-07",
+            "allowed_upstream_model_ids": ["suno", "v6", "v6-wild", "v6-mini"],
+            "source_url": "https://docs.apimart.ai/cn/api-reference/audios/suno/overview.md",
+            "source_checked_at": "2026-09-14",
             "unit_cost_by_action": APIMART_SUNO_UNIT_COST_BY_ACTION,
             "original_price": {action: round(price / 0.8, 6) for action, price in APIMART_SUNO_UNIT_COST_BY_ACTION.items()},
             "after_discount": dict(APIMART_SUNO_UNIT_COST_BY_ACTION),
@@ -910,6 +1190,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["image"].update(
             default_billing_size_tier="1K",
             allowed_upstream_model_ids=["gemini-2.5-flash-image-preview", "gemini-2.5-flash-image", "nano-banana"],
             original_price={"default": 0.015625, "1k": 0.015625},
+            tier_aliases={"0.5k": "1k", "2k": "1k", "4k": "1k"},
         ),
         "apimart-nano-banana-2": _apimart_image_size_rule(
             "apimart-nano-banana-2",
@@ -922,45 +1203,50 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["image"].update(
         "apimart-nano-banana-pro": _apimart_image_size_rule(
             "apimart-nano-banana-pro",
             "gemini-3-pro-image-preview",
-            {"default": 0.03, "4k": 0.04},
+            {"default": 0.03, "1k": 0.03, "2k": 0.03, "4k": 0.04},
             default_billing_size_tier="4K",
             allowed_upstream_model_ids=["gemini-3-pro-image-preview", "gemini-3-pro-image", "nano-banana-pro"],
-            original_price={"default": 0.0375, "4k": 0.05},
+            original_price={"default": 0.0375, "1k": 0.0375, "2k": 0.0375, "4k": 0.05},
+            tier_aliases={"0.5k": "1k"},
         ),
         "apimart-doubao-seedream-5-0-pro": _apimart_image_size_rule(
             "apimart-doubao-seedream-5-0-pro",
             "doubao-seedream-5-0-pro",
-            {"default": 0.036, "1k": 0.02928, "2k": 0.05856},
+            {"default": 0.045, "1k": 0.0366, "2k": 0.0732},
             default_billing_size_tier="1K",
             allowed_upstream_model_ids=["doubao-seedream-5-0-pro", "doubao-seedream-5-0-260128"],
             original_price={"default": 0.045, "1k": 0.0366, "2k": 0.0732},
+            tier_aliases={"4k": "2k"},
             max_output_count=4,
         ),
         "apimart-doubao-seedream-5-0-lite": _apimart_image_size_rule(
             "apimart-doubao-seedream-5-0-lite",
             "doubao-seedream-5-0-lite",
-            {"default": 0.0228, "1k": 0.0228},
-            default_billing_size_tier="1K",
+            {"default": 0.035, "1k": 0.035, "2k": 0.035},
+            default_billing_size_tier="2K",
             allowed_upstream_model_ids=["doubao-seedream-5-0-lite", "doubao-seedream-5-0-lite-260128"],
-            original_price={"default": 0.0285, "1k": 0.0285},
+            original_price={"default": 0.035, "1k": 0.035, "2k": 0.035},
+            tier_aliases={"4k": "2k"},
             max_output_count=4,
         ),
         "apimart-doubao-seedream-4-5": _apimart_image_size_rule(
             "apimart-doubao-seedream-4-5",
             "doubao-seedream-4-5",
-            {"1k": 0.0228, "2k": 0.0228},
-            default_billing_size_tier="1K",
+            {"default": 0.0325, "1k": 0.0325, "2k": 0.0325},
+            default_billing_size_tier="2K",
             allowed_upstream_model_ids=["doubao-seedream-4-5", "doubao-seedream-4-5-251128"],
-            original_price={"1k": 0.0285, "2k": 0.0285},
+            original_price={"default": 0.0325, "1k": 0.0325, "2k": 0.0325},
+            tier_aliases={"4k": "2k"},
             max_output_count=4,
         ),
         "apimart-doubao-seedream-4-0": _apimart_image_size_rule(
             "apimart-doubao-seedream-4-0",
             "doubao-seedream-4-0",
-            {"default": 0.0182, "1k": 0.0182, "2k": 0.0182},
-            default_billing_size_tier="1K",
+            {"default": 0.024375, "1k": 0.024375, "2k": 0.024375},
+            default_billing_size_tier="2K",
             allowed_upstream_model_ids=["doubao-seedream-4-0", "doubao-seedream-4-0-250828"],
-            original_price={"default": 0.02275, "1k": 0.02275, "2k": 0.02275},
+            original_price={"default": 0.024375, "1k": 0.024375, "2k": 0.024375},
+            tier_aliases={"4k": "2k"},
             max_output_count=4,
         ),
         "apimart-midjourney": _apimart_image_call_rule(
@@ -1023,6 +1309,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             default_resolution="1080p",
             default_duration_seconds=5,
             default_mode="standard",
+            allowed_upstream_model_ids=["doubao-seedance-2.0", "doubao-seedance-2.0-260128", "seedance-2.0", "doubao-seedance-2-0"],
         ),
         "apimart-doubao-seedance-2.0-face": _apimart_video_seconds_rule(
             "apimart-doubao-seedance-2.0-face",
@@ -1038,6 +1325,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             default_resolution="720p",
             default_duration_seconds=5,
             default_mode="standard",
+            allowed_upstream_model_ids=["doubao-seedance-2.0-face", "seedance-2.0-face"],
         ),
         "apimart-doubao-seedance-2.0-fast": _apimart_video_seconds_rule(
             "apimart-doubao-seedance-2.0-fast",
@@ -1051,6 +1339,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             default_resolution="720p",
             default_duration_seconds=5,
             default_mode="fast",
+            allowed_upstream_model_ids=["doubao-seedance-2.0-fast", "doubao-seedance-2-0-fast-260128", "seedance-2.0-fast"],
         ),
         "apimart-doubao-seedance-2.0-fast-face": _apimart_video_seconds_rule(
             "apimart-doubao-seedance-2.0-fast-face",
@@ -1064,6 +1353,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             default_resolution="720p",
             default_duration_seconds=5,
             default_mode="fast",
+            allowed_upstream_model_ids=["doubao-seedance-2.0-fast-face", "seedance-2.0-fast-face"],
         ),
         "apimart-doubao-seedance-2.0-mini": _apimart_video_seconds_rule(
             "apimart-doubao-seedance-2.0-mini",
@@ -1077,6 +1367,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             default_resolution="720p",
             default_duration_seconds=5,
             default_mode="fast",
+            allowed_upstream_model_ids=["doubao-seedance-2.0-mini", "seedance-2.0-mini"],
         ),
         "apimart-doubao-seedance-2.5": _apimart_video_seconds_rule(
             "apimart-doubao-seedance-2.5",
@@ -1093,6 +1384,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             default_mode="standard",
             token_settlement_after_discount={"token": 10.0, "token-input": 6.0},
             token_settlement_original_price={"token": 12.5, "token-input": 7.5},
+            allowed_upstream_model_ids=["doubao-seedance-2.5", "seedance-2.5"],
         ),
         "apimart-happyhorse-1.0": _apimart_video_seconds_rule(
             "apimart-happyhorse-1.0",
@@ -1106,6 +1398,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             },
             default_resolution="720p",
             default_duration_seconds=5,
+            allowed_upstream_model_ids=["happyhorse-1.0", "apimart-happyhorse-1.0"],
         ),
         "apimart-minimax-h3": _apimart_video_seconds_rule(
             "apimart-minimax-h3",
@@ -1113,6 +1406,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             {"default": 0.09144, "2k": 0.09144, "768p": 0.05712},
             default_resolution="2k",
             default_duration_seconds=5,
+            allowed_upstream_model_ids=["MiniMax-H3", "minimax-h3", "h3", "apimart-minimax-h3"],
         ),
         "apimart-minimax-h3-regeneration": _apimart_video_seconds_rule(
             "apimart-minimax-h3-regeneration",
@@ -1120,6 +1414,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             {"2k": 0.03432},
             default_resolution="2k",
             default_duration_seconds=15,
+            allowed_upstream_model_ids=["MiniMax-H3-Regeneration", "minimax-h3-regeneration", "h3-regeneration", "apimart-minimax-h3-regeneration"],
         ),
         "apimart-minimax-hailuo-02": _apimart_video_seconds_rule(
             "apimart-minimax-hailuo-02",
@@ -1127,6 +1422,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             {"512p": 0.0104, "768p": 0.04, "1080p": 0.08},
             default_resolution="768p",
             default_duration_seconds=5,
+            allowed_upstream_model_ids=["MiniMax-Hailuo-02", "minimax-hailuo-02", "hailuo-02", "minimax-hailuo-2", "hailuo-2", "apimart-minimax-hailuo-02"],
         ),
         "apimart-kling-3.0-turbo": _apimart_video_seconds_rule(
             "apimart-kling-3.0-turbo",
@@ -1135,18 +1431,22 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             default_resolution="1080p",
             default_duration_seconds=5,
             default_mode="turbo",
+            allowed_upstream_model_ids=["kling-3.0-turbo", "kling-3-turbo", "kling-turbo", "apimart-kling-3.0-turbo"],
         ),
         "apimart-kling-v2-6": _apimart_video_seconds_rule(
             "apimart-kling-v2-6",
             "kling-v2-6",
             {
                 "default": 0.0368,
+                "sound": 0.125,
+                "default-sound": 0.125,
                 "pro": 0.0625,
                 "pro-sound": 0.125,
                 "pro-sound-voice": 0.15,
             },
             default_resolution="1080p",
             default_duration_seconds=5,
+            allowed_upstream_model_ids=["kling-v2-6", "kling-2.6", "kling-v2.6", "kling-v2-6-pro", "apimart-kling-v2-6"],
         ),
         "apimart-kling-v2-6-motion-control": _apimart_video_seconds_rule(
             "apimart-kling-v2-6-motion-control",
@@ -1155,6 +1455,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             default_resolution="1080p",
             default_duration_seconds=5,
             default_mode="standard",
+            allowed_upstream_model_ids=["kling-v2-6-motion-control", "kling-2.6-motion-control", "apimart-kling-v2-6-motion-control"],
         ),
         "apimart-kling-v3-motion-control": _apimart_video_seconds_rule(
             "apimart-kling-v3-motion-control",
@@ -1163,6 +1464,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             default_resolution="1080p",
             default_duration_seconds=5,
             default_mode="standard",
+            allowed_upstream_model_ids=["kling-v3-motion-control", "kling-3.0-motion-control", "kling-3-motion-control", "apimart-kling-v3-motion-control"],
         ),
         "apimart-kling-v3-omni": _apimart_video_seconds_rule(
             "apimart-kling-v3-omni",
@@ -1180,6 +1482,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             default_resolution="1080p",
             default_duration_seconds=5,
             default_mode="omni",
+            allowed_upstream_model_ids=["kling-v3-omni", "kling-3.0-omni", "kling-3-omni", "apimart-kling-v3-omni"],
         ),
         "apimart-kling-video-o1": _apimart_video_seconds_rule(
             "apimart-kling-video-o1",
@@ -1192,6 +1495,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             },
             default_resolution="1080p",
             default_duration_seconds=5,
+            allowed_upstream_model_ids=["kling-video-o1", "kling-o1", "apimart-kling-video-o1"],
         ),
         "apimart-gemini-omni-flash-preview": _apimart_video_seconds_rule(
             "apimart-gemini-omni-flash-preview",
@@ -1199,6 +1503,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             {"720p": 0.088},
             default_resolution="720p",
             default_duration_seconds=8,
+            allowed_upstream_model_ids=["gemini-omni-flash-preview", "gemini-omni-1.1-flash-ext", "apimart-gemini-omni-flash-preview"],
         ),
     }
 )
@@ -1323,6 +1628,11 @@ def model_rule(kind: Literal["image", "video", "audio", "music"], model_id: str 
     rule = group.get(key)
     if isinstance(rule, dict) and rule.get("enabled", True):
         return rule
+    for r in group.values():
+        if isinstance(r, dict) and r.get("enabled", True):
+            allowed = [str(x).strip().lower() for x in r.get("allowed_upstream_model_ids", []) if x]
+            if key in allowed:
+                return r
     return None
 
 
@@ -1368,7 +1678,13 @@ def estimate_image_pricing(
             size=size,
         )
         price_unit = str(rule.get("price_unit") or "credits").strip().lower()
-        unit_price = _lookup_active_price(rule, resolved_tier, fallback_mapping=rule.get("price_by_size_tier"), field=f"image.{model_id}.price_by_size_tier.{resolved_tier}")
+        unit_price = _lookup_active_price(
+            rule,
+            resolved_tier,
+            fallback_mapping=rule.get("price_by_size_tier"),
+            field=f"image.{model_id}.price_by_size_tier.{resolved_tier}",
+            allow_zero=True,
+        )
         if unit_price is None:
             raise ValueError(f"Image pricing does not include billing_size_tier {resolved_tier} for {model_id}")
         reference_unit_credits = _reference_unit_credits(rule)
@@ -1402,6 +1718,7 @@ def estimate_image_pricing(
             resolved_action,
             fallback_mapping=rule.get("call_cost_by_action"),
             field=f"image.{model_id}.call_cost_by_action.{resolved_action}",
+            allow_zero=True,
         )
         if unit_cost is None:
             raise ValueError(f"Image pricing does not include pricing_action {resolved_action} for {model_id}")
@@ -1525,17 +1842,19 @@ def estimate_video_pricing(
                 price_key,
                 fallback_mapping=lookup_map,
                 field=f"video.{rule['model_id']}.cost_per_second_by_resolution.{price_key}",
+                allow_zero=True,
             )
         elif generate_audio and isinstance(with_audio_map, dict):
             raw_audio_cost = _lookup_number(with_audio_map, resolved_resolution, default=None)
             unit_cost = (
-                _positive_float(raw_audio_cost, f"video.{rule['model_id']}.cost_per_second_with_audio_by_resolution.{resolved_resolution}", allow_zero=False)
+                _positive_float(raw_audio_cost, f"video.{rule['model_id']}.cost_per_second_with_audio_by_resolution.{resolved_resolution}", allow_zero=True)
                 if raw_audio_cost is not None
                 else _lookup_active_price(
                     rule,
                     resolved_resolution,
                     fallback_mapping=with_audio_map,
                     field=f"video.{rule['model_id']}.cost_per_second_with_audio_by_resolution.{resolved_resolution}",
+                    allow_zero=True,
                 )
             )
         else:
@@ -1544,6 +1863,7 @@ def estimate_video_pricing(
                 resolved_resolution,
                 fallback_mapping=per_second_map,
                 field=f"video.{rule['model_id']}.cost_per_second_by_resolution.{resolved_resolution}",
+                allow_zero=True,
             )
         if unit_cost is None:
             raise ValueError(f"Video pricing does not include resolution dimension {price_key} for {rule['model_id']}")
@@ -1651,7 +1971,8 @@ def estimate_audio_pricing(
     resolved_chars = max(int(prompt_chars or rule.get("default_prompt_chars") or 1), 1)
     scheme = str(rule["scheme"])
     if scheme == "audio_tts_character_pricing":
-        cost_per_1k_chars = _lookup_active_price(rule, "default", fallback_value=rule.get("cost_per_1k_chars"), field=f"audio.{model_id}.cost_per_1k_chars")
+        allow_zero_chars = bool(rule.get("allow_zero") or not rule.get("enabled", True) or "free" in model_id.lower())
+        cost_per_1k_chars = _lookup_active_price(rule, "default", fallback_value=rule.get("cost_per_1k_chars"), field=f"audio.{model_id}.cost_per_1k_chars", allow_zero=allow_zero_chars)
         if cost_per_1k_chars is None:
             raise ValueError(f"Audio pricing does not include cost_per_1k_chars for {model_id}")
         official_cost = cost_per_1k_chars * (resolved_chars / 1000.0) * output_count + reference_cost
@@ -1809,7 +2130,7 @@ def _validate_image_scheme(model_id: str, rule: dict[str, Any]) -> None:
             normalized_action = _normalize_key(action)
             if not normalized_action:
                 raise ValueError(f"image.{model_id}.call_cost_by_action contains an empty action")
-            normalized_costs[normalized_action] = _positive_float(cost, f"image.{model_id}.call_cost_by_action.{normalized_action}", allow_zero=False)
+            normalized_costs[normalized_action] = _positive_float(cost, f"image.{model_id}.call_cost_by_action.{normalized_action}", allow_zero=True)
         if "default" not in normalized_costs:
             raise ValueError(f"image.{model_id}.call_cost_by_action.default is required")
         rule["call_cost_by_action"] = normalized_costs
@@ -1829,7 +2150,7 @@ def _validate_image_scheme(model_id: str, rule: dict[str, Any]) -> None:
         normalized_tier = _normalize_billing_size_tier(tier)
         if not _valid_billing_size_tier(normalized_tier):
             raise ValueError(f"image.{model_id}.price_by_size_tier contains unsupported tier {tier}")
-        normalized_prices[normalized_tier] = _positive_float(price, f"image.{model_id}.price_by_size_tier.{normalized_tier}", allow_zero=False)
+        normalized_prices[normalized_tier] = _positive_float(price, f"image.{model_id}.price_by_size_tier.{normalized_tier}", allow_zero=True)
     rule["price_by_size_tier"] = normalized_prices
     default_tier = _resolve_configured_billing_size_tier(rule.get("default_billing_size_tier"))
     if default_tier not in normalized_prices:
@@ -1892,7 +2213,8 @@ def _validate_video_scheme(model_id: str, rule: dict[str, Any]) -> None:
 
 def _validate_audio_scheme(model_id: str, rule: dict[str, Any]) -> None:
     if rule["scheme"] == "audio_tts_character_pricing":
-        rule["cost_per_1k_chars"] = _positive_float(rule.get("cost_per_1k_chars"), f"audio.{model_id}.cost_per_1k_chars", allow_zero=False)
+        allow_zero_chars = bool(rule.get("allow_zero") or not rule.get("enabled", True) or "free" in model_id.lower())
+        rule["cost_per_1k_chars"] = _positive_float(rule.get("cost_per_1k_chars"), f"audio.{model_id}.cost_per_1k_chars", allow_zero=allow_zero_chars)
         rule["default_prompt_chars"] = int(_positive_float(rule.get("default_prompt_chars", 1000), f"audio.{model_id}.default_prompt_chars", allow_zero=False))
     elif rule["scheme"] == "audio_tts_unit_pricing":
         rule["unit_cost"] = _positive_float(rule.get("unit_cost"), f"audio.{model_id}.unit_cost", allow_zero=not rule.get("enabled", True))
@@ -1990,6 +2312,14 @@ def _resolve_music_pricing_action(rule: dict[str, Any], pricing_action: str | No
     default_action = _normalize_music_pricing_action(rule.get("default_pricing_action") or "generate") or "generate"
     resolved_action = _normalize_music_pricing_action(pricing_action) or default_action
     if supported_actions and resolved_action not in supported_actions:
+        action_aliases = {
+            "generate": ("music", "default"),
+            "music": ("generate", "default"),
+            "default": (default_action, "generate", "music"),
+        }
+        for candidate in action_aliases.get(resolved_action, ()):
+            if candidate in supported_actions:
+                return candidate
         raise ValueError(f"Music pricing action {resolved_action} is not configured for {rule['model_id']}")
     return resolved_action
 
@@ -2005,25 +2335,89 @@ def _resolve_music_unit_cost(rule: dict[str, Any], pricing_action: str) -> float
     return _positive_float(rule.get("unit_cost"), f"music.{rule['model_id']}.unit_cost", allow_zero=not rule.get("enabled", True))
 
 
+PROVIDER_FAMILY_ALIASES: dict[str, tuple[str, ...]] = {
+    "apimart_media": ("apimart_media", "apimart", "apimart_image", "apimart_video", "apimart_music", "apimart_tts"),
+    "agnes_media": ("agnes_media", "agnes", "agnes_image", "agnes_video"),
+    "volcengine_visual": ("volcengine_visual", "volcengine", "doubao", "seedance", "seed_audio"),
+    "minimax": ("minimax", "minimax_tts", "minimax_speech", "hailuo"),
+    "gemini": ("gemini", "google", "veo"),
+    "openai": ("openai", "gpt_image", "openai_tts"),
+    "kling": ("kling", "kuaishou_kling"),
+    "fish_audio": ("fish_audio", "fishaudio"),
+    "elevenlabs": ("elevenlabs", "elevenlabs_tts", "elevenlabs_music"),
+    "suno": ("suno", "suno_music"),
+    "mureka": ("mureka", "mureka_music"),
+    "kolors": ("kolors", "kuaishou_kolors"),
+}
+
+
+def _infer_provider_family(rule: dict[str, Any]) -> str:
+    explicit = str(rule.get("provider_family") or "").strip().lower()
+    if explicit:
+        return explicit
+    provider = str(rule.get("provider") or "").strip().lower()
+    if provider:
+        return provider
+    target_id = str(rule.get("price_model_id") or rule.get("official_model_id") or rule.get("model_id") or "").strip().lower()
+    if target_id.startswith("apimart-"):
+        return "apimart_media"
+    if target_id.startswith("agnes-"):
+        return "agnes_media"
+    if target_id.startswith("minimax-"):
+        return "minimax"
+    if target_id.startswith(("doubao-", "seedream-", "seedance-", "volcengine-", "seed-audio-")):
+        return "volcengine_visual"
+    if target_id.startswith(("nano-banana", "veo-", "gemini-")):
+        return "gemini"
+    if target_id.startswith(("gpt-image", "gpt-4o-mini-tts")):
+        return "openai"
+    if target_id.startswith("kling-"):
+        return "kling"
+    if target_id.startswith("fish-audio-"):
+        return "fish_audio"
+    if target_id.startswith("eleven-"):
+        return "elevenlabs"
+    if target_id.startswith("suno-"):
+        return "suno"
+    if target_id.startswith("mureka-"):
+        return "mureka"
+    if target_id == "kolors":
+        return "kolors"
+    return ""
+
+
+def _resolve_provider_multiplier(loaded: dict[str, Any], provider_family: str) -> float:
+    provider_multipliers = loaded.get("provider_multipliers")
+    if not isinstance(provider_multipliers, dict) or not provider_family:
+        return 1.0
+    normalized_family = provider_family.strip().lower()
+    if normalized_family in provider_multipliers:
+        return float(provider_multipliers[normalized_family] or 1.0)
+    for canonical, aliases in PROVIDER_FAMILY_ALIASES.items():
+        if normalized_family == canonical or normalized_family in aliases:
+            for alias in aliases:
+                if alias in provider_multipliers:
+                    return float(provider_multipliers[alias] or 1.0)
+    return 1.0
+
+
 def _pricing_result(loaded: dict[str, Any], rule: dict[str, Any], official_cost: float, breakdown: dict[str, Any]) -> MediaPricingResult:
     official_cost = round(max(float(official_cost or 0), 0.0), 8)
     currency = str(rule.get("currency") or "USD").upper()
     currency_rate = float(loaded.get("currency_rates", {}).get(currency, 0) or 0)
     credits_per_usd = float(loaded.get("credits_per_usd") or os.getenv("BILLING_CREDITS_PER_USD", DEFAULT_CREDITS_PER_USD) or DEFAULT_CREDITS_PER_USD)
     multiplier = float(rule.get("multiplier", 1) or 1)
-    provider_multiplier = 1.0
-    provider_family = str(rule.get("provider_family") or "").strip().lower()
-    provider_multipliers = loaded.get("provider_multipliers")
-    if provider_family and isinstance(provider_multipliers, dict):
-        provider_multiplier = float(provider_multipliers.get(provider_family, 1.0) or 1.0)
+    provider_family = _infer_provider_family(rule)
+    provider_multiplier = _resolve_provider_multiplier(loaded, provider_family)
     billing_units = official_cost * currency_rate * credits_per_usd * multiplier * provider_multiplier
     pricing_breakdown = {
         **breakdown,
         "currency_rate_to_usd": currency_rate,
         "credits_per_usd": credits_per_usd,
         "provider_multiplier": provider_multiplier,
+        "provider_family": provider_family,
     }
-    for key in ("price_model_id", "active_price_basis", "original_price", "after_discount", "provider_family"):
+    for key in ("price_model_id", "active_price_basis", "original_price", "after_discount"):
         if key in rule:
             pricing_breakdown[key] = rule.get(key)
     return MediaPricingResult(
@@ -2055,6 +2449,8 @@ def _resolve_image_billing_size_tier(
     explicit_tier = _billing_size_tier_from_value(rule, billing_size_tier)
     if explicit_tier:
         if explicit_tier not in configured_tiers:
+            if "default" in configured_tiers:
+                return "default"
             raise ValueError(f"Image pricing tier {explicit_tier} is not configured for {rule['model_id']}")
         return explicit_tier
     inferred_tiers = [
@@ -2068,6 +2464,8 @@ def _resolve_image_billing_size_tier(
     if inferred_tiers:
         resolved = max(inferred_tiers, key=_billing_size_tier_rank)
         if resolved not in configured_tiers:
+            if "default" in configured_tiers:
+                return "default"
             raise ValueError(f"Image pricing tier {resolved} is not configured for {rule['model_id']}")
         return resolved
     default_tier = _resolve_configured_billing_size_tier(rule.get("default_billing_size_tier"))
@@ -2577,6 +2975,7 @@ def _video_seconds_dimension_price_key(
             candidate,
             fallback_mapping=with_audio_mapping if _video_price_key_covers_feature(candidate, "audio") and isinstance(with_audio_mapping, dict) else base_mapping,
             field=f"video.{rule['model_id']}.cost_per_second_by_resolution.{candidate}",
+            allow_zero=True,
         )
         if price is None:
             raise ValueError(f"Video pricing does not include required APIMart dimension {candidate} for {rule['model_id']}")
