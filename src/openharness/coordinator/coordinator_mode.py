@@ -162,7 +162,6 @@ def parse_task_notification(xml: str) -> TaskNotification:
 
 _AGENT_TOOL_NAME = "agent"
 _SEND_MESSAGE_TOOL_NAME = "send_message"
-_TASK_STOP_TOOL_NAME = "task_stop"
 
 _WORKER_TOOLS = [
     "bash",
@@ -215,7 +214,7 @@ def match_session_mode(session_mode: Optional[str]) -> Optional[str]:
 
 def get_coordinator_tools() -> list[str]:
     """Return the tool names reserved for the coordinator."""
-    return [_AGENT_TOOL_NAME, _SEND_MESSAGE_TOOL_NAME, _TASK_STOP_TOOL_NAME]
+    return [_AGENT_TOOL_NAME, _SEND_MESSAGE_TOOL_NAME]
 
 
 def get_coordinator_user_context(
@@ -281,7 +280,6 @@ Every message you send is to the user. Worker results and system notifications a
 
 - **{_AGENT_TOOL_NAME}** - Spawn a new worker
 - **{_SEND_MESSAGE_TOOL_NAME}** - Continue an existing worker (send a follow-up to its `to` agent ID)
-- **{_TASK_STOP_TOOL_NAME}** - Stop a running worker
 - **subscribe_pr_activity / unsubscribe_pr_activity** (if available) - Subscribe to GitHub PR events (review comments, CI results). Events arrive as user messages. Merge conflict transitions do NOT arrive — GitHub doesn't webhook `mergeable_state` changes, so poll `gh pr view N --json mergeable` if tracking conflict status. Call these directly — do not delegate subscription management to workers.
 
 When calling {_AGENT_TOOL_NAME}:
@@ -384,9 +382,9 @@ When a worker reports failure (tests failed, build errors, file not found):
 - Continue the same worker with {_SEND_MESSAGE_TOOL_NAME} — it has the full error context
 - If a correction attempt fails, try a different approach or report to the user
 
-### Stopping Workers
+### Redirecting Workers
 
-Use {_TASK_STOP_TOOL_NAME} to stop a worker you sent in the wrong direction — for example, when you realize mid-flight that the approach is wrong, or the user changes requirements after you launched the worker. Pass the `task_id` from the {_AGENT_TOOL_NAME} tool's launch result. Stopped workers can be continued with {_SEND_MESSAGE_TOOL_NAME}.
+When you realize mid-flight that an approach is wrong, or the user changes requirements after you launched the worker, redirect it with {_SEND_MESSAGE_TOOL_NAME}:
 
 ```
 // Launched a worker to refactor auth to use JWT
@@ -394,9 +392,6 @@ Use {_TASK_STOP_TOOL_NAME} to stop a worker you sent in the wrong direction — 
 // ... returns task_id: "agent-x7q" ...
 
 // User clarifies: "Actually, keep sessions — just fix the null pointer"
-{_TASK_STOP_TOOL_NAME}({{ task_id: "agent-x7q" }})
-
-// Continue with corrected instructions
 {_SEND_MESSAGE_TOOL_NAME}({{ to: "agent-x7q", message: "Stop the JWT refactor. Instead, fix the null pointer in src/auth/validate.ts:42..." }})
 ```
 

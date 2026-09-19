@@ -8,27 +8,8 @@ from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry,
 from openharness.tools.brief_tool import BriefTool
 from openharness.tools.canvas_ops_tool import (
     CanvasApplyOpsTool,
-    CanvasConnectNodesTool,
-    CanvasCreateGenerationFlowTool,
-    CanvasCreateNodeTool,
-    CanvasCreateTextNodeTool,
-    CanvasCreateTextNodesTool,
-    CanvasDeleteNodesTool,
-    CanvasExportSnapshotTool,
-    CanvasGenerateAudioTool,
-    CanvasGenerateImageTool,
-    CanvasGenerateTextTool,
-    CanvasGenerateVideoTool,
-    CanvasGetRequestReferencesTool,
-    CanvasGetSelectionTool,
+    CanvasCreateNodesTool,
     CanvasGetStateTool,
-    CanvasMoveNodesTool,
-    CanvasResizeNodeTool,
-    CanvasRunGenerationTool,
-    CanvasSelectNodesTool,
-    CanvasSetViewportTool,
-    CanvasUpdateNodeTextTool,
-    CanvasUpdateNodeTool,
 )
 from openharness.tools.create_folder_tool import CreateFolderTool
 from openharness.tools.create_handdraw_story_video_tool import CreateHanddrawStoryVideoTool
@@ -57,20 +38,10 @@ from openharness.tools.query_memory_tool import QueryMemoryTool
 from openharness.tools.send_message_tool import SendMessageTool
 from openharness.tools.skill_tool import SkillTool
 from openharness.tools.sleep_tool import SleepTool
-from openharness.tools.task_create_tool import TaskCreateTool
-from openharness.tools.task_get_tool import TaskGetTool
-from openharness.tools.task_list_tool import TaskListTool
-from openharness.tools.task_output_tool import TaskOutputTool
-from openharness.tools.task_stop_tool import TaskStopTool
-from openharness.tools.task_update_tool import TaskUpdateTool
-from openharness.tools.team_create_tool import TeamCreateTool
-from openharness.tools.team_delete_tool import TeamDeleteTool
 from openharness.tools.todo_write_tool import TodoWriteTool
 from openharness.tools.tool_search_tool import ToolSearchTool
 from openharness.tools.web_fetch_tool import WebFetchTool
 from openharness.tools.web_search_tool import WebSearchTool
-
-
 def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
     """Return the default built-in tool registry."""
     registry = ToolRegistry()
@@ -96,27 +67,8 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         CreateFolderTool(),
         BriefTool(),
         CanvasGetStateTool(),
-        CanvasGetSelectionTool(),
-        CanvasGetRequestReferencesTool(),
-        CanvasExportSnapshotTool(),
+        CanvasCreateNodesTool(),
         CanvasApplyOpsTool(),
-        CanvasCreateNodeTool(),
-        CanvasCreateTextNodeTool(),
-        CanvasCreateTextNodesTool(),
-        CanvasCreateGenerationFlowTool(),
-        CanvasGenerateTextTool(),
-        CanvasGenerateImageTool(),
-        CanvasGenerateVideoTool(),
-        CanvasGenerateAudioTool(),
-        CanvasUpdateNodeTool(),
-        CanvasUpdateNodeTextTool(),
-        CanvasMoveNodesTool(),
-        CanvasResizeNodeTool(),
-        CanvasDeleteNodesTool(),
-        CanvasConnectNodesTool(),
-        CanvasSelectNodesTool(),
-        CanvasSetViewportTool(),
-        CanvasRunGenerationTool(),
         SleepTool(),
         TodoWriteTool(),
         EnterPlanModeTool(),
@@ -127,16 +79,8 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         CronToggleTool(),
         DeliverArtifactTool(),
         RemoteTriggerTool(),
-        TaskCreateTool(),
-        TaskGetTool(),
-        TaskListTool(),
-        TaskStopTool(),
-        TaskOutputTool(),
-        TaskUpdateTool(),
         AgentTool(),
         SendMessageTool(),
-        TeamCreateTool(),
-        TeamDeleteTool(),
         QueryMemoryTool(),
     ):
         registry.register(tool)

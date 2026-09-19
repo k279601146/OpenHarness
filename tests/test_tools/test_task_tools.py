@@ -11,10 +11,6 @@ from openharness.coordinator.coordinator_mode import get_team_registry
 from openharness.tasks import get_task_manager
 from openharness.tools.agent_tool import AgentTool, AgentToolInput
 from openharness.tools.base import ToolExecutionContext
-from openharness.tools.task_create_tool import TaskCreateTool, TaskCreateToolInput
-from openharness.tools.task_output_tool import TaskOutputTool, TaskOutputToolInput
-from openharness.tools.task_update_tool import TaskUpdateTool, TaskUpdateToolInput
-from openharness.tools.team_create_tool import TeamCreateTool, TeamCreateToolInput
 
 
 async def _wait_for_terminal_task(task_id: str, *, timeout_seconds: float = 2.0) -> None:
@@ -28,75 +24,22 @@ async def _wait_for_terminal_task(task_id: str, *, timeout_seconds: float = 2.0)
     raise AssertionError(f"Task {task_id} did not reach a terminal status in time")
 
 
-@pytest.mark.asyncio
-async def test_task_create_and_output_tool(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
-    context = ToolExecutionContext(cwd=tmp_path)
+def test_deleted_task_and_team_tools_not_in_registry():
+    from openharness.tools import create_default_tool_registry
 
-    create_result = await TaskCreateTool().execute(
-        TaskCreateToolInput(
-            type="local_bash",
-            description="echo",
-            command="printf 'tool task'",
-        ),
-        context,
+    registry = create_default_tool_registry()
+    obsolete_tools = (
+        "task_create",
+        "task_get",
+        "task_list",
+        "task_stop",
+        "task_output",
+        "task_update",
+        "team_create",
+        "team_delete",
     )
-    assert create_result.is_error is False
-    task_id = create_result.output.split()[2]
-
-    manager = get_task_manager()
-    for _ in range(20):
-        if "tool task" in manager.read_task_output(task_id):
-            break
-        await asyncio.sleep(0.1)
-    output_result = await TaskOutputTool().execute(
-        TaskOutputToolInput(task_id=task_id),
-        context,
-    )
-    assert "tool task" in output_result.output
-
-
-@pytest.mark.asyncio
-async def test_team_create_tool(tmp_path: Path):
-    result = await TeamCreateTool().execute(
-        TeamCreateToolInput(name="demo", description="test"),
-        ToolExecutionContext(cwd=tmp_path),
-    )
-    assert result.is_error is False
-    assert "Created team demo" == result.output
-
-
-@pytest.mark.asyncio
-async def test_task_update_tool_updates_metadata(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
-    context = ToolExecutionContext(cwd=tmp_path)
-
-    create_result = await TaskCreateTool().execute(
-        TaskCreateToolInput(
-            type="local_bash",
-            description="updatable",
-            command="printf 'tool task'",
-        ),
-        context,
-    )
-    task_id = create_result.output.split()[2]
-
-    update_result = await TaskUpdateTool().execute(
-        TaskUpdateToolInput(
-            task_id=task_id,
-            progress=60,
-            status_note="waiting on verification",
-            description="renamed task",
-        ),
-        context,
-    )
-    assert update_result.is_error is False
-
-    task = get_task_manager().get_task(task_id)
-    assert task is not None
-    assert task.description == "renamed task"
-    assert task.metadata["progress"] == "60"
-    assert task.metadata["status_note"] == "waiting on verification"
+    for tool_name in obsolete_tools:
+        assert registry.get(tool_name) is None, f"{tool_name} should not be in default tool registry"
 
 
 @pytest.mark.asyncio

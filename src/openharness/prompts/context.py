@@ -46,6 +46,58 @@ def _build_delegation_section() -> str:
     )
 
 
+import re
+
+def compact_skill_description(description: str, max_chars: int = 180) -> str:
+    """Compact a skill description for system prompt display without modifying source files.
+
+    Extracts the core trigger and purpose sentence(s), removing internal developer
+    constraints, CLI options, and excessive prose while preserving semantic trigger accuracy.
+    """
+    if not description:
+        return ""
+
+    clean = " ".join(description.strip().split())
+    if len(clean) <= max_chars:
+        return clean
+
+    # Check for "Use when asked to..." clause
+    use_when_match = re.search(r"(Use when asked to\s+[^。\n]+)", clean, re.IGNORECASE)
+    use_when_clause = use_when_match.group(1).strip() if use_when_match else ""
+
+    # Split by Chinese/English sentence boundaries
+    sentences = re.split(r"(?<=[。！？\.\!\?])\s+", clean)
+
+    first_meaningful = ""
+    for s in sentences:
+        s = s.strip()
+        if not s:
+            continue
+        # Skip internal dev/script validation noise
+        if re.search(r"\b\d+\s*项全自动脚本校验|\bKPI\b|--\w+|API key|references/", s):
+            continue
+        first_meaningful = s
+        break
+
+    if not first_meaningful and sentences:
+        first_meaningful = sentences[0]
+
+    if use_when_clause and use_when_clause not in first_meaningful:
+        combined = f"{first_meaningful} {use_when_clause}"
+        if len(combined) <= max_chars:
+            return combined
+
+    if len(first_meaningful) <= max_chars:
+        return first_meaningful
+
+    # Truncate safely at word/punctuation boundary
+    truncated = first_meaningful[:max_chars]
+    last_punct = max(truncated.rfind(" "), truncated.rfind("，"), truncated.rfind("。"), truncated.rfind(","))
+    if last_punct > max_chars // 2:
+        return truncated[:last_punct].rstrip(" ,;，。") + "..."
+    return truncated.rstrip() + "..."
+
+
 def _build_skills_section(
     cwd: str | Path,
     *,
@@ -81,7 +133,7 @@ def _build_skills_section(
     for skill in skills:
         command_name = skill.command_name or skill.name
         display = f" ({skill.display_name})" if skill.display_name else ""
-        lines.append(f"- **{command_name}**{display}: {skill.description}")
+        lines.append(f"- **{command_name}**{display}: {compact_skill_description(skill.description)}")
     return "\n".join(lines)
 
 
@@ -122,7 +174,7 @@ def _build_extra_skills_section(
     for skill in skills:
         command_name = skill.command_name or skill.name
         display = f" ({skill.display_name})" if skill.display_name else ""
-        lines.append(f"- **{command_name}**{display}: {skill.description}")
+        lines.append(f"- **{command_name}**{display}: {compact_skill_description(skill.description)}")
     return "\n".join(lines)
 
 

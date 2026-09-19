@@ -107,8 +107,7 @@ def test_get_coordinator_tools_returns_expected():
     tools = get_coordinator_tools()
     assert "agent" in tools
     assert "send_message" in tools
-    assert "task_stop" in tools
-    assert len(tools) == 3
+    assert len(tools) == 2
 
 
 # ---------------------------------------------------------------------------

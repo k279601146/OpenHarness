@@ -42,51 +42,47 @@ def _is_stable_media_ref(value: str) -> bool:
 
 
 class VideoClip(BaseModel):
-    """单个视频片段描述。asset_id 必须是稳定引用。"""
-
+    # 单个视频片段描述。asset_id 必须是稳定引用。
     model_config = ConfigDict(extra="forbid")
 
     asset_id: str = Field(
-        description=(
-            "视频稳定引用，格式：artifact:<id>、/artifacts/... 或 /uploads/...。"
-            "禁止传入沙箱路径（/home/user/...）或宿主机绝对路径。"
-        )
+        description="视频稳定引用（artifact:<id>、/artifacts/... 或 /uploads/...）"
     )
     start: float = Field(
         default=0.0,
         ge=0.0,
-        description="从视频的哪一秒开始截取（秒），默认 0。",
+        description="截取起始时间（秒），默认 0",
     )
     duration: float | None = Field(
         default=None,
         gt=0.0,
-        description="截取时长（秒）。None 表示截取到视频结尾。",
+        description="截取时长（秒），None 截取到结尾",
     )
     volume: float = Field(
         default=1.0,
         ge=0.0,
         le=2.0,
-        description="视频原声音量缩放系数 [0, 2]，默认 1.0（保持原始）。",
+        description="原声音量缩放系数 [0, 2]，默认 1.0",
     )
     mute: bool = Field(
         default=False,
-        description="为 true 时静音该视频原声，等同于 volume=0。",
+        description="是否静音该视频原声，默认 false",
     )
     fade_in: float = Field(
         default=0.0,
         ge=0.0,
         le=10.0,
-        description="视频（画面+音频）淡入时长（秒），0 表示无淡入。",
+        description="淡入时长（秒），默认 0",
     )
     fade_out: float = Field(
         default=0.0,
         ge=0.0,
         le=10.0,
-        description="视频（画面+音频）淡出时长（秒），0 表示无淡出。",
+        description="淡出时长（秒），默认 0",
     )
     rotate: Literal[0, 90, 180, 270] | None = Field(
         default=None,
-        description="顺时针旋转角度（度）：90 / 180 / 270。None 表示不旋转。",
+        description="顺时针旋转角度（度）：90/180/270，None 不旋转",
     )
 
     @field_validator("asset_id")
@@ -104,51 +100,48 @@ class VideoClip(BaseModel):
 
 
 class AudioTrack(BaseModel):
-    """额外音频轨道（BGM 等）。"""
-
+    # 额外音频轨道（BGM 等）。
     model_config = ConfigDict(extra="forbid")
 
     asset_id: str = Field(
-        description=(
-            "音频稳定引用，格式：artifact:<id>、/artifacts/... 或 /uploads/...。"
-        )
+        description="音频稳定引用（artifact:<id>、/artifacts/... 或 /uploads/...）"
     )
     start: float = Field(
         default=0.0,
         ge=0.0,
-        description="从音频文件的哪一秒开始截取，默认 0。",
+        description="截取起始时间（秒），默认 0",
     )
     duration: float | None = Field(
         default=None,
         gt=0.0,
-        description="截取时长（秒）。None 时后端自动裁剪/循环到视频总时长。",
+        description="截取时长（秒），None 自动对齐视频时长",
     )
     volume: float = Field(
         default=1.0,
         ge=0.0,
         le=2.0,
-        description="音量缩放系数 [0, 2]。",
+        description="音量缩放系数 [0, 2]，默认 1.0",
     )
     loop: bool = Field(
         default=False,
-        description="为 true 时循环播放该音频，直到视频总时长结束。",
+        description="是否循环播放至视频结束，默认 false",
     )
     fade_in: float = Field(
         default=0.0,
         ge=0.0,
         le=10.0,
-        description="音频淡入时长（秒）。",
+        description="音频淡入时长（秒），默认 0",
     )
     fade_out: float = Field(
         default=0.0,
         ge=0.0,
         le=10.0,
-        description="音频淡出时长（秒）。",
+        description="音频淡出时长（秒），默认 0",
     )
     delay: float = Field(
         default=0.0,
         ge=0.0,
-        description="该音轨在混合时间线中的延迟偏移（秒），默认 0 表示从头开始。",
+        description="混音时间线延迟偏移（秒），默认 0",
     )
 
     @field_validator("asset_id")
@@ -166,96 +159,86 @@ class AudioTrack(BaseModel):
 
 
 class VideoOutput(BaseModel):
-    """输出参数。"""
-
+    # 输出参数配置。
     model_config = ConfigDict(extra="forbid")
 
     format: str = Field(
         default="mp4",
-        description="输出封装格式，默认 mp4。",
+        description="输出封装格式，默认 mp4",
     )
     width: int | None = Field(
         default=None,
         gt=0,
-        description="目标宽度（像素）。None 时自动取最大输入宽度（对齐到 2 的倍数）。",
+        description="目标宽度（像素），None 自动自适应",
     )
     height: int | None = Field(
         default=None,
         gt=0,
-        description="目标高度（像素）。None 时自动取最大输入高度（对齐到 2 的倍数）。",
+        description="目标高度（像素），None 自动自适应",
     )
     fps: float | None = Field(
         default=None,
         gt=0.0,
-        description="目标帧率。None 时自动取最大输入帧率。",
+        description="目标帧率，None 自动自适应",
     )
     video_codec: str = Field(
         default="libx264",
-        description="视频编码器，如 libx264、libx265、vp9。默认 libx264。",
+        description="视频编码器，如 libx264、libx265，默认 libx264",
     )
     audio_codec: str = Field(
         default="aac",
-        description="音频编码器，如 aac、mp3、opus。默认 aac。",
+        description="音频编码器，如 aac、mp3，默认 aac",
     )
     crf: int | None = Field(
         default=None,
         ge=0,
         le=51,
-        description="画质因子 [0,51]，值越小画质越好，libx264 默认 23。None 时使用 FFmpeg 默认值。",
+        description="CRF 画质因子 [0,51]，默认 23",
     )
     preset: str | None = Field(
         default=None,
-        description="x264/x265 编码预设，如 ultrafast、fast、medium、slow。None 时使用 FFmpeg 默认。",
+        description="编码预设（如 ultrafast、fast、medium）",
     )
     video_bitrate: str | None = Field(
         default=None,
-        description="视频目标码率，如 '4000k'、'2M'。设置后 crf 失效。",
+        description="目标视频码率（如 '4000k'、'2M'）",
     )
     audio_bitrate: str | None = Field(
         default=None,
-        description="音频目标码率，如 '128k'、'192k'。",
+        description="目标音频码率（如 '128k'）",
     )
     fit_mode: Literal["pad", "crop", "stretch"] = Field(
         default="pad",
-        description=(
-            "多视频分辨率统一策略。"
-            "pad：缩放后黑边填充（不裁切，保持画面完整，默认）；"
-            "crop：缩放后居中裁切（去除黑边，可能裁掉画面边缘）；"
-            "stretch：直接拉伸（可能变形）。"
-        ),
+        description="画面统一：pad(黑边填充，默认)/crop(居中裁剪)/stretch(拉伸)",
     )
     pad_color: str = Field(
         default="black",
-        description="fit_mode=pad 时的背景填充色，如 black、white，或 #rrggbb。",
+        description="fit_mode=pad 时的背景填充色，默认 black",
     )
     pixel_format: str = Field(
         default="yuv420p",
-        description="Pixel format，默认 yuv420p（浏览器兼容性最好）。",
+        description="像素格式，默认 yuv420p",
     )
 
 
 class Transition(BaseModel):
-    """两段视频之间的转场描述。"""
-
+    # 两段视频之间的转场。
     model_config = ConfigDict(extra="forbid")
 
     between: list[int] = Field(
         min_length=2,
         max_length=2,
-        description=(
-            "转场位于第几个和第几个片段之间，从 0 开始计数。"
-            "例如 [0, 1] 表示第 1 和第 2 个视频之间。"
-        ),
+        description="相邻片段序号，如 [0, 1]",
     )
     type: Literal["none", "fade"] = Field(
         default="fade",
-        description="转场类型。none=直接拼接；fade=交叉淡入淡出。",
+        description="转场类型：none=直接拼接；fade=交叉淡入淡出",
     )
     duration: float = Field(
         default=0.5,
         gt=0.0,
         le=5.0,
-        description="转场时长（秒），仅 type=fade 时有意义，默认 0.5。",
+        description="转场时长（秒），默认 0.5",
     )
 
     @model_validator(mode="after")
@@ -271,55 +254,42 @@ class Transition(BaseModel):
 
 
 class ThumbnailSpec(BaseModel):
-    """缩略图生成参数。"""
-
+    # 缩略图生成参数。
     model_config = ConfigDict(extra="forbid")
 
     at: float = Field(
         default=0.0,
         ge=0.0,
-        description="从最终视频哪一秒提取缩略图，默认 0。",
+        description="截取时间点（秒），默认 0",
     )
     format: Literal["png", "jpeg"] = Field(
         default="jpeg",
-        description="缩略图格式。",
+        description="缩略图格式：jpeg/png，默认 jpeg",
     )
 
 
 class MergeVideoInput(BaseModel):
-    """merge_video_tool 规范化输入。所有嵌套字段必须传对象，不能传 JSON 字符串。"""
-
+    # merge_video_tool 规范化输入。
     model_config = ConfigDict(extra="forbid")
 
     videos: list[VideoClip] = Field(
-        description=(
-            "视频片段列表，按照拼接顺序排列。至少 1 个。"
-            "每个元素必须是对象，不能传 JSON 字符串。"
-        )
+        description="待拼接视频片段列表（按拼接顺序，至少 1 个）"
     )
     audio_tracks: list[AudioTrack] = Field(
         default_factory=list,
-        description=(
-            "额外音频轨道（BGM 等），可选。"
-            "每个元素必须是对象，不能传 JSON 字符串。"
-        ),
+        description="额外音频轨道（BGM 等），可选",
     )
     output: VideoOutput = Field(
-        description=(
-            "输出参数对象，必填。"
-            "使用默认值时传 {} 即可，不能传 JSON 字符串。"
-        )
+        default_factory=VideoOutput,
+        description="输出配置，默认输出自适应 MP4",
     )
     transitions: list[Transition] = Field(
         default_factory=list,
-        description=(
-            "视频片段之间的转场，可选。"
-            "不指定时所有片段直接拼接（无转场）。"
-        ),
+        description="视频片段间的转场，可选",
     )
     thumbnail: ThumbnailSpec | None = Field(
         default=None,
-        description="缩略图生成参数，可选。None 时不生成缩略图。",
+        description="视频封面缩略图截取参数，可选",
     )
 
     @field_validator("videos")
@@ -351,17 +321,28 @@ class MergeVideoTool(BaseTool):
 
     name = "merge_video_tool"
     description = (
-        "使用 FFmpeg 将多个视频片段合成为一个完整视频，支持裁剪、缩放、分辨率统一、"
-        "FPS 统一、原声保留/静音/音量调整、BGM 添加（循环/裁剪/淡入淡出）、"
-        "音视频混合、视频淡入淡出、旋转、字幕烧录（环境支持时）、最终 H.264 MP4 输出、"
-        "缩略图生成等。"
-        "所有嵌套字段（output 等）必须传真正的对象，不能传带引号的 JSON 字符串。"
-        "不要调用 deliver_artifact 交付此工具生成的视频，后端会自动发布。"
+        "使用 FFmpeg 拼接合成视频片段与音频（支持裁剪、缩放、转场、音量调整、BGM、封面图截取）。"
+        "后端自动发布视频产物，无需调用 deliver_artifact。"
     )
     input_model = MergeVideoInput
     display_name = "视频合成"
     default_start_message = "正在合成视频..."
     requires_sandbox = False
+
+    def to_api_schema(self) -> dict[str, Any]:
+        """返回精简的 API Tool Schema，去除 Pydantic 注入的冗余 title 属性。"""
+        schema = super().to_api_schema()
+
+        def _strip_titles(node: Any) -> Any:
+            if isinstance(node, dict):
+                return {k: _strip_titles(v) for k, v in node.items() if k != "title"}
+            if isinstance(node, list):
+                return [_strip_titles(item) for item in node]
+            return node
+
+        if "input_schema" in schema and isinstance(schema["input_schema"], dict):
+            schema["input_schema"] = _strip_titles(schema["input_schema"])
+        return schema
 
     async def execute(self, arguments: MergeVideoInput, context: ToolExecutionContext) -> ToolResult:
         hook = context.metadata.get("hook")

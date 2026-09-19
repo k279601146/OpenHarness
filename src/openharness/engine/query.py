@@ -225,15 +225,9 @@ CORE_TOOL_SCHEMA_NAMES = {
     "create_folder",
     "deliver_artifact",
     "edit_file",
-    "enter_plan_mode",
-    "exit_plan_mode",
     "glob",
     "grep",
-    "list_mcp_resources",
-    "mcp_auth",
-    "prepare_web_image_reference",
     "read_file",
-    "read_mcp_resource",
     "skill",
     "sleep",
     "todo_write",
@@ -243,31 +237,28 @@ CORE_TOOL_SCHEMA_NAMES = {
     "write_file",
 }
 
-MEDIA_TOOL_SCHEMA_NAMES = {"generate_image", "generate_video", "create_handdraw_story_video"}
+MEDIA_TOOL_SCHEMA_NAMES = {
+    "generate_image",
+    "generate_video",
+    "merge_video_tool",
+    "create_handdraw_story_video",
+    "prepare_web_image_reference",
+}
 TASK_TOOL_SCHEMA_NAMES = {
     "agent",
     "send_message",
-    "task_create",
-    "task_get",
-    "task_list",
-    "task_output",
-    "task_stop",
-    "task_update",
-    "team_create",
-    "team_delete",
 }
 SCHEDULE_TOOL_SCHEMA_NAMES = set(SCHEDULE_MANAGEMENT_TOOL_NAMES) | {"remote_trigger"}
+FORM_TOOL_SCHEMA_NAMES = {"ask_user_form"}
+PLAN_TOOL_SCHEMA_NAMES = {"enter_plan_mode", "exit_plan_mode"}
+MCP_TOOL_SCHEMA_NAMES = {"mcp_auth", "list_mcp_resources", "read_mcp_resource"}
+MEMORY_TOOL_SCHEMA_NAMES = {"query_memory"}
 
 
 _WORKSPACE_WRITE_TOOL_NAMES = {"bash", "create_folder", "write_file", "edit_file", "deliver_artifact"}
 _TASK_MUTATION_TOOL_NAMES = {
     "agent",
     "send_message",
-    "task_create",
-    "task_stop",
-    "task_update",
-    "team_create",
-    "team_delete",
 }
 _SCHEDULE_MUTATION_TOOL_NAMES = {"cron_create", "cron_delete", "cron_toggle", "remote_trigger"}
 
@@ -336,7 +327,11 @@ def _has_media_context(metadata: dict[str, object] | None) -> bool:
     request_kind = str(canvas_request.get("kind") or "").lower()
     if request_kind in {"image_generation", "video_generation", "audio_generation", "music_generation"}:
         return True
-    if _has_selected_skill(metadata, "image", "video", "media", "drama", "visual"):
+    if _has_selected_skill(metadata, "image", "video", "media", "drama", "visual", "shot"):
+        return True
+    if bool(_metadata_list(metadata, "mentioned_media_inputs")):
+        return True
+    if bool(_metadata_list(metadata, "recent_media_inputs")):
         return True
     return False
 
@@ -346,6 +341,13 @@ def _has_schedule_context(metadata: dict[str, object] | None) -> bool:
     if scheduled_run.get("scheduled_run_id"):
         return bool(scheduled_run.get("allow_schedule_management"))
     return _has_selected_skill(metadata, "automation", "schedule", "cron")
+
+
+def _has_mcp_context(context: QueryContext) -> bool:
+    mcp_servers = _metadata_dict(context.tool_metadata, "mcp_servers")
+    if mcp_servers:
+        return True
+    return _has_selected_skill(context.tool_metadata, "mcp")
 
 
 def _tool_schema_selected_for_context(tool_name: str, context: QueryContext) -> bool:
@@ -362,7 +364,19 @@ def _tool_schema_selected_for_context(tool_name: str, context: QueryContext) -> 
         return _has_schedule_context(metadata)
     if tool_name in TASK_TOOL_SCHEMA_NAMES:
         return _has_selected_skill(metadata, "agent", "task", "team", "project", "orchestrator")
-    return True
+    if tool_name in FORM_TOOL_SCHEMA_NAMES:
+        return _has_selected_skill(metadata, "form", "survey")
+    if tool_name in PLAN_TOOL_SCHEMA_NAMES:
+        return _has_selected_skill(metadata, "plan")
+    if tool_name in MCP_TOOL_SCHEMA_NAMES:
+        return _has_mcp_context(context)
+    if tool_name in MEMORY_TOOL_SCHEMA_NAMES:
+        return _has_selected_skill(metadata, "memory", "viking", "recall")
+    # Dynamically exposed tools from active session context
+    invoked_tools = _metadata_list(metadata, "invoked_tools") + _metadata_list(metadata, "required_tools")
+    if tool_name.lower() in invoked_tools:
+        return True
+    return False
 
 
 def _tool_schemas_for_context(context: QueryContext) -> list[dict[str, Any]]:
