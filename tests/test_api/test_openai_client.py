@@ -15,6 +15,7 @@ import openharness.api.openai_client as openai_client_module
 from openharness.api.client import (
     ApiMessageRequest,
     ApiRetryEvent,
+    ApiReasoningDeltaEvent,
     ApiToolCallCompletedEvent,
     ApiToolCallProgressEvent,
     ApiToolCallStartedEvent,
@@ -29,14 +30,17 @@ from openharness.api.openai_client import (
     _normalize_openai_base_url,
     _looks_like_prompt_cache_unsupported,
     _looks_like_service_tier_unsupported,
+    _looks_like_reasoning_unsupported,
     _prompt_cache_params_for_request,
     _reasoning_effort_param_for_model,
     _message_from_responses_response,
     _responses_reasoning_param_for_model,
+    _is_reasoning_model,
     _service_tier_param,
     _strip_service_tier_param,
     _strip_prompt_cache_params,
     _strip_responses_include_param,
+    _strip_reasoning_param,
     _usage_snapshot_from_openai_usage,
     _strip_think_blocks,
     _token_limit_param_for_model,
@@ -440,6 +444,25 @@ class TestReasoningEffortParams:
         assert _responses_reasoning_param_for_model("gpt-5.5", "xhigh") == {
             "reasoning": {"effort": "xhigh"}
         }
+
+    def test_expanded_reasoning_models_support_reasoning_effort(self):
+        for model in ("deepseek-v4-flash", "sensenova-6.7", "gemini-3.7-flash-high", "claude-3-7-sonnet"):
+            assert _is_reasoning_model(model) is True
+            assert _reasoning_effort_param_for_model(model, "low") == {"reasoning_effort": "low"}
+            assert _responses_reasoning_param_for_model(model, "low") == {"reasoning": {"effort": "low"}}
+
+    def test_strip_reasoning_param(self):
+        params = {"model": "test", "reasoning": {"effort": "low"}, "reasoning_effort": "low", "stream": True}
+        assert _strip_reasoning_param(params) is True
+        assert "reasoning" not in params
+        assert "reasoning_effort" not in params
+        assert _strip_reasoning_param(params) is False
+
+    def test_detects_reasoning_unsupported_error(self):
+        exc = RequestFailure("Extra inputs are not permitted: reasoning")
+        assert _looks_like_reasoning_unsupported(exc) is True
+        unrelated = RequestFailure("Rate limit exceeded")
+        assert _looks_like_reasoning_unsupported(unrelated) is False
 
 
 class _FakeUsage:
@@ -1363,6 +1386,53 @@ class TestStreamMessageTokenParams:
         assert detail["usage"]["output_tokens"] == 34
         assert "output" not in detail
         assert "content" not in detail
+
+    @pytest.mark.asyncio
+    async def test_stream_collects_reasoning_summary_text_delta(self):
+        client = OpenAICompatibleClient(api_key="test-key", base_url="http://localhost:3000/v1")
+        fake_sdk = _FakeOpenAIClient([
+            {
+                "type": "response.created",
+                "item_id": "resp_1",
+            },
+            {
+                "type": "response.reasoning_summary_part.added",
+                "item_id": "rs_1",
+                "output_index": 0,
+            },
+            {
+                "type": "response.reasoning_summary_text.delta",
+                "item_id": "rs_1",
+                "delta": "Thinking step by step...",
+            },
+            {
+                "type": "response.reasoning_summary_text.done",
+                "item_id": "rs_1",
+            },
+            {
+                "type": "response.output_text.delta",
+                "delta": "Final answer",
+            },
+            {
+                "type": "response.completed",
+                "response": {
+                    "status": "completed",
+                    "usage": {"input_tokens": 10, "output_tokens": 20},
+                },
+            },
+        ])
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="deepseek-v4-flash",
+            messages=[ConversationMessage.from_user_text("Write outline")],
+        )
+
+        events = [event async for event in client.stream_message(request)]
+        reasoning_events = [e for e in events if isinstance(e, ApiReasoningDeltaEvent)]
+        assert len(reasoning_events) == 1
+        assert reasoning_events[0].text == "Thinking step by step..."
+        assert events[-1].message.text == "Final answer"
 
     @pytest.mark.asyncio
     async def test_stream_translates_hosted_non_function_tools_without_local_tool_calls(self):

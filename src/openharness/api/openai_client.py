@@ -53,7 +53,19 @@ STREAM_STALL_THRESHOLD_MS = 30_000
 HEARTBEAT_INTERVAL = 30.0
 
 _MAX_COMPLETION_TOKEN_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
-_REASONING_EFFORT_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+_REASONING_EFFORT_MODEL_PREFIXES = (
+    "gpt-5",
+    "o1",
+    "o3",
+    "o4",
+    "deepseek",
+    "sensenova",
+    "gemini",
+    "claude",
+    "kimi",
+    "moonshot",
+    "glm",
+)
 _EXTENDED_PROMPT_CACHE_MODEL_PREFIXES = ("gpt-5", "gpt-4.1")
 _DISABLE_STREAMING_ENV = "OPENHARNESS_OPENAI_DISABLE_STREAMING"
 _DISABLE_STREAM_USAGE_ENV = "OPENHARNESS_OPENAI_DISABLE_STREAM_USAGE"
@@ -162,9 +174,15 @@ def _normalized_model_name(model: str) -> str:
     return normalized
 
 
+def _is_reasoning_model(model: str) -> bool:
+    normalized = _normalized_model_name(model)
+    if any(normalized.startswith(prefix) for prefix in _REASONING_EFFORT_MODEL_PREFIXES):
+        return True
+    return any(keyword in normalized for keyword in ("thinking", "reasoner", "reasoning", "flash-high"))
+
+
 def _reasoning_effort_param_for_model(model: str, effort: str | None) -> dict[str, str]:
-    normalized_model = _normalized_model_name(model)
-    if not normalized_model.startswith(_REASONING_EFFORT_MODEL_PREFIXES):
+    if not _is_reasoning_model(model):
         return {}
 
     normalized_effort = (effort or "low").strip().lower()
@@ -180,8 +198,7 @@ def _reasoning_effort_param_for_model(model: str, effort: str | None) -> dict[st
 
 
 def _responses_reasoning_param_for_model(model: str, effort: str | None) -> dict[str, dict[str, str]]:
-    normalized_model = _normalized_model_name(model)
-    if not normalized_model.startswith(_REASONING_EFFORT_MODEL_PREFIXES):
+    if not _is_reasoning_model(model):
         return {}
 
     normalized_effort = (effort or "low").strip().lower()
@@ -329,6 +346,42 @@ def _looks_like_service_tier_unsupported(exc: Exception) -> bool:
             "extra",
             "not permitted",
             "not supported",
+        )
+    )
+
+
+def _strip_reasoning_param(params: dict[str, Any]) -> bool:
+    removed = False
+    for key in ("reasoning", "reasoning_effort"):
+        if key in params:
+            params.pop(key, None)
+            removed = True
+    return removed
+
+
+def _looks_like_reasoning_unsupported(exc: Exception) -> bool:
+    text = " ".join(
+        str(part)
+        for part in (
+            exc,
+            getattr(exc, "body", None),
+            getattr(exc, "response", None),
+        )
+        if part is not None
+    ).lower()
+    if "reasoning" not in text and "reasoning_effort" not in text:
+        return False
+    return any(
+        term in text
+        for term in (
+            "unknown",
+            "unsupported",
+            "unrecognized",
+            "invalid",
+            "extra",
+            "not permitted",
+            "not supported",
+            "unexpected",
         )
     )
 
@@ -1811,6 +1864,12 @@ class OpenAICompatibleClient:
                         request_id,
                     )
                     return await self._client.responses.create(**create_params)
+                if _looks_like_reasoning_unsupported(exc) and _strip_reasoning_param(create_params):
+                    log.warning(
+                        "[OpenAICompat:%s] reasoning param unsupported by upstream; retrying without it",
+                        request_id,
+                    )
+                    return await self._client.responses.create(**create_params)
                 raise
 
         async def _create_chat_completion_with_optional_param_fallback(create_params: dict[str, Any]) -> Any:
@@ -1820,6 +1879,12 @@ class OpenAICompatibleClient:
                 if _looks_like_service_tier_unsupported(exc) and _strip_service_tier_param(create_params):
                     log.warning(
                         "[OpenAICompat:%s] chat service_tier unsupported by upstream; retrying without it",
+                        request_id,
+                    )
+                    return await self._client.chat.completions.create(**create_params)
+                if _looks_like_reasoning_unsupported(exc) and _strip_reasoning_param(create_params):
+                    log.warning(
+                        "[OpenAICompat:%s] chat reasoning param unsupported by upstream; retrying without it",
                         request_id,
                     )
                     return await self._client.chat.completions.create(**create_params)
@@ -2102,7 +2167,11 @@ class OpenAICompatibleClient:
                         yield ApiTextDeltaEvent(text=visible)
                     continue
 
-                if event_type in {"response.reasoning.delta", "response.reasoning_text.delta"}:
+                if event_type in {
+                    "response.reasoning.delta",
+                    "response.reasoning_text.delta",
+                    "response.reasoning_summary_text.delta",
+                }:
                     reasoning_piece = (
                         _response_event_attr(event, "delta", "")
                         or _response_event_attr(event, "text", "")
