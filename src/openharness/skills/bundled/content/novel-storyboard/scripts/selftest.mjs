@@ -32,6 +32,7 @@ import {
   recipeDrift,
   renderHtml,
   renderMarkdown,
+  scaffoldFromScript,
   seedFromScript,
   segSeconds,
   slug,
@@ -588,6 +589,49 @@ eq(seeded.episodes[0].seedScenes[0].beats.length, 13, '底稿带全部节拍');
 ok(seeded.episodes[0].seedScenes[0].beats[0].seconds > 0, '每拍带秒数');
 eq(seedFromScript(SCRIPT, [2, 3]).episodes.map((e) => e.ep).join(','), '2,3', '--eps 区间过滤');
 eq(seedFromScript({}).episodes.length, 0, '空剧本不崩');
+
+/* ---------------- scaffoldFromScript 动作人物匹配 ---------------- */
+
+{
+  const mockScript = {
+    source: '测试剧',
+    episodes: [
+      {
+        ep: 1,
+        targetSeconds: 30,
+        scenes: [
+          {
+            sceneId: 'S01',
+            characters: ['C01', 'C02', 'C03'],
+            flow: [
+              { action: '李白抚摸斑白鬓发，凭栏面对深壑发出苍茫浩叹。' },
+              { line: '君不见高堂明镜悲白发，朝如青丝暮成雪！', speaker: 'C01' },
+              { action: '岑勋手执青铜酒樽快步上前，满斟烈酒相劝。' },
+              { line: '太白兄，且饮此杯，莫让浮名绊住凌云之志。', speaker: 'C02' },
+              { action: '元丹丘推杯相向，指向远天苍茫云海。' },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  const mockCast = {
+    characters: [
+      { id: 'C01', name: '李白', aliases: ['太白'] },
+      { id: 'C02', name: '岑勋', aliases: ['岑夫子'] },
+      { id: 'C03', name: '元丹丘', aliases: ['丹丘生'] },
+    ],
+  };
+
+  const scaffolded = scaffoldFromScript(mockScript, { cast: mockCast });
+  const allCuts = scaffolded.episodes[0].segments.flatMap((s) => s.cuts);
+  eq(allCuts[0].characters[0], 'C01', '动作一包含李白，分配给 C01');
+  eq(allCuts[1].characters[0], 'C01', '对白二说话人是李白，分配给 C01');
+  eq(allCuts[2].characters[0], 'C02', '动作三包含岑勋，正确分配给 C02 而非 C01');
+  eq(allCuts[3].characters[0], 'C02', '对白四说话人是岑勋，分配给 C02');
+  eq(allCuts[4].characters[0], 'C03', '动作五包含元丹丘，正确分配给 C03 而非 C01');
+}
 
 /* ---------------- slug / 枚举 ---------------- */
 

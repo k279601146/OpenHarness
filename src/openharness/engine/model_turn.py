@@ -35,7 +35,36 @@ class ModelTurnComplete:
     usage: UsageSnapshot
 
 
-ModelTurnStreamItem = tuple[StreamEvent, UsageSnapshot | None] | ModelTurnComplete
+def _apply_rolling_cache_control(messages: list[ConversationMessage]) -> list[ConversationMessage]:
+    """Apply an ephemeral cache_control breakpoint on the last user turn before the current turn.
+
+    Anthropic allows up to 4 cache breakpoints. In multi-turn conversations:
+    - Breakpoint 1: Static System Prompt
+    - Breakpoint 2: Tool Schemas
+    - Breakpoint 3: Last content block of the previous completed user turn
+    """
+    if len(messages) <= 1:
+        return messages
+
+    target_idx: int | None = None
+    for idx in range(len(messages) - 2, -1, -1):
+        if messages[idx].role == "user" and messages[idx].content:
+            target_idx = idx
+            break
+
+    if target_idx is None:
+        return messages
+
+    prepared_messages = list(messages)
+    target_msg = prepared_messages[target_idx]
+    if target_msg.content:
+        new_content = list(target_msg.content)
+        last_block = new_content[-1]
+        if hasattr(last_block, "cache_control") and not getattr(last_block, "cache_control", None):
+            new_content[-1] = last_block.model_copy(update={"cache_control": {"type": "ephemeral"}})
+            prepared_messages[target_idx] = target_msg.model_copy(update={"content": new_content})
+
+    return prepared_messages
 
 
 async def stream_model_turn(
@@ -61,10 +90,11 @@ async def stream_model_turn(
 
     async def _produce_model_events() -> None:
         try:
+            prepared_messages = _apply_rolling_cache_control(messages)
             async for stream_event in context.api_client.stream_message(
                 ApiMessageRequest(
                     model=context.model,
-                    messages=messages,
+                    messages=prepared_messages,
                     system_prompt=context.system_prompt,
                     max_tokens=effective_max_tokens,
                     tools=tool_schemas,

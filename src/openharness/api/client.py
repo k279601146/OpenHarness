@@ -314,6 +314,9 @@ class AnthropicApiClient:
                 )
             }
             params["extra_headers"] = {"x-client-request-id": str(uuid.uuid4())}
+        else:
+            extra_headers = params.setdefault("extra_headers", {})
+            extra_headers.setdefault("anthropic-beta", "prompt-caching-2024-07-31")
 
         try:
             stream_api = self._client.beta.messages if self._claude_oauth else self._client.messages

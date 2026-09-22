@@ -380,12 +380,17 @@ def _tool_schema_selected_for_context(tool_name: str, context: QueryContext) -> 
 
 
 def _tool_schemas_for_context(context: QueryContext) -> list[dict[str, Any]]:
-    return [
+    schemas = [
         tool.to_api_schema()
         for tool in context.tool_registry.list_tools()
         if _tool_available_for_context(tool.name, context)
         and _tool_schema_selected_for_context(tool.name, context)
     ]
+    if schemas:
+        # [Claude Code Pattern 13.2 / Anthropic Prompt Caching]
+        # 为最后一个工具注入缓存标记，锁定庞大的 Tools 协议层 (通常节省 2k~5k Tokens)
+        schemas[-1]["cache_control"] = {"type": "ephemeral"}
+    return schemas
 
 
 _TOOL_RATIONALE_FIELDS = ("rationale", "purpose", "thought")

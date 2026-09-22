@@ -445,7 +445,9 @@ export function gateReport(board, ctx = {}) {
     coverage: [], segCap: [], cutLen: [], fit: [], duration: [], crowd: [],
     id: [], size: [], camera: [], english: [], names: [], refs: [],
     h3s: [], h3d: [], h3e: [], style: [], recipe: [],
+    placeholder: [], density: [], h3motion: [],
   };
+  const allowPlaceholder = ctx.allowPlaceholder ?? false;
   // 配方卡库是可选挂载：ctx.recipes 为空就整门跳过（不是「没有 cut 带 recipe」就跳过）
   const recipes = ctx.recipes ?? null;
   let recipeRefs = 0;
@@ -557,6 +559,61 @@ export function gateReport(board, ctx = {}) {
         }
         for (const name of banned) {
           if (frame.includes(name)) bad.names.push(`${cid} 的分镜图提示词出现角色名「${name}」`);
+        }
+
+        if (!allowPlaceholder) {
+          // 1. 检查是否仍为脚手架空占位符
+          const isScaffoldTemplate = /^(?:extreme wide shot|wide shot|medium shot|close-up|extreme close-up),\s*cinematic composition in atmospheric lighting,\s*[^.]+\.?$/i.test(frame.trim());
+          const hasPlaceholderToken = /\[(?:TODO|ACTION NEEDED|STAGING NEEDED|SCAFFOLD)/i.test(frame);
+          if (isScaffoldTemplate || hasPlaceholderToken) {
+            bad.placeholder.push(`${cid} 分镜图提示词仍为脚手架占位符，未转译剧本动作与画面主体`);
+          }
+
+          // 2. 检查视听细节密度 (除景别、风格短语和常见修饰外，需有实质性主体动作与环境描述)
+          const sizePhrase = SHOT_SIZES[cut.size]?.phrase || '';
+          const stylePhrase = style?.phrase || '';
+          let stripped = frame.toLowerCase();
+          if (sizePhrase) stripped = stripped.replaceAll(sizePhrase.toLowerCase(), ' ');
+          if (stylePhrase) stripped = stripped.replaceAll(stylePhrase.toLowerCase(), ' ');
+          stripped = stripped
+            .replaceAll('cinematic composition in atmospheric lighting', ' ')
+            .replaceAll('cinematic film still', ' ')
+            .replaceAll('atmospheric lighting', ' ')
+            .replaceAll('16:9', ' ')
+            .replaceAll(',', ' ')
+            .replaceAll('.', ' ');
+          const coreWords = stripped.split(/\s+/).filter(Boolean);
+          if (coreWords.length < 8) {
+            bad.density.push(`${cid} 分镜图提示词视听细节不足（核心描述仅 ${coreWords.length} 词，至少需要 8 词以上具体主体、动作与环境交互）`);
+          }
+
+          // 3. 检查 H3Prompt 各镜动作动态演进
+          const slice = slices[ci];
+          if (slice != null) {
+            const term = promptLang === 'en' ? String(cut.camera).toLowerCase() : CAMERA_MOVES[cut.camera];
+            let motionSlice = slice
+              .replace(/^\[(?:Shot|镜头)\s*\d+\](?: At \d+:\d+\.\d+,| 于 \d+:\d+\.\d+，)?\s*/i, '')
+              .replace(/<d>[\s\S]*?<\/d>/g, ' ');
+            if (term) motionSlice = motionSlice.toLowerCase().replaceAll(term.toLowerCase(), ' ');
+            if (sizePhrase) motionSlice = motionSlice.toLowerCase().replaceAll(sizePhrase.toLowerCase(), ' ');
+            motionSlice = motionSlice
+              .replaceAll('shot', ' ')
+              .replaceAll('camera moves with', ' ')
+              .replaceAll('cinematic composition', ' ')
+              .replaceAll(',', ' ')
+              .replaceAll('.', ' ');
+            if (promptLang === 'en') {
+              const motionWords = motionSlice.split(/\s+/).filter(Boolean);
+              if (motionWords.length < 5) {
+                bad.h3motion.push(`${cid} 在 h3Prompt 的 [Shot ${ci + 1}] 缺乏动态演变描述（不能仅有景别与运镜词，需描述角色动作演化与画面轨迹）`);
+              }
+            } else {
+              const zhChars = motionSlice.replace(/[\s,，.。!！?？]/g, '').length;
+              if (zhChars < 6) {
+                bad.h3motion.push(`${cid} 在 h3Prompt 的 [Shot ${ci + 1}] 缺乏动态演变描述（不能仅有景别与运镜词，需描述角色动作演化与画面轨迹）`);
+              }
+            }
+          }
         }
 
         // 镜头配方：id 在卡库里 + 每条必备短语进了本切的 frame
@@ -826,6 +883,55 @@ export function scaffoldFromScript(script, { outline = null, cast = null, art = 
     maxCutSeconds: dynamicMaxCut,
   };
 
+  // 3. 建立角色名称与别名字典，用于动作节拍的人物识别
+  const charDefMap = new Map();
+  const castList = cast?.characters ?? cast?.cast ?? [];
+  const outlineList = outline?.characters ?? outline?.cast ?? [];
+  const maxChars = Math.max(castList.length, outlineList.length);
+
+  for (let i = 0; i < maxChars; i++) {
+    const cCast = castList[i] ?? {};
+    const cOut = outlineList[i] ?? {};
+    const id = cCast.id || cOut.id || `C${String(i + 1).padStart(2, '0')}`;
+    const names = new Set();
+    if (cCast.name && typeof cCast.name === 'string') names.add(cCast.name.trim());
+    if (cOut.name && typeof cOut.name === 'string') names.add(cOut.name.trim());
+    for (const a of (cCast.aliases ?? [])) {
+      if (a && typeof a === 'string') names.add(a.trim());
+    }
+    for (const a of (cOut.aliases ?? [])) {
+      if (a && typeof a === 'string') names.add(a.trim());
+    }
+    charDefMap.set(id, names);
+    charDefMap.set(id.toLowerCase(), names);
+    if (cCast.id) charDefMap.set(cCast.id, names);
+    if (cOut.id) charDefMap.set(cOut.id, names);
+  }
+
+  const matchCharactersInText = (text, candidateIds) => {
+    if (!text || typeof text !== 'string' || !candidateIds?.length) return [];
+    const matched = [];
+    for (const cid of candidateIds) {
+      const names = charDefMap.get(cid) || charDefMap.get(String(cid).toLowerCase());
+      if (!names) continue;
+      let earliestPos = -1;
+      for (const name of names) {
+        if (!name || name.length < 2) continue;
+        const pos = text.indexOf(name);
+        if (pos !== -1) {
+          if (earliestPos === -1 || pos < earliestPos) {
+            earliestPos = pos;
+          }
+        }
+      }
+      if (earliestPos !== -1) {
+        matched.push({ cid, pos: earliestPos });
+      }
+    }
+    matched.sort((a, b) => a.pos - b.pos);
+    return matched.map((m) => m.cid);
+  };
+
   const tk = H3_TOKENS[lang] ?? H3_TOKENS.en;
   const episodes = [];
 
@@ -845,8 +951,13 @@ export function scaffoldFromScript(script, { outline = null, cast = null, art = 
         let charRef = [];
         if (isLine && b.speaker && b.speaker !== 'VO' && sc.characters.includes(b.speaker)) {
           charRef = [b.speaker];
-        } else if (sc.characters.length > 0) {
-          charRef = sc.characters.slice(0, 1);
+        } else {
+          const matched = matchCharactersInText(b.text, sc.characters);
+          if (matched.length > 0) {
+            charRef = matched.slice(0, Math.min(matched.length, p.maxOnScreen));
+          } else if (sc.characters.length > 0) {
+            charRef = sc.characters.slice(0, 1);
+          }
         }
         sceneCuts.push({
           beats: [b.n, b.n],

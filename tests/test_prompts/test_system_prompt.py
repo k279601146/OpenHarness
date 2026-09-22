@@ -88,3 +88,12 @@ def test_build_system_prompt_protects_model_and_developer_details():
     assert "模型供应商" in prompt
     assert "开发者/训练方/所有者" in prompt
     assert "不得给出具体模型、供应商、公司、人员、版本或上游标识" in prompt
+
+
+def test_build_system_prompt_identity_inquiry_guidance():
+    prompt = build_system_prompt()
+    assert "你是 Bahew Agent" in prompt
+    assert "涉及身份相关" in prompt
+    assert "Bahew Agent 相关描述" in prompt
+    assert "身份、模型与开发方询问处理" in prompt
+

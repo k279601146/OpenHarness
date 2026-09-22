@@ -16,6 +16,7 @@ class TextBlock(BaseModel):
 
     type: Literal["text"] = "text"
     text: str
+    cache_control: dict[str, Any] | None = None
 
 
 class ImageBlock(BaseModel):
@@ -54,6 +55,7 @@ class ToolResultBlock(BaseModel):
     content: str
     is_error: bool = False
     result_metadata: dict[str, Any] = Field(default_factory=dict)
+    cache_control: dict[str, Any] | None = None
 
 
 ContentBlock = Annotated[
@@ -173,11 +175,11 @@ def sanitize_conversation_messages(messages: list[ConversationMessage]) -> list[
 
 def serialize_content_block(block: ContentBlock) -> dict[str, Any]:
     """Convert a local content block into the provider wire format."""
+    result: dict[str, Any]
     if isinstance(block, TextBlock):
-        return {"type": "text", "text": block.text}
-
-    if isinstance(block, ImageBlock):
-        return {
+        result = {"type": "text", "text": block.text}
+    elif isinstance(block, ImageBlock):
+        result = {
             "type": "image",
             "source": {
                 "type": "base64",
@@ -185,21 +187,25 @@ def serialize_content_block(block: ContentBlock) -> dict[str, Any]:
                 "data": block.data,
             },
         }
-
-    if isinstance(block, ToolUseBlock):
-        return {
+    elif isinstance(block, ToolUseBlock):
+        result = {
             "type": "tool_use",
             "id": block.id,
             "name": block.name,
             "input": block.input,
         }
+    else:
+        result = {
+            "type": "tool_result",
+            "tool_use_id": block.tool_use_id,
+            "content": block.content,
+            "is_error": block.is_error,
+        }
 
-    return {
-        "type": "tool_result",
-        "tool_use_id": block.tool_use_id,
-        "content": block.content,
-        "is_error": block.is_error,
-    }
+    cache_control = getattr(block, "cache_control", None)
+    if cache_control:
+        result["cache_control"] = cache_control
+    return result
 
 
 def assistant_message_from_api(raw_message: Any) -> ConversationMessage:
