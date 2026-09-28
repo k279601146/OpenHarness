@@ -185,7 +185,31 @@ export function seedFromOutline(outline) {
     };
   });
 
-  return { source: outline?.source ?? '', style: DEFAULT_STYLE, scenes };
+  // 道具：大纲从 1.1.0 起带 props（id / name / function / beatIds），有就预填。
+  // 搬过来的是改编阶段拍板的事实——哪几件物件承载剧情、各自承载什么、托起哪几个
+  // 爽点、在哪几集出现。留空的是美术层的活：尺度、锚点、状态变体、白底提示词。
+  // 大纲没有 props 字段就返回空数组，模型照 prop-pass.md 从原文提取，跟以前一样。
+  const beatType = new Map((outline?.beats ?? []).map((b) => [b?.id, b?.type]));
+  const props = (outline?.props ?? []).map((pr) => {
+    const episodes = eps.filter((e) => (e?.propIds ?? []).includes(pr.id)).map((e) => e.ep);
+    return {
+      id: pr.id,
+      name: pr.name,
+      // 大纲的 function 就是这里的 summary：两边都指「它在戏里干什么」，不是材质描述
+      summary: pr.function ?? '',
+      // 模型要填的设计字段，先占位
+      scale: '',
+      anchors: [],
+      states: [],
+      relatedScenes: [],
+      carriedBy: [],
+      image: { prompt: '', negativePrompt: '', sheet: '', tags: [] },
+      // 从 outline 搬来的事实，不用再想
+      usage: { episodes, beats: (pr.beatIds ?? []).map((id) => beatType.get(id)).filter(Boolean) },
+    };
+  });
+
+  return { source: outline?.source ?? '', style: DEFAULT_STYLE, scenes, props };
 }
 
 /* ------------------------------------------------------------------ */
@@ -328,7 +352,8 @@ export function gateReport(doc, castNames = null) {
 /* validate                                                            */
 /* ------------------------------------------------------------------ */
 
-export function validateArt(doc, castNames = null) {
+export function validateArt(doc, castNames = null, options = {}) {
+  const allowPlaceholder = Boolean(options?.allowPlaceholder);
   const problems = [];
   const p = (msg) => problems.push(msg);
   if (!doc || typeof doc !== 'object') return ['art.json 不是对象'];
@@ -414,6 +439,24 @@ export function validateArt(doc, castNames = null) {
     }
   }
 
+  if (!allowPlaceholder) {
+    const placeholderRe = /\[(?:TODO|ACTION NEEDED|STAGING NEEDED)[\s\S]*?\]/i;
+    for (const s of scenes) {
+      const label = s?.name ?? s?.id ?? '(无名)';
+      if (placeholderRe.test(s?.summary ?? '')) p(`[${label}] summary 包含未转译占位符`);
+      if (placeholderRe.test(s?.image?.prompt ?? '') || placeholderRe.test(s?.image?.sheet ?? '')) {
+        p(`[${label}] image 提示词包含未转译占位符`);
+      }
+    }
+    for (const pr of doc.props ?? []) {
+      const label = pr?.name ?? pr?.id ?? '(无名)';
+      if (placeholderRe.test(pr?.summary ?? '')) p(`[${label}] summary 包含未转译占位符`);
+      if (placeholderRe.test(pr?.image?.prompt ?? '') || placeholderRe.test(pr?.image?.sheet ?? '')) {
+        p(`[${label}] image 提示词包含未转译占位符`);
+      }
+    }
+  }
+
   // 质量门失败并入违规列表
   for (const g of gateReport(doc, castNames)) {
     if (!g.ok) p(`质量门未过：${g.label}${g.detail ? `（${g.detail}）` : ''}`);
@@ -425,9 +468,9 @@ export function validateArt(doc, castNames = null) {
 function structuredValidationErrors(problems) {
   return problems.map((message) => {
     const text = String(message);
-    const code = /提示词|prompt|英文/.test(text) ? 'prompt' : /锚点|anchor|光照|lighting/.test(text) ? 'asset_prompt' : /角色|人物/.test(text) ? 'character_reference' : /道具|prop/.test(text) ? 'prop' : 'schema';
+    const code = /占位符|placeholder/i.test(text) ? 'placeholder' : /提示词|prompt|英文/.test(text) ? 'prompt' : /锚点|anchor|光照|lighting/.test(text) ? 'asset_prompt' : /角色|人物/.test(text) ? 'character_reference' : /道具|prop/.test(text) ? 'prop' : 'schema';
     const match = text.match(/(S\d+|P\d+)/i);
-    const fields = code === 'prompt' ? ['prompt', 'negativePrompt'] : code === 'asset_prompt' ? ['anchors', 'lighting', 'prompt'] : code === 'character_reference' ? ['prompt'] : code === 'prop' ? ['props', 'states'] : [];
+    const fields = code === 'placeholder' ? ['summary', 'prompt'] : code === 'prompt' ? ['prompt', 'negativePrompt'] : code === 'asset_prompt' ? ['anchors', 'lighting', 'prompt'] : code === 'character_reference' ? ['prompt'] : code === 'prop' ? ['props', 'states'] : [];
     return { code, path: match ? match[1] : null, message: text, fields, repair_scope: match ? 'item' : 'artifact' };
   });
 }
@@ -1119,7 +1162,8 @@ function main(argv) {
       return;
     }
 
-    const problems = validateArt(doc, names);
+    const allowPlaceholder = rest.includes('--allow-placeholder');
+    const problems = validateArt(doc, names, { allowPlaceholder });
     if (problems.length) {
       if (rest.includes('--json')) {
         console.log(JSON.stringify({ ok: false, stage: 'art', errors: structuredValidationErrors(problems), gate_count: problems.length }));

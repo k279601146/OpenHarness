@@ -1628,10 +1628,14 @@ def model_rule(kind: Literal["image", "video", "audio", "music"], model_id: str 
     rule = group.get(key)
     if isinstance(rule, dict) and rule.get("enabled", True):
         return rule
+    alt_key = f"apimart-{key}" if not key.startswith("apimart-") else key[len("apimart-"):]
+    alt_rule = group.get(alt_key)
+    if isinstance(alt_rule, dict) and alt_rule.get("enabled", True):
+        return alt_rule
     for r in group.values():
         if isinstance(r, dict) and r.get("enabled", True):
             allowed = [str(x).strip().lower() for x in r.get("allowed_upstream_model_ids", []) if x]
-            if key in allowed:
+            if key in allowed or alt_key in allowed:
                 return r
     return None
 
@@ -1641,7 +1645,15 @@ def enabled_model_ids(kind: Literal["image", "video", "audio", "music"], rules: 
     group = loaded.get(kind)
     if not isinstance(group, dict):
         return set()
-    return {model_id for model_id, rule in group.items() if isinstance(rule, dict) and rule.get("enabled", True)}
+    result = set()
+    for model_id, rule in group.items():
+        if isinstance(rule, dict) and rule.get("enabled", True):
+            result.add(model_id)
+            if model_id.startswith("apimart-"):
+                result.add(model_id[len("apimart-"):])
+            else:
+                result.add(f"apimart-{model_id}")
+    return result
 
 
 def estimate_image_pricing(

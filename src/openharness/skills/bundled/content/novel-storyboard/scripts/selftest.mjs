@@ -117,7 +117,7 @@ eq(paramsOf({ params: { maxCutSeconds: 4 } }).maxCutSeconds, 4, '分镜上限可
 /* ---------------- 质量门：全绿基线 ---------------- */
 
 ok(gateReport(FIXTURE, CTX).every((g) => g.ok), '样例带全部上游全部门通过');
-eq(gateReport(FIXTURE, CTX).length, 17, '十七道门');
+eq(gateReport(FIXTURE, CTX).length, 20, '二十道门');
 {
   const gates = gateReport(FIXTURE, {});
   ok(gates.every((g) => g.ok), '不带上游也通过（对账门跳过）');
@@ -366,6 +366,45 @@ eq(h3Remainder('a <d>[Chinese] 你好</d> b "营业中" c'), 'a   b   c', 'h3Rem
   ok(gate(doc, 'style-phrase').ok, '风格短语匹配应忽略大小写');
 }
 
+/* ---------------- 质量门：反占位符与视听密度门禁 ---------------- */
+
+// frame-not-placeholder — 脚手架空占位符或包含待办标记直接拦截
+{
+  const doc = clone(FIXTURE);
+  doc.episodes[0].segments[0].cuts[0].frame = 'wide shot, cinematic composition in atmospheric lighting, cinematic film still.';
+  const g = gate(doc, 'frame-not-placeholder');
+  ok(!g.ok, '脚手架空占位模板被拦');
+  ok(g.detail.includes('仍为脚手架占位符'), '明确指出占位符违规');
+
+  // 带 --allow-placeholder 时跳过
+  const gSkip = gate(doc, 'frame-not-placeholder', { ...CTX, allowPlaceholder: true });
+  ok(gSkip.ok, '--allow-placeholder 模式下允许占位符通过');
+}
+{
+  const doc = clone(FIXTURE);
+  doc.episodes[0].segments[0].cuts[0].frame = 'medium shot, [ACTION NEEDED: 狂奔], cinematic film still.';
+  ok(!gate(doc, 'frame-not-placeholder').ok, '带 [ACTION NEEDED: ...] 占位标记被拦');
+}
+
+// frame-density — 核心描述不足 8 词直接拦截
+{
+  const doc = clone(FIXTURE);
+  doc.episodes[0].segments[0].cuts[0].frame = 'medium shot, a girl runs, cinematic film still.';
+  const g = gate(doc, 'frame-density');
+  ok(!g.ok, '核心视听描述过短被拦');
+  ok(g.detail.includes('视听细节不足'), '点名核心描述词数不足');
+}
+
+// h3-motion-density — 各镜头缺乏主体动态演进描述被拦
+{
+  const doc = clone(FIXTURE);
+  const seg = doc.episodes[0].segments[0];
+  seg.h3Prompt = seg.h3Prompt.replace(/\[Shot 1\][\s\S]*?(?=\[Shot 2\])/, '[Shot 1] tracking shot, camera moves with tracking shot.\n');
+  const g = gate(doc, 'h3-motion-density');
+  ok(!g.ok, 'H3 镜头仅有景别运镜无动态演进被拦');
+  ok(g.detail.includes('缺乏动态演变描述'), '明确指出动态演化缺失');
+}
+
 /* ---------------- 镜头配方卡库（可选挂载） ---------------- */
 /*
  * 受限 frontmatter 解析是本 skill 自己写的（刻意不 import shot-recipes.mjs，
@@ -603,6 +642,7 @@ eq(seedFromScript({}).episodes.length, 0, '空剧本不崩');
           {
             sceneId: 'S01',
             characters: ['C01', 'C02', 'C03'],
+            props: ['P01'],
             flow: [
               { action: '李白抚摸斑白鬓发，凭栏面对深壑发出苍茫浩叹。' },
               { line: '君不见高堂明镜悲白发，朝如青丝暮成雪！', speaker: 'C01' },
@@ -624,11 +664,19 @@ eq(seedFromScript({}).episodes.length, 0, '空剧本不崩');
     ],
   };
 
-  const scaffolded = scaffoldFromScript(mockScript, { cast: mockCast });
+  const mockArt = {
+    props: [
+      { id: 'P01', name: '青铜酒樽' },
+    ],
+  };
+
+  const scaffolded = scaffoldFromScript(mockScript, { cast: mockCast, art: mockArt });
   const allCuts = scaffolded.episodes[0].segments.flatMap((s) => s.cuts);
   eq(allCuts[0].characters[0], 'C01', '动作一包含李白，分配给 C01');
   eq(allCuts[1].characters[0], 'C01', '对白二说话人是李白，分配给 C01');
   eq(allCuts[2].characters[0], 'C02', '动作三包含岑勋，正确分配给 C02 而非 C01');
+  eq(allCuts[2].props[0], 'P01', '动作三手执青铜酒樽，正确分配道具 P01');
+  ok(Array.isArray(allCuts[0].props), '所有 cut 均具备 props 数组输出结构');
   eq(allCuts[3].characters[0], 'C02', '对白四说话人是岑勋，分配给 C02');
   eq(allCuts[4].characters[0], 'C03', '动作五包含元丹丘，正确分配给 C03 而非 C01');
 }
@@ -662,7 +710,7 @@ ok(html.includes('分镜节奏带'), '01 分镜节奏带');
 ok(html.includes('分集分镜表'), '02 分集分镜表');
 ok(html.includes('生成批次单'), '03 生成批次单');
 ok(html.includes('配音对齐单'), '04 配音对齐单');
-ok(html.includes('✓ 质量门 17 / 17'), '页眉徽章全绿');
+ok(html.includes('✓ 质量门 20 / 20'), '页眉徽章全绿');
 ok(html.includes('class="rseg"'), '节奏带按段分组（粗分隔）');
 ok(html.includes('#seg-E01-01'), '节奏带段可跳转');
 ok(html.includes('主分镜图 · #1 未生成'), '主分镜图缺图时显示占位不装有');
@@ -722,7 +770,7 @@ ok(html.includes('老周'), 'html 里 ID 换成名字');
   const en = renderHtml(FIXTURE, { ...CTX, lang: 'en' });
   ok(en.includes('<html lang="en">'), 'en 报告的 html lang 属性跟着语言走');
   ok(en.includes('Export JSON'), 'en 界面：导出按钮英文');
-  ok(en.includes('Quality gates 17 / 17'), 'en 界面：页眉徽章英文');
+  ok(en.includes('Quality gates 20 / 20'), 'en 界面：页眉徽章英文');
   ok(en.includes('Cut rhythm strip'), 'en 界面：节奏带节标题英文');
   ok(en.includes('Segment cards'), 'en 界面：分镜表节标题英文');
   ok(en.includes('Generation batches'), 'en 界面：批次节标题英文');

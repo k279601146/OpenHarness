@@ -327,7 +327,7 @@ export function seedFromOutline(outline, epRange = null) {
       beatsClaimed: [...new Set((outline.beats ?? []).filter((b) => b.episode === e.ep).map((b) => b.type))],
       scenes: [],
       // 从大纲搬来的参考，写完删掉也行
-      seedNote: `大纲梗概：${e.synopsis ?? ''}　候选场景：${(e.sceneIds ?? []).join('、')}　人物：${(e.characterIds ?? []).join('、')}`,
+      seedNote: `大纲梗概：${e.synopsis ?? ''}　候选场景：${(e.sceneIds ?? []).join('、')}　人物：${(e.characterIds ?? []).join('、')}${(e.propIds ?? []).length ? `　道具：${(e.propIds ?? []).join('、')}` : ''}`,
     }));
   return { source: outline?.source ?? '', episodes };
 }

@@ -590,7 +590,8 @@ const normalise = (s) => String(s).replace(/\s+/g, '');
  * @param sourceText 原文；null 则跳过逐字引文校验
  * @param lang       报告语言，决定人类可读字段该是什么语言
  */
-export function validateCast(characters, sourceText, lang = DEFAULT_LANG, style = DEFAULT_STYLE) {
+export function validateCast(characters, sourceText, lang = DEFAULT_LANG, style = DEFAULT_STYLE, options = {}) {
+  const allowPlaceholder = Boolean(options?.allowPlaceholder);
   const problems = [];
   const flatSource = sourceText === null ? null : normalise(sourceText);
   const at = (name, msg) => problems.push(`[${name}] ${msg}`);
@@ -644,17 +645,19 @@ export function validateCast(characters, sourceText, lang = DEFAULT_LANG, style 
     return inter / new Set([...A, ...B]).size;
   };
   const SIM_MAX = 0.75;
-  for (const [field, label] of [['prompt', '出图提示词'], ['voice', '音色提示词']]) {
-    const get = (c) => (field === 'prompt' ? c?.image?.prompt : c?.voice?.prompt);
-    for (let i = 0; i < characters.length; i += 1) {
-      for (let j = i + 1; j < characters.length; j += 1) {
-        const sim = promptSim(get(characters[i]), get(characters[j]));
-        if (sim >= SIM_MAX) {
-          const pct = Math.round(sim * 100);
-          problems.push(
-            `${characters[i]?.name ?? '(无名)'} 与 ${characters[j]?.name ?? '(无名)'} 的${label}雷同 ${pct}%`
-            + `（上限 ${Math.round(SIM_MAX * 100)}%）——同一批角色要能区分开，别套同一个模板`,
-          );
+  if (!allowPlaceholder) {
+    for (const [field, label] of [['prompt', '出图提示词'], ['voice', '音色提示词']]) {
+      const get = (c) => (field === 'prompt' ? c?.image?.prompt : c?.voice?.prompt);
+      for (let i = 0; i < characters.length; i += 1) {
+        for (let j = i + 1; j < characters.length; j += 1) {
+          const sim = promptSim(get(characters[i]), get(characters[j]));
+          if (sim >= SIM_MAX) {
+            const pct = Math.round(sim * 100);
+            problems.push(
+              `${characters[i]?.name ?? '(无名)'} 与 ${characters[j]?.name ?? '(无名)'} 的${label}雷同 ${pct}%`
+              + `（上限 ${Math.round(SIM_MAX * 100)}%）——同一批角色要能区分开，别套同一个模板`,
+            );
+          }
         }
       }
     }
@@ -705,6 +708,33 @@ export function validateCast(characters, sourceText, lang = DEFAULT_LANG, style 
       }
     }
 
+    if (!allowPlaceholder) {
+      if (persona) {
+        if (/身穿符合身份的典型服饰|五官端正清晰|神态具有鲜明辨识度/i.test(persona.appearance || '') || /\[(?:TODO|待细化)/i.test(persona.appearance || '')) {
+          at(name, 'persona.appearance 包含通用空占位套话或待办标记，必须为该角色量身定制身材五官、发型与服饰细节');
+        }
+        if (Array.isArray(persona.personality)) {
+          const joined = persona.personality.join(',');
+          if (joined === '性格鲜明,富有情感,行动果断' || /\[(?:TODO|待细化)/i.test(joined)) {
+            at(name, 'persona.personality 包含通用模板套话，必须根据剧情与角色特质定制性格特征');
+          }
+        }
+        if (/言谈举止自然，情绪随情节发展自然流露/i.test(persona.temperament || '') || /\[(?:TODO|待细化)/i.test(persona.temperament || '')) {
+          at(name, 'persona.temperament 包含通用模板套话，必须定制该角色的言谈举止与情绪反应');
+        }
+      }
+      if (image) {
+        if (/\[(?:TODO|待细化)/i.test(image.prompt || '') || /Dynamic front-angle concept portrait of an energetic|Gentle three-quarter study of a weathered|Vibrant candid character design of an innocent|Full concept turnaround study of a/i.test(image.prompt || '')) {
+          at(name, 'image.prompt 仍为脚手架通用占位模板，必须为该角色量身定制外貌服饰特征');
+        }
+      }
+      if (voice) {
+        if (/\[(?:TODO|待细化)/i.test(voice.prompt || '') || /Clear and lively.*voice with youthful cadence|Warm, resonant.*vocal timbre with gentle cadence|High and expressive.*voice with brisk innocent intonation|Balanced and grounded.*voice performance/i.test(voice.prompt || '')) {
+          at(name, 'voice.prompt 仍为脚手架通用占位模板，必须为该角色量身定制音色与语速特征');
+        }
+      }
+    }
+
     // --- 引文必须逐字 ---
     if (flatSource && Array.isArray(persona?.evidence)) {
       for (const quote of persona.evidence) {
@@ -717,7 +747,7 @@ export function validateCast(characters, sourceText, lang = DEFAULT_LANG, style 
     }
 
     // --- 出图提示词不许出现人名 ---
-    if (image) {
+    if (!allowPlaceholder && image) {
       const names = [c?.name, ...(Array.isArray(c?.aliases) ? c.aliases : [])].filter(
         (n) => typeof n === 'string' && n.trim(),
       );
@@ -733,18 +763,20 @@ export function validateCast(characters, sourceText, lang = DEFAULT_LANG, style 
     // --- 语言分工 ---
     // 机器字段永远英文；人类字段跟随报告语言。
     // 只有 zh / en 能可靠自动判别，其他语言不猜、跳过。
-    for (const [group, fields] of Object.entries(MACHINE_FIELDS)) {
-      const obj = c?.[group];
-      if (!obj) continue;
-      for (const f of fields) {
-        if (typeof obj[f] === 'string' && CJK.test(obj[f])) {
-          at(name, `${group}.${f} 是喂给模型的，必须英文，但含中日韩字符`);
+    if (!allowPlaceholder) {
+      for (const [group, fields] of Object.entries(MACHINE_FIELDS)) {
+        const obj = c?.[group];
+        if (!obj) continue;
+        for (const f of fields) {
+          if (typeof obj[f] === 'string' && CJK.test(obj[f])) {
+            at(name, `${group}.${f} 是喂给模型的，必须英文，但含中日韩字符`);
+          }
         }
       }
-    }
-    if (Array.isArray(image?.tags)) {
-      for (const t of image.tags) {
-        if (typeof t === 'string' && CJK.test(t)) at(name, `image.tags 必须英文，但「${t}」含中日韩字符`);
+      if (Array.isArray(image?.tags)) {
+        for (const t of image.tags) {
+          if (typeof t === 'string' && CJK.test(t)) at(name, `image.tags 必须英文，但「${t}」含中日韩字符`);
+        }
       }
     }
     // --- 风格与提示词必须匹配 ---
@@ -905,23 +937,7 @@ export function scaffoldFromOutline(outline, { lang = null, style = null, source
     }));
 
     const genderTerm = isMale ? 'male' : isFemale ? 'female' : 'person';
-    
-    // 角色特异性 Prompt，彻底避开 SIM_MAX (0.75) 重合率门禁
-    const distinctPrompts = [
-      `Dynamic front-angle concept portrait of an energetic ${ageEnglish} ${genderTerm} in everyday wardrobe, clear focused gaze, cinematic edge lighting.`,
-      `Gentle three-quarter study of a weathered ${ageEnglish} ${genderTerm} wrapped in textured seasonal garments, observant and quiet demeanor, soft atmospheric lighting.`,
-      `Vibrant candid character design of an innocent ${ageEnglish} ${genderTerm} dressed in playful functional clothing, curious expression, diffused natural illumination.`,
-      `Full concept turnaround study of a ${importance} ${ageEnglish} ${genderTerm} featuring characteristic pose, tailored costume accents, grounded neutral backdrop.`,
-    ];
-    const distinctVisualPhrase = distinctPrompts[index % distinctPrompts.length];
-
-    const distinctLocalPrompts = [
-      `影视级半写实概念图，${gender === '未知' ? '人物' : gender}性特征鲜明，服饰与神态贴合故事时代背景。`,
-      `饱含岁月质感的人物半写实肖像，面容生动自然，服饰纹理朴实清晰。`,
-      `童真明媚的人物半身概念插画，眼神灵动纯洁，富有生活气息。`,
-      `神态生动的角色半写实立绘，身姿舒展，动作契合剧情设定。`,
-    ];
-    const distinctLocalPhrase = distinctLocalPrompts[index % distinctLocalPrompts.length];
+    const desc = String(oc.description || oc.profile || '').trim();
 
     // 三视图标准 Sheet 模板，末尾必定携带完整 style 预设约束
     const styleParts = [
@@ -936,14 +952,17 @@ export function scaffoldFromOutline(outline, { lang = null, style = null, source
 
     const sheetTemplate = `Single character model sheet on ONE 16:9 landscape canvas divided by thin hairline rules into three zones for a ${ageEnglish} ${genderTerm} in production attire. LEFT ZONE occupies about 34% of canvas width featuring one high-detail bust portrait head-and-shoulders as facial reference. RIGHT-TOP ZONE shows three full-body views (front, side, back) standing on the same ground level line. PROPORTIONS ARE CRITICAL: full body figures maintain consistent head-to-body ratio and equal height, feet aligned on ground line. RIGHT-BOTTOM ZONE contains four small isolated close-up studies of key wardrobe and prop details. LIGHTING IN THE LEFT ZONE ONLY: soft key light with natural falloff. LIGHTING IN THE RIGHT ZONES: flat even orthographic lighting with no directional shadows for easy cutout. Entire canvas has pure white background. ${styleParts}`;
 
-    // 声音特异性 Prompt，彻底避开 SIM_MAX 拦截
-    const voicePrompts = [
-      `Clear and lively ${genderTerm} voice with youthful cadence, bright Mandarin tenor tones, energetic pacing.`,
-      `Warm, resonant ${genderTerm} vocal timbre with gentle cadence, mature Mandarin diction, measured pacing.`,
-      `High and expressive ${genderTerm} voice with brisk innocent intonation, cheerful Mandarin cadence.`,
-      `Balanced and grounded ${genderTerm} voice performance, steady Mandarin pacing, authentic emotional range.`,
-    ];
-    const voicePromptEn = voicePrompts[index % voicePrompts.length];
+    const appearanceDraft = desc
+      ? `${desc}（请在此详述五官特征、发型发色与符合时代的服饰穿着细节）`
+      : `[待细化外貌：${charName}，${role || '角色'}。请在此详述身形体态、五官眼神、发型发色与符合时代的服饰穿着细节]`;
+
+    const personalityTraits = Array.isArray(oc.personality) && oc.personality.length
+      ? oc.personality
+      : [role ? `${role}气质` : '沉稳敏锐', arc ? '有决断力' : '善于观察', '性格鲜明'];
+
+    const promptDraft = `[TODO: detailed visual prompt for character: a ${ageEnglish} ${genderTerm}, distinctive facial features and clothing, cinematic lighting.]`;
+    const promptLocalDraft = `[待细化出图提示词：${ageGuess}，半写实立绘，五官立体生动，服饰质感真实。]`;
+    const voicePromptDraft = `[TODO: voice prompt for character: a natural ${genderTerm} vocal timbre with clear diction, balanced resonance and measured pacing.]`;
 
     const card = {
       name: charName,
@@ -954,9 +973,9 @@ export function scaffoldFromOutline(outline, { lang = null, style = null, source
         gender,
         ageRange: ageGuess,
         identity: role || '故事人物',
-        appearance: `身穿符合身份的典型服饰，五官端正清晰，神态具有鲜明辨识度。`,
-        personality: ['性格鲜明', '富有情感', '行动果断'],
-        temperament: '言谈举止自然，情绪随情节发展自然流露。',
+        appearance: appearanceDraft,
+        personality: personalityTraits,
+        temperament: arc ? `性格受动机驱动，在剧情推进中表现出${arc}相关的言谈举止。` : `[待细化性情：${charName}的日常言谈举止、说话节奏与情绪流露方式]`,
         motivation: arc || '积极参与事件并寻求最佳解决途径。',
         arc: arc || '在故事进程中直面抉择并迎来心态转变。',
         relationships,
@@ -964,21 +983,21 @@ export function scaffoldFromOutline(outline, { lang = null, style = null, source
       },
       image: {
         style: preset.label?.[chosenLang] || preset.label?.zh || preset.label?.en || resolvedStyle,
-        prompt: distinctVisualPhrase,
-        promptLocal: distinctLocalPhrase,
+        prompt: promptDraft,
+        promptLocal: promptLocalDraft,
         negativePrompt: preset.negative || 'photorealistic photo, 3d render, deformed limbs, extra fingers, text, watermark, bad anatomy',
         tags: ['character sheet', 'concept art', 'semi-realistic', 'production-ready', `${importance}-role`],
         sheet: sheetTemplate,
       },
       voice: {
-        timbre: chosenLang === 'zh' ? '音质清晰纯正，声线自然沉稳' : 'Clear and balanced vocal timbre',
+        timbre: chosenLang === 'zh' ? `${role || '角色'}专属音质，音色清晰自然` : 'Clear and balanced vocal timbre',
         pitch: chosenLang === 'zh' ? '中音' : 'Medium',
         pace: chosenLang === 'zh' ? '语速自然适中' : 'Natural and measured pace',
         accent: chosenLang === 'zh' ? '标准普通话' : 'Standard clear accent',
         emotion: chosenLang === 'zh' ? '自然真挚，富有感染力' : 'Sincere and emotionally grounded',
-        referenceHint: chosenLang === 'zh' ? '符合角色年龄与身份设定的典型音色' : 'Typical voice suited for the age and role profile',
-        prompt: voicePromptEn,
-        promptLocal: chosenLang === 'zh' ? '普通话自然发音，情绪表达饱满真实。' : 'Natural voice performance with clear diction.',
+        referenceHint: chosenLang === 'zh' ? `符合${charName}年龄与身份设定的典型音色` : 'Typical voice suited for the age and role profile',
+        prompt: voicePromptDraft,
+        promptLocal: chosenLang === 'zh' ? `普通话自然发音，表现${charName}独特的性格底色。` : 'Natural voice performance with clear diction.',
       },
     };
 
@@ -2098,7 +2117,8 @@ function main(argv) {
     const style = flag(rest, '--style', castStyle);
     const source = bookPath ? readFileSync(resolve(bookPath), 'utf8') : null;
     if (!bookPath) console.error('⚠️ 没给原文，跳过逐字引文校验');
-    const problems = validateCast(characters, source, lang, style);
+    const allowPlaceholder = rest.includes('--allow-placeholder') || rest.includes('--scaffold-only');
+    const problems = validateCast(characters, source, lang, style, { allowPlaceholder });
     if (!SUPPORTED_STYLES.includes(style)) {
       problems.unshift(`顶层 style=${style} 不是已知预设（${SUPPORTED_STYLES.join('/')}）`);
     }

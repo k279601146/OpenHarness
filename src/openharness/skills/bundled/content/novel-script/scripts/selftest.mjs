@@ -292,6 +292,7 @@ eq(seeded.episodes[1].beatsClaimed.length, 0, '没有爽点的集为空数组');
 eq(seeded.episodes[0].scenes.length, 0, 'scenes 留空给模型写戏');
 ok(seeded.episodes[0].seedNote.includes('S01'), 'seedNote 带候选场景');
 ok(seeded.episodes[0].seedNote.includes(OUTLINE.episodes[0].synopsis.slice(0, 10)), 'seedNote 带梗概');
+ok(seeded.episodes[0].seedNote.includes('P01'), 'seedNote 带候选道具');
 eq(seedFromOutline(OUTLINE, [3, 5]).episodes.map((e) => e.ep).join(','), '3,4,5', '--eps 区间过滤');
 eq(seedFromOutline(OUTLINE, [2, 2]).episodes.length, 1, '单集区间');
 eq(seedFromOutline({}).episodes.length, 0, '空大纲不崩');

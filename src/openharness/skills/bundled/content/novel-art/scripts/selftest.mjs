@@ -80,7 +80,31 @@ eq(seeded.scenes.length, 3, 'seed 搬全部场景');
   ok(s03.seedNote?.includes('复用方案'), 'outline 的 reusePlan 变成 seedNote 提示做变体');
   ok(!seeded.scenes.find((s) => s.id === 'S01').seedNote, '没有复用方案的场景不带 seedNote');
 }
+{
+  // 道具：大纲从 1.1.0 起带 props，seed 要吃到
+  eq(seeded.props.length, OUTLINE.props.length, 'seed 搬全部道具');
+  const p01 = seeded.props.find((pr) => pr.id === 'P01');
+  const src = OUTLINE.props.find((pr) => pr.id === 'P01');
+  eq(p01.name, src.name, '道具名从大纲搬过来');
+  eq(p01.summary, src.function, '大纲的 function 落成这里的 summary');
+  const epsWithP01 = OUTLINE.episodes.filter((e) => (e.propIds ?? []).includes('P01')).map((e) => e.ep);
+  eq(p01.usage.episodes.join(','), epsWithP01.join(','), 'seed 算出道具的出现集');
+  eq(p01.usage.beats.join(','), src.beatIds.map((id) => OUTLINE.beats.find((b) => b.id === id).type).join(','),
+    'beatIds 翻译成爽点类型');
+  eq(p01.scale, '', '尺度留空——那是美术层的活');
+  eq(p01.states.length, 0, '状态变体留空');
+  eq(p01.image.prompt, '', '出图提示词留空');
+  eq(p01.carriedBy.length, 0, '跟谁走留空');
+}
+{
+  const noProps = JSON.parse(JSON.stringify(OUTLINE));
+  delete noProps.props;
+  const r = seedFromOutline(noProps);
+  eq(r.props.length, 0, '旧大纲 seed 出空道具表，不是 undefined');
+  ok(Array.isArray(r.props), '空道具表仍然是数组，调用方不用判空');
+}
 ok(seedFromOutline({}).scenes.length === 0, '空大纲不炸');
+ok(seedFromOutline({}).props.length === 0, '空大纲的道具表也是空数组');
 
 /* ---------------- castNamesOf ---------------- */
 
@@ -451,4 +475,19 @@ eq(FIXTURE.props.length, 2, '样例带两件叙事道具');
   ok(gateEn.includes('Consistency anchors, 3–5'), 'EN 报告的质量门标签翻译且阈值原样保留');
   ok(!gateEn.includes('一致性锚点 3–5 个'), 'EN 报告不再出现中文门标签');
 }
+{
+  const d = clone();
+  d.scenes[0].summary = '[TODO: add summary]';
+  const errs = validateArt(d);
+  ok(errs.some((e) => e.includes('未转译占位符')), '默认拦截包含未转译占位符的场景');
+  const allowed = validateArt(d, null, { allowPlaceholder: true });
+  ok(!allowed.some((e) => e.includes('未转译占位符')), 'allowPlaceholder 允许占位符');
+}
+{
+  const d = clone();
+  d.props[0].image.prompt = '[TODO: prop prompt]';
+  const errs = validateArt(d);
+  ok(errs.some((e) => e.includes('未转译占位符')), '默认拦截包含未转译占位符的道具');
+}
+
 console.log(`✓ ${passed} 项自测全部通过`);

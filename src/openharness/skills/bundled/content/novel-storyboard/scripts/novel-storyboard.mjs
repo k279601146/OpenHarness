@@ -507,7 +507,8 @@ export function gateReport(board, ctx = {}) {
       }
       const rest = h3Remainder(h3);
       if (promptLang === 'en') {
-        if (CJK.test(rest)) bad.h3e.push(`${sid} 的 h3Prompt 设定英文却在 <d> 台词之外混入了中文`);
+        const checkRest = allowPlaceholder ? rest.replace(/\[(?:TODO|ACTION NEEDED|STAGING NEEDED|Action progression|动作演变)[\s\S]*?\]/gi, '') : rest;
+        if (CJK.test(checkRest)) bad.h3e.push(`${sid} 的 h3Prompt 设定英文却在 <d> 台词之外混入了中文`);
         // 英文提示词禁人名（图像/视频模型对英文语境的人名有偏见）；中文提示词人名放行——身份靠分镜图锚定
         for (const name of banned) {
           if (rest.includes(name)) bad.names.push(`${sid} 的 h3Prompt 在台词之外出现角色名「${name}」`);
@@ -551,7 +552,8 @@ export function gateReport(board, ctx = {}) {
         }
         const frame = String(cut?.frame ?? '');
         if (!frame.trim()) bad.english.push(`${cid} 的分镜图提示词为空`);
-        if (CJK.test(frame)) bad.english.push(`${cid} 的分镜图提示词混入了非英文`);
+        const checkFrame = allowPlaceholder ? frame.replace(/\[(?:TODO|ACTION NEEDED|STAGING NEEDED|Action progression|动作转译|调度转译)[\s\S]*?\]/gi, '') : frame;
+        if (CJK.test(checkFrame)) bad.english.push(`${cid} 的分镜图提示词混入了非英文`);
         // Normalize both sides because style catalog phrases may start with
         // uppercase characters while generated prompts can use any casing.
         if (style && !frame.toLowerCase().includes(String(style.phrase).toLowerCase())) {
@@ -741,6 +743,10 @@ export function gateReport(board, ctx = {}) {
   add('prompt-english', '分镜图提示词全英文且非空', bad.english.length === 0, bad.english.join('；'));
   add('prompt-no-names', '英文提示词不含角色名（分镜图提示词恒查；中文 H3 提示词放行）', bad.names.length === 0, banned.length ? bad.names.join('；') : SKIP_NAMES);
   add('refs', '场次／人物／道具对账剧本', bad.refs.length === 0, script ? bad.refs.join('；') : SKIP_SCRIPT);
+  const SKIP_PLACEHOLDER = '允许脚手架占位符模式（--allow-placeholder），本门跳过';
+  add('frame-not-placeholder', '分镜图提示词非脚手架空占位符（必须包含剧本文学动作转译）', bad.placeholder.length === 0, allowPlaceholder ? SKIP_PLACEHOLDER : bad.placeholder.join('；'));
+  add('frame-density', '分镜图提示词具备充足视听细节（核心描述 ≥ 8 词：主体、动作、环境）', bad.density.length === 0, allowPlaceholder ? SKIP_PLACEHOLDER : bad.density.join('；'));
+  add('h3-motion-density', 'H3 视频各镜具备动态演变描述（不能仅有景别与运镜词）', bad.h3motion.length === 0, allowPlaceholder ? SKIP_PLACEHOLDER : bad.h3motion.join('；'));
   // 可选挂载的门放最后：没给 --shots 就跳过；给了但全篇没引用配方也算通过，但要明说，不静默
   add(
     'shot-recipe',
@@ -805,9 +811,9 @@ export function validateStoryboard(board, ctx = {}) {
 function structuredValidationErrors(problems) {
   return problems.map((message) => {
     const text = String(message);
-    const code = /台词|dialogue/i.test(text) ? 'dialogue_fit' : /时长|seconds|秒/.test(text) ? 'duration' : /h3/i.test(text) ? 'h3_structure' : /提示词|prompt/i.test(text) ? 'prompt' : /场景|人物|道具|script/i.test(text) ? 'reference' : 'schema';
+    const code = /台词|dialogue/i.test(text) ? 'dialogue_fit' : /时长|seconds|秒/.test(text) ? 'duration' : /h3/i.test(text) ? 'h3_structure' : /占位符|placeholder|未转译/i.test(text) ? 'placeholder' : /细节不足|density|动态演变/i.test(text) ? 'prompt_density' : /提示词|prompt/i.test(text) ? 'prompt' : /场景|人物|道具|script/i.test(text) ? 'reference' : 'schema';
     const match = text.match(/(第\s*\d+\s*集|E\d{2}-\d{2}(?:#\d+)?)/);
-    const fields = code === 'dialogue_fit' ? ['seconds', 'beats'] : code === 'duration' ? ['seconds', 'cuts'] : code === 'h3_structure' ? ['h3Prompt', 'cuts'] : code === 'prompt' ? ['frame', 'h3Prompt'] : [];
+    const fields = code === 'dialogue_fit' ? ['seconds', 'beats'] : code === 'duration' ? ['seconds', 'cuts'] : code === 'h3_structure' || code === 'prompt_density' ? ['h3Prompt', 'cuts'] : code === 'prompt' || code === 'placeholder' ? ['frame', 'h3Prompt'] : [];
     return { code, path: match ? match[1] : null, message: text, fields, repair_scope: match ? 'item' : 'artifact' };
   });
 }
@@ -932,6 +938,40 @@ export function scaffoldFromScript(script, { outline = null, cast = null, art = 
     return matched.map((m) => m.cid);
   };
 
+  // 4. 建立道具名称字典，用于动作节拍的道具识别
+  const propDefMap = new Map();
+  const artProps = art?.props ?? [];
+  const outlineProps = outline?.props ?? [];
+  const allProps = [...artProps, ...outlineProps];
+  for (const pr of allProps) {
+    if (!pr?.id) continue;
+    const names = propDefMap.get(pr.id) || new Set();
+    if (pr.name && typeof pr.name === 'string') names.add(pr.name.trim());
+    propDefMap.set(pr.id, names);
+    propDefMap.set(pr.id.toLowerCase(), names);
+  }
+
+  const matchPropsInText = (text, candidatePropIds) => {
+    if (!text || typeof text !== 'string' || !candidatePropIds?.length) return [];
+    const matched = [];
+    for (const pid of candidatePropIds) {
+      const names = propDefMap.get(pid) || propDefMap.get(String(pid).toLowerCase());
+      if (text.includes(pid)) {
+        matched.push(pid);
+        continue;
+      }
+      if (names) {
+        for (const name of names) {
+          if (name && name.length >= 2 && text.includes(name)) {
+            matched.push(pid);
+            break;
+          }
+        }
+      }
+    }
+    return matched;
+  };
+
   const tk = H3_TOKENS[lang] ?? H3_TOKENS.en;
   const episodes = [];
 
@@ -959,12 +999,20 @@ export function scaffoldFromScript(script, { outline = null, cast = null, art = 
             charRef = sc.characters.slice(0, 1);
           }
         }
+        let propRef = [];
+        if (Array.isArray(sc.props) && sc.props.length > 0) {
+          const matched = matchPropsInText(b.text, sc.props);
+          if (matched.length > 0) {
+            propRef = matched;
+          }
+        }
         sceneCuts.push({
           beats: [b.n, b.n],
           seconds: cutSec,
           size,
           camera,
           characters: charRef,
+          props: propRef,
           beat: b,
         });
       }
@@ -980,13 +1028,29 @@ export function scaffoldFromScript(script, { outline = null, cast = null, art = 
 
         const finalCuts = cutsToFinalize.map((c) => {
           const sizeObj = SHOT_SIZES[c.size] || SHOT_SIZES.medium;
-          const framePrompt = `${sizeObj.phrase}, cinematic composition in atmospheric lighting, ${stylePhrase}.`;
+          const origBeat = c.beat;
+          const beatActionText = origBeat?.kind === 'action' ? origBeat.text : '';
+          const beatLineText = origBeat?.kind === 'line' ? `[${origBeat.speaker || 'C01'}] ${origBeat.text}` : '';
+          const beatSummary = origBeat?.kind === 'line' ? beatLineText : beatActionText;
+
+          // 生成带有明确转译指示的占位骨架，显式暴露出剧本文学动作供 Agent 转译
+          const actionPrompt = lang === 'en'
+            ? (beatActionText
+                ? '[ACTION NEEDED: describe subject physical posture and dramatic action in English]'
+                : `[STAGING NEEDED: ${origBeat?.speaker || 'character'} speaking, describe facial expression and posture in English]`)
+            : (beatActionText
+                ? `[ACTION NEEDED: ${beatActionText}]`
+                : `[STAGING NEEDED: ${origBeat?.speaker || 'character'} delivering line: "${origBeat?.text || ''}"]`);
+          const framePrompt = `${sizeObj.phrase}, ${actionPrompt}, in atmospheric lighting, ${stylePhrase}.`;
+
           return {
             beats: c.beats,
             seconds: c.seconds,
             size: c.size,
             camera: c.camera,
             characters: c.characters,
+            props: c.props || [],
+            beatSummary,
             frame: framePrompt,
           };
         });
@@ -1003,7 +1067,10 @@ export function scaffoldFromScript(script, { outline = null, cast = null, art = 
           if (origBeat.kind === 'line' && origBeat.speaker) {
             dlgPart = ` <d>[${origBeat.speaker}] ${origBeat.text}</d>`;
           }
-          return `${mark} ${c.size} shot, camera moves with ${camTerm}.${dlgPart}`;
+          const motionDraft = origBeat.kind === 'action'
+            ? (lang === 'en' ? ' [Action progression: describe subject movement trajectory in English]' : ` [动作演变：${origBeat.text}]`)
+            : (lang === 'en' ? ' [Action progression: describe delivery gesture and gaze shift in English]' : ' [动作演变：角色说话神态与肢体动作]');
+          return `${mark} ${c.size} shot, camera moves with ${camTerm}.${motionDraft}${dlgPart}`;
         });
 
         const descBody = shotLines.join('\n');
@@ -1180,6 +1247,9 @@ const GATE_LABELS_EN = {
   'prompt-english': 'Frame prompts are English and non-empty',
   'prompt-no-names': 'English prompts carry no character names',
   'refs': 'Scenes / characters / props audited against the script',
+  'frame-not-placeholder': 'Frame prompts must not be scaffold placeholders',
+  'frame-density': 'Frame prompts have sufficient visual detail (>=8 core words)',
+  'h3-motion-density': 'H3 prompt shot slices contain dynamic motion description',
   'shot-recipe': 'Referenced recipes exist, their must-phrases are in the frame prompt, multi-cut recipes run long enough',
 };
 const GATE_SKIPS_EN = {
@@ -1188,6 +1258,7 @@ const GATE_SKIPS_EN = {
     '未提供 script.json，本门跳过（视为通过）': 'script.json not provided — gate skipped (treated as passing)',
     '未提供 outline/cast，本门跳过（视为通过）': 'outline/cast not provided — gate skipped (treated as passing)',
     '未提供 cast.json，本门跳过（视为通过）': 'cast.json not provided — gate skipped (treated as passing)',
+    '允许脚手架占位符模式（--allow-placeholder），本门跳过': 'scaffold placeholder allowed (--allow-placeholder) — gate skipped',
     '未挂载配方卡库（--shots <卡片目录>），本门跳过（视为通过）': 'no recipe card library mounted (--shots <cards dir>) — gate skipped (treated as passing)',
     '本批分镜没有引用配方': 'no cut in this batch references a recipe',
 };
@@ -1996,6 +2067,7 @@ function loadCtx(rest) {
   return {
     script: get('--script'), outline: get('--outline'), cast: get('--cast'), art: get('--art'),
     recipes: shots ? loadShots(shots) : null,
+    allowPlaceholder: rest.includes('--allow-placeholder') || rest.includes('--scaffold-only'),
   };
 }
 

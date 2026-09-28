@@ -26,6 +26,7 @@ import {
   stylePreset,
   strings,
   uiTemplate,
+  scaffoldFromOutline,
   validateCast,
 } from './novel-characters.mjs';
 
@@ -282,21 +283,48 @@ bad = clone();
 bad[0].voice.timbre = 'warm husky alto';
 ok(hits(bad, '应为中文') > 0, '抓住该中文却写成英文的字段');
 
+// 抓取通用占位套话与脚手架未填充标记
 bad = clone();
-bad[0].image.sheet = '中文设定图描述';
-ok(hits(bad, '必须英文') > 0, '抓住该英文却含中文的字段');
+bad[0].persona.appearance = '身穿符合身份的典型服饰，五官端正清晰，神态具有鲜明辨识度。';
+ok(hits(bad, '包含通用空占位套话') > 0, '抓住外貌空占位套话');
+ok(validateCast(bad, SOURCE, 'zh', 'realistic', { allowPlaceholder: true }).length === 0, 'allowPlaceholder 模式下放行');
 
 bad = clone();
-bad[0].importance = 'sidekick';
-ok(hits(bad, 'importance') > 0, '抓住 importance 枚举越界');
+bad[0].persona.personality = ['性格鲜明', '富有情感', '行动果断'];
+ok(hits(bad, '包含通用模板套话') > 0, '抓住性格通用套话');
 
 bad = clone();
-delete bad[0].image.sheet;
-ok(hits(bad, 'image.sheet') > 0, '抓住缺失的设定图提示词');
+bad[0].image.prompt = '[TODO: detailed visual prompt for 沈知微]';
+ok(hits(bad, '仍为脚手架通用占位模板') > 0 || hits(bad, '待办标记') > 0, '抓住出图提示词占位符');
 
 bad = clone();
-delete bad[0].persona;
-ok(hits(bad, 'persona') > 0, '抓住缺失的 persona');
+bad[0].voice.prompt = '[TODO: voice prompt for 沈知微]';
+ok(hits(bad, '仍为脚手架通用占位模板') > 0 || hits(bad, '待办标记') > 0, '抓住声音提示词占位符');
+
+// 渡口.txt 里没有「十九岁」之外的其他年纪，改了就不是原文逐字
+bad = clone();
+bad[0].persona.evidence[0] = '她二十岁，梳着两条辫子。';
+ok(hits(bad, '逐字片段') > 0, '抓住擅自修改的引文');
+
+// style=realistic 的 negativePrompt 绝不能禁 photorealistic
+bad = clone();
+bad[0].image.negativePrompt = 'photorealistic photo, 3d render, extra fingers';
+ok(hits(bad, '自相矛盾') > 0, '写实风格禁写实被拦');
+
+// style=ghibli 的 negativePrompt 必须禁 photorealistic
+bad = clone();
+bad[0].image.negativePrompt = 'extra fingers, malformed hands';
+ok(validateCast(bad, SOURCE, 'zh', 'ghibli').some((p) => p.includes('必须禁')), '吉卜力风格不禁写实被拦');
+
+// image.sheet 必须包含对应 style 的渲染句
+bad = clone();
+bad[0].image.sheet = 'Single character model sheet with no style clause.';
+ok(hits(bad, '渲染句') > 0, '设定图提示词缺渲染句被拦');
+
+// 英文模式下，人类可读字段必须英文
+bad = clone();
+bad[0].voice.timbre = '清脆的女高音';
+ok(validateCast(bad, SOURCE, 'en').some((p) => p.includes('应为英文')), '英文模式抓中文声线描述');
 
 // 没有原文时应该跳过逐字校验而不是全判失败
 eq(validateCast(CAST, null).length, 0, '不给原文时跳过引文校验');
@@ -316,9 +344,8 @@ eq((html.match(/class="char[ "]/g) || []).length, CAST.length, `主区有 ${CAST
 eq((html.match(/class="rost[ "]/g) || []).length, CAST.length, `左栏列出 ${CAST.length} 个角色`);
 eq((html.match(/class="char on"/g) || []).length, 1, '默认只展开第一个角色');
 eq((html.match(/class="rost on"/g) || []).length, 1, '左栏默认选中第一个');
-// 每人 7 个复制按钮：出图 本地/EN/设定图/反向 + 音色 本地/EN + 整份 JSON
-// 用 class="copy 前缀匹配——整份 JSON 那个是 class="copy wide"
-eq((html.match(/class="copy[ "]/g) || []).length, CAST.length * 7, '每段提示词都有复制按钮');
+// 每人 6 个常备复制按钮（无 promptLocal 时）：出图 本地/EN/设定图/反向 + 音色 EN + 整份 JSON
+eq((html.match(/class="copy[ "]/g) || []).length, CAST.length * 6, '每段提示词都有复制按钮');
 eq((html.match(/class="copy wide"/g) || []).length, CAST.length, '每个角色有整份 JSON 按钮');
 ok(html.includes('id="q"'), '顶栏有搜索框');
 // 搜索靠 data-hay，里面必须包含名字、别名、身份、特质——标签上是这么写的
@@ -776,5 +803,25 @@ ok(/data-src="images\/x-sheet\.png"/.test(sheetHtml), '弹层拿到图片地址'
 ok(/class="copy-img" data-img="images\/x-sheet\.png"/.test(sheetHtml), '图上有复制按钮');
 ok(sheetHtml.includes('ClipboardItem'), '复制的是图片本身而不是路径');
 ok(/blob\.type !== 'image\/png'/.test(sheetHtml), '非 PNG 先转码——Safari 只认 image/png');
+
+/* ---------------- scaffoldFromOutline ---------------- */
+{
+  const mockOutline = {
+    source: '测试大纲',
+    characters: [
+      { id: 'C01', name: '李白', role: '大诗人', tier: 'lead', arc: '豁达面对人生起伏' },
+      { id: 'C02', name: '岑勋', role: '友人', tier: 'support', arc: '相劝饮酒' },
+    ],
+  };
+  const sc = scaffoldFromOutline(mockOutline, { lang: 'zh', style: 'realistic' });
+  eq(sc.characters.length, 2, '正确提取角色数量');
+  eq(sc.characters[0].name, '李白', '角色名字正确');
+  eq(sc.characters[0].importance, 'protagonist', '主角 importance 正确');
+  eq(sc.characters[1].importance, 'supporting', '配角 importance 正确');
+  ok(sc.characters[0].persona.appearance.includes('李白'), '外貌提示包含角色名');
+  ok(sc.characters[0].image.prompt.includes('TODO'), '提示词包含定制待办标记');
+  ok(validateCast(sc.characters, null, 'zh', 'realistic', { allowPlaceholder: true }).length === 0, '脚手架骨架在 allowPlaceholder 下合规');
+  ok(validateCast(sc.characters, null, 'zh', 'realistic').length > 0, '脚手架骨架直接校验会被反占位符门禁拦截');
+}
 
 console.log(`✓ ${passed} 项自测全部通过`);
