@@ -372,6 +372,16 @@ ok(validateOutline(null).length === 1, 'null 直接报');
   ok(validateOutline(o, 'skeleton').some((x) => x.includes('没砍')), '抽核却一条没砍被拦');
   o.params.adaptMode = '忠实';
   ok(!validateOutline(o, 'skeleton').some((x) => x.includes('没砍')), '忠实改编允许不砍');
+  o.params.adaptMode = '原创';
+  ok(!validateOutline(o, 'skeleton').some((x) => x.includes('没砍')), '原创模式允许不砍');
+  o.adaptation.merge = [];
+  ok(!validateOutline(o, 'skeleton').some((x) => x.includes('merge')), '原创模式允许合并为空');
+  const origMd = renderMarkdown(o);
+  ok(origMd.includes('短剧策划大纲') && origMd.includes('原创短剧'), '原创模式 MD 渲染');
+  const origHtml = renderHtml(o);
+  ok(origHtml.includes('原创短剧策划') && origHtml.includes('短剧策划大纲'), '原创模式 HTML 渲染');
+  const origEnHtml = renderHtml(o, 'en');
+  ok(origEnHtml.includes('Original series planning'), '原创模式 EN HTML 渲染');
 }
 {
   const o = clone();

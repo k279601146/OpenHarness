@@ -1309,7 +1309,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             default_resolution="1080p",
             default_duration_seconds=5,
             default_mode="standard",
-            allowed_upstream_model_ids=["doubao-seedance-2.0", "doubao-seedance-2.0-260128", "seedance-2.0", "doubao-seedance-2-0"],
+            allowed_upstream_model_ids=["doubao-seedance-2.0", "doubao-seedance-2.0-260128", "seedance-2.0", "doubao-seedance-2-0", "SEEDANCE_VIDEO_2_0"],
         ),
         "apimart-doubao-seedance-2.0-face": _apimart_video_seconds_rule(
             "apimart-doubao-seedance-2.0-face",
@@ -1339,7 +1339,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             default_resolution="720p",
             default_duration_seconds=5,
             default_mode="fast",
-            allowed_upstream_model_ids=["doubao-seedance-2.0-fast", "doubao-seedance-2-0-fast-260128", "seedance-2.0-fast"],
+            allowed_upstream_model_ids=["doubao-seedance-2.0-fast", "doubao-seedance-2.0-fast-260128", "seedance-2.0-fast", "SEEDANCE_VIDEO_2_0_FAST"],
         ),
         "apimart-doubao-seedance-2.0-fast-face": _apimart_video_seconds_rule(
             "apimart-doubao-seedance-2.0-fast-face",
@@ -1367,7 +1367,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES["video"].update(
             default_resolution="720p",
             default_duration_seconds=5,
             default_mode="fast",
-            allowed_upstream_model_ids=["doubao-seedance-2.0-mini", "seedance-2.0-mini"],
+            allowed_upstream_model_ids=["doubao-seedance-2.0-mini", "seedance-2.0-mini", "SEEDANCE_VIDEO_2_0_MINI"],
         ),
         "apimart-doubao-seedance-2.5": _apimart_video_seconds_rule(
             "apimart-doubao-seedance-2.5",

@@ -21,9 +21,11 @@ import {
   renderMarkdown,
   STYLE_PRESETS,
   SUPPORTED_STYLES,
+  stylePreset,
+  seedFromOutline,
+  TIER_TO_IMPORTANCE,
   needsUiTranslation,
   slug,
-  stylePreset,
   strings,
   uiTemplate,
   scaffoldFromOutline,
@@ -202,6 +204,54 @@ eq(
   'absorb 已经是同一个人时不报错',
 );
 
+/* ---------------- seedFromOutline（大纲是角色的上游） ---------------- */
+
+{
+  // 拿真实的 outline 样例当夹具。这个函数的契约就是「吃 novel-outline 的产出」，
+  // 手捏一份假 outline 测不到真实的字段形状。novel-art 与 novel-script 的自测
+  // 读的是同一份文件，同仓库上游样例共享是既有做法。
+  const outlinePath = join(here, '..', 'references', 'test-fixtures', 'upstream', '渡口-outline.json');
+  const outline = JSON.parse(readFileSync(outlinePath, 'utf8'));
+  const seeded = seedFromOutline(outline);
+
+  ok(seeded.characters.length === outline.characters.length, 'seed 出的角色数跟大纲一致');
+  ok(seeded.source === outline.source, 'source 从大纲继承');
+  ok(seeded.summary === '', 'summary 留空——那是读完原文才写得出来的');
+
+  // 分档映射：大纲拍板的轻重，这一层不推翻
+  ok(TIER_TO_IMPORTANCE.lead === 'protagonist', 'lead → protagonist');
+  ok(TIER_TO_IMPORTANCE.support === 'supporting', 'support → supporting');
+  ok(TIER_TO_IMPORTANCE.functional === 'minor', 'functional → minor');
+  for (const c of seeded.characters) {
+    const src = outline.characters.find((x) => x.id === c.id);
+    ok(c.importance === TIER_TO_IMPORTANCE[src.tier], `${c.name} 的分档照大纲映射`);
+  }
+
+  // 搬事实
+  const first = seeded.characters[0];
+  ok(first.id === outline.characters[0].id, '角色码从大纲搬过来');
+  ok(first.name === outline.characters[0].name, '名字从大纲搬过来');
+  ok(first.persona.arc === outline.characters[0].arc, '人物弧光大纲已经写了，直接用');
+  ok(first.seedNote.includes(outline.characters[0].role), 'seedNote 带上大纲定位，供模型细分主角组');
+  ok(first.seedNote.includes('C01'), 'seedNote 带上角色码');
+
+  // 留设计
+  ok(first.aliases.length === 0, '别名留空——大纲里没有，要读原文才知道');
+  ok(first.oneLiner === '', '一句话留空');
+  ok(first.image.prompt === '' && first.voice.prompt === '', '形象与音色提示词留空');
+  ok(first.persona.appearance === '' && first.persona.evidence.length === 0, '外貌与引文留空');
+
+  // 骨架不是成品：直接校验必然报字段缺失，这是预期行为，跟 art / script 的 seed 一致
+  const problems = validateCast(seeded.characters, null);
+  ok(problems.length > 0, 'seed 产出是骨架不是成品，直接 validate 会报缺字段');
+
+  // 空大纲不炸
+  ok(seedFromOutline({}).characters.length === 0, '空大纲返回空角色表，不抛异常');
+  ok(seedFromOutline(null).source === '', 'null 也不炸');
+  // tier 缺失或不认识时给一个安全的中间档，不是崩掉
+  ok(seedFromOutline({ characters: [{ name: '张三' }] }).characters[0].importance === 'supporting',
+    'tier 缺失时退到 supporting，不抛异常也不给最高档');
+}
 /* ---------------- assembleCast ---------------- */
 
 const asm = assembleCast(
@@ -211,11 +261,10 @@ const asm = assembleCast(
     { name: 'C', importance: 'major' },
     { name: 'D', importance: 'major' },
   ],
-  { source: '书', lang: 'zh', style: 'ghibli', summary: '摘要' },
+  { source: '书', lang: 'zh', summary: '摘要' },
 );
 eq(asm.source, '书', 'assemble 带书名');
 eq(asm.lang, 'zh', 'assemble 带语言');
-eq(asm.style, 'ghibli', 'assemble 带画风');
 eq(asm.summary, '摘要', 'assemble 带摘要');
 eq(asm.characters.map((c) => c.name).join(''), 'BCDA', '按 importance 排序，同档保持传入顺序');
 ok(!('ui' in asm), '没有 ui 就不写这个键');
@@ -301,30 +350,21 @@ bad = clone();
 bad[0].voice.prompt = '[TODO: voice prompt for 沈知微]';
 ok(hits(bad, '仍为脚手架通用占位模板') > 0 || hits(bad, '待办标记') > 0, '抓住声音提示词占位符');
 
-// 渡口.txt 里没有「十九岁」之外的其他年纪，改了就不是原文逐字
 bad = clone();
-bad[0].persona.evidence[0] = '她二十岁，梳着两条辫子。';
-ok(hits(bad, '逐字片段') > 0, '抓住擅自修改的引文');
+bad[0].image.sheet = '中文设定图描述';
+ok(hits(bad, '必须英文') > 0, '抓住该英文却含中文的字段');
 
-// style=realistic 的 negativePrompt 绝不能禁 photorealistic
 bad = clone();
-bad[0].image.negativePrompt = 'photorealistic photo, 3d render, extra fingers';
-ok(hits(bad, '自相矛盾') > 0, '写实风格禁写实被拦');
+bad[0].importance = 'sidekick';
+ok(hits(bad, 'importance') > 0, '抓住 importance 枚举越界');
 
-// style=ghibli 的 negativePrompt 必须禁 photorealistic
 bad = clone();
-bad[0].image.negativePrompt = 'extra fingers, malformed hands';
-ok(validateCast(bad, SOURCE, 'zh', 'ghibli').some((p) => p.includes('必须禁')), '吉卜力风格不禁写实被拦');
+delete bad[0].image.sheet;
+ok(hits(bad, 'image.sheet') > 0, '抓住缺失的设定图提示词');
 
-// image.sheet 必须包含对应 style 的渲染句
 bad = clone();
-bad[0].image.sheet = 'Single character model sheet with no style clause.';
-ok(hits(bad, '渲染句') > 0, '设定图提示词缺渲染句被拦');
-
-// 英文模式下，人类可读字段必须英文
-bad = clone();
-bad[0].voice.timbre = '清脆的女高音';
-ok(validateCast(bad, SOURCE, 'en').some((p) => p.includes('应为英文')), '英文模式抓中文声线描述');
+delete bad[0].persona;
+ok(hits(bad, 'persona') > 0, '抓住缺失的 persona');
 
 // 没有原文时应该跳过逐字校验而不是全判失败
 eq(validateCast(CAST, null).length, 0, '不给原文时跳过引文校验');
@@ -409,7 +449,7 @@ ok(/scrollHeight <= body\.clientHeight/.test(synHtml), '摘要短到不用折叠
 /* ---------------- 导出 JSON ---------------- */
 
 // 导出的形状就是 cast.json，编辑完要能直接喂回 render
-const expHtml = renderHtml(CAST, '渡口', DOC.summary, 'zh', null, 'ghibli');
+const expHtml = renderHtml(CAST, '渡口', DOC.summary, 'zh', null);
 ok(expHtml.includes('class="expo"'), '顶栏有导出按钮');
 ok(expHtml.includes('<script type="application/json" id="cast-data">'), '数据内嵌在报告里');
 ok(expHtml.includes('data-name="渡口-cast.json"'), '下载文件名跟着书名走');
@@ -418,12 +458,10 @@ const embedded = expHtml.match(/<script type="application\/json" id="cast-data">
 const round = JSON.parse(embedded.replace(/\\u003c/g, '<'));
 eq(round.source, '渡口', '导出带书名');
 eq(round.lang, 'zh', '导出带语言');
-eq(round.style, 'ghibli', '导出带画风');
 eq(round.summary, DOC.summary, '导出带故事摘要');
 eq(round.characters.length, CAST.length, '导出带全部角色');
 eq(JSON.stringify(round.characters), JSON.stringify(CAST), '角色卡原样导出，没有丢字段');
-eq(validateCast(round.characters, SOURCE, 'zh', 'realistic').length, 0, '导出的数据能直接喂回 validate 并通过');
-ok(validateCast(round.characters, SOURCE, 'zh', 'ghibli').length > 0, '喂回去的确实是真数据——画风说反了照样报错');
+eq(validateCast(round.characters, SOURCE, 'zh').length, 0, '导出的数据能直接喂回 validate 并通过');
 
 // ⚠️ 正文里一个 </script 就能把数据块提前截断
 const xss = clone();
@@ -646,44 +684,13 @@ ok(/visible pores/i.test(STYLE_PRESETS.realistic.surface), 'realistic 要毛孔'
 ok(/no pores/i.test(STYLE_PRESETS.ghibli.surface), 'ghibli 明确不要毛孔');
 ok(STYLE_PRESETS.realistic.surface !== STYLE_PRESETS.ghibli.surface, '两个预设的表面处理不同');
 
-// 校验器要能抓住风格与反向提示词搞反
-const wrongStyle = clone();
-ok(
-  validateCast(wrongStyle, SOURCE, 'zh', 'ghibli').some((x) => x.includes('必须禁 photorealistic')),
-  '样例是 realistic，按 ghibli 校验会报错',
-);
-const ghibliish = clone();
-for (const c of ghibliish) c.image.negativePrompt = STYLE_PRESETS.ghibli.negative;
-ok(
-  validateCast(ghibliish, SOURCE, 'zh', 'realistic').some((x) => x.includes('自相矛盾')),
-  'realistic 却禁 photorealistic 会报错',
-);
-eq(validateCast(CAST, SOURCE, 'zh', 'realistic').length, 0, '样例按 realistic 校验通过');
-
-// 同剧角色画风必须一致——模型曾按各自服装/年龄写出四套画风，同框像四个画师
-// 样例已统一，应通过；故意改掉一个角色的 image.style 必须报错；仅空白差异不算不一致
-eq(validateCast(CAST, SOURCE, 'zh', 'realistic').length, 0, '样例四个角色画风统一，校验通过');
-{
-  const split = clone();
-  split[1].image.style = '吉卜力动画风，明快平涂';
-  ok(
-    validateCast(split, SOURCE, 'zh', 'realistic').some((x) => x.includes('画风不一致')),
-    '同剧角色 image.style 不一致会报错',
-  );
-}
-{
-  const ws = clone();
-  ws[0].image.style = '  半写实厚涂插画，冷调低饱和民国配色，晨雾柔光  ';
-  eq(validateCast(ws, SOURCE, 'zh', 'realistic').length, 0, 'image.style 仅空白差异不算不一致');
-}
-
 // 同批角色的提示词不许雷同——模型套同一个模板，两个年龄性别接近的角色会出成同一个人（issue #9）
-eq(validateCast(CAST, SOURCE, 'zh', 'realistic').length, 0, '样例四个角色的提示词差异够大，不误拦');
+eq(validateCast(CAST, SOURCE, 'zh').length, 0, '样例四个角色的提示词差异够大，不误拦');
 {
   const dup = clone();
   dup[1].image.prompt = dup[0].image.prompt;
   ok(
-    validateCast(dup, SOURCE, 'zh', 'realistic').some((x) => x.includes('出图提示词雷同')),
+    validateCast(dup, SOURCE, 'zh').some((x) => x.includes('出图提示词雷同')),
     '两个角色的出图提示词完全相同会报错',
   );
 }
@@ -694,7 +701,7 @@ eq(validateCast(CAST, SOURCE, 'zh', 'realistic').length, 0, '样例四个角色�
     .replace(/nineteen-year-old/g, 'twenty-two-year-old')
     .replace(/navy-blue/g, 'dark green');
   ok(
-    validateCast(near, SOURCE, 'zh', 'realistic').some((x) => x.includes('出图提示词雷同')),
+    validateCast(near, SOURCE, 'zh').some((x) => x.includes('出图提示词雷同')),
     '只改几个词的出图提示词照样被拦',
   );
 }
@@ -702,7 +709,7 @@ eq(validateCast(CAST, SOURCE, 'zh', 'realistic').length, 0, '样例四个角色�
   const dupVoice = clone();
   dupVoice[1].voice.prompt = dupVoice[0].voice.prompt;
   ok(
-    validateCast(dupVoice, SOURCE, 'zh', 'realistic').some((x) => x.includes('音色提示词雷同')),
+    validateCast(dupVoice, SOURCE, 'zh').some((x) => x.includes('音色提示词雷同')),
     '两个角色的音色提示词相同也会报错',
   );
 }
@@ -711,7 +718,7 @@ eq(validateCast(CAST, SOURCE, 'zh', 'realistic').length, 0, '样例四个角色�
   const dupSheet = clone();
   dupSheet[1].image.sheet = dupSheet[0].image.sheet;
   ok(
-    !validateCast(dupSheet, SOURCE, 'zh', 'realistic').some((x) => x.includes('雷同')),
+    !validateCast(dupSheet, SOURCE, 'zh').some((x) => x.includes('雷同')),
     'image.sheet 相同不报错——它的固定排版文本占比太高，设门必然误拦',
   );
 }
@@ -721,7 +728,7 @@ eq(validateCast(CAST, SOURCE, 'zh', 'realistic').length, 0, '样例四个角色�
   tiny[0].image.prompt = 'a man';
   tiny[1].image.prompt = 'a man';
   ok(
-    !validateCast(tiny, SOURCE, 'zh', 'realistic').some((x) => x.includes('出图提示词雷同')),
+    !validateCast(tiny, SOURCE, 'zh').some((x) => x.includes('出图提示词雷同')),
     '词数太少的提示词不参与雷同判定',
   );
 }
@@ -730,30 +737,46 @@ eq(validateCast(CAST, SOURCE, 'zh', 'realistic').length, 0, '样例四个角色�
 
 // 一边要真实感一边在反向提示词里禁真实感，是自相矛盾的
 ok(
-  CAST.every((c) => !/photorealistic|3d render/i.test(c.image.negativePrompt)),
-  'negativePrompt 不再禁 photorealistic / 3d render',
+  CAST.every((c) => !/photorealistic|3d render|\banime\b/i.test(c.image.negativePrompt)),
+  'negativePrompt 不禁画风词——出图时选的可能正是它',
 );
 ok(
   CAST.every((c) => /plastic or waxy skin|poreless doll face/i.test(c.image.negativePrompt)),
   'negativePrompt 改禁「假」而不是禁「真」',
 );
-// 「扁平矢量卡通」跟写实拧巴，会导致同一批角色画风飘
-ok(
-  CAST.every((c) => !/flat vector cartoon/i.test(c.image.sheet + c.image.prompt)),
-  '不再用扁平矢量卡通',
-);
-ok(
-  CAST.every((c) => /Semi-realistic character illustration, painterly rendering/.test(c.image.sheet)),
-  '画风统一到半写实厚涂',
-);
-// 真实感来自不完美
+// 画风是出图那一刻才定的，写进提示词就会跟当时选的风格打架
+for (const k of [
+  /flat vector cartoon/i,
+  /semi-?realistic/i,
+  /painterly/i,
+  /\bphotoreal/i,
+  /\banime style/i,
+]) {
+  ok(
+    CAST.every((c) => !k.test(`${c.image.sheet} ${c.image.prompt} ${c.image.tags.join(' ')}`)),
+    `提示词里不写画风：${k.source}`,
+  );
+}
+// 设定图是全剧通用的参照，钉在某个场合上就只覆盖了部分戏。形制已经排在句首，
+// 场合标签跟在后面不增加画面信息，只增加一个「只在这个场合这样穿」的承诺。
+for (const k of [/便装/, /常服/, /朝服/, /公服/, /吉服/, /燕居/, /casual wear/i, /court dress/i]) {
+  ok(
+    CAST.every((c) => !k.test(`${c.image.sheet} ${c.image.prompt} ${c.image.promptLocal ?? ''}`)),
+    `提示词里不写场合标签：${k.source}`,
+  );
+}
+// 「架空」说的是这个设定跟真实历史什么关系，画面里没有对应物；
+// 跟 `(inferred)` 一样，是关于设定的话，不是设定本身。
+for (const k of [/架空/, /虚构/, /某朝/, /\bfictional\b/i, /alternate history/i]) {
+  ok(
+    CAST.every((c) => !k.test(`${c.image.sheet} ${c.image.prompt} ${c.image.promptLocal ?? ''}`)),
+    `提示词里不写设定的元信息：${k.source}`,
+  );
+}
+// 提示词写的是这个人独有的东西——换任何画风都成立
 for (const [k, label] of [
-  [/visible pores/i, '可见毛孔'],
-  [/wet specular highlight/i, '眼睛湿润高光'],
   [/asymmetric/i, '左右不对称'],
   [/flyaway hair strands/i, '碎发破轮廓'],
-  [/visible weave/i, '布料织纹'],
-  [/self-shadow/i, '褶皱自阴影'],
 ]) {
   ok(CAST.every((c) => k.test(c.image.sheet)), `设定图提示词含${label}`);
 }

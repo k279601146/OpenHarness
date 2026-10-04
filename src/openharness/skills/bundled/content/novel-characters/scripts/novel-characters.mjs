@@ -4,7 +4,7 @@
 // without an npm install. Node 18+ (stdlib only).
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { basename, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /* ------------------------------------------------------------------ */
@@ -382,7 +382,7 @@ const STRINGS = {
     },
     image: {
       style: '画风',
-      prompt: '出图提示词 EN', promptLocal: '出图提示词',
+      prompt: '出图提示词 · 喂出图模型用这条', promptLocal: '出图提示词（中文对照）',
       negative: '反向提示词', sheet: '角色设定图提示词 EN',
     },
     voice: {
@@ -435,7 +435,7 @@ const STRINGS = {
     },
     image: {
       style: 'Style',
-      prompt: 'Image prompt', promptLocal: 'Image prompt (local)',
+      prompt: 'Image prompt · feed this to the image model', promptLocal: 'Image prompt (local translation)',
       negative: 'Negative prompt', sheet: 'Model sheet prompt',
     },
     voice: {
@@ -487,7 +487,7 @@ const STRINGS = {
     },
     image: {
       style: '画風',
-      prompt: '画像プロンプト EN', promptLocal: '画像プロンプト',
+      prompt: '画像プロンプト · 画像モデルにはこれを', promptLocal: '画像プロンプト（対訳）',
       negative: 'ネガティブプロンプト', sheet: 'キャラ設定画プロンプト EN',
     },
     voice: {
@@ -568,6 +568,68 @@ export function uiTemplate() {
 }
 
 /* ------------------------------------------------------------------ */
+/* seed — 从大纲预填角色表骨架                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * outline 的 tier 映射成 cast 的 importance。
+ *
+ * 注意两边粒度不一样：outline 的 `lead` 是「主角组」，男女主与主反派都在里面，
+ * 对应 cast 的 protagonist 与 major 两档。这里一律给 protagonist，由模型照
+ * seedNote 里的 role（女主 / 男主 / 反派）把主角之外的改成 major——**分档本身
+ * 不推翻，只在主角组内部细分**。
+ */
+export const TIER_TO_IMPORTANCE = { lead: 'protagonist', support: 'supporting', functional: 'minor' };
+
+/**
+ * 从 outline.json 预填 cast.json 骨架。
+ *
+ * 大纲是角色设定的上游：谁进谁不进、谁是主角组，在改编阶段就拍板了，这一层
+ * 不再判断一遍。搬过来的是**大纲已经定死的事实**（角色码、名字、分档、人物线、
+ * 由原著的谁合并而来），留空的是**这一层才该做的设计**（别名、画像、形象提示词、
+ * 音色提示词）——别名要读原文才知道，大纲里没有。
+ *
+ * 与 novel-art / novel-script 的 seedFromOutline 同一个形状：搬事实、留设计、
+ * 附一条 seedNote 带上下文。产出是骨架不是成品，直接跑 validate 会报一堆
+ * 字段缺失，那是预期的。
+ */
+export function seedFromOutline(outline) {
+  const characters = (outline?.characters ?? []).map((c) => {
+    const note = [
+      c?.id ? `角色码 ${c.id}` : null,
+      c?.role ? `大纲定位：${c.role}` : null,
+      c?.tier ? `大纲分档：${c.tier}` : null,
+      (c?.from ?? []).length ? `合并自：${(c.from ?? []).join('、')}` : null,
+    ].filter(Boolean).join('　');
+    return {
+      // 从大纲搬来的事实，不用再想
+      ...(c?.id ? { id: c.id } : {}),
+      name: c?.name ?? '',
+      importance: TIER_TO_IMPORTANCE[c?.tier] ?? 'supporting',
+      // 这一层才该做的设计，先占位
+      aliases: [],
+      oneLiner: '',
+      persona: {
+        gender: '', ageRange: '', identity: '', appearance: '',
+        personality: [], temperament: '', motivation: '',
+        // 人物弧光大纲已经写了，直接用；觉得不对回去改大纲，别在这里改一个不一样的
+        arc: c?.arc ?? '',
+        relationships: [], evidence: [],
+      },
+      image: { prompt: '', promptLocal: '', negativePrompt: '', tags: [], sheet: '' },
+      voice: { timbre: '', pitch: '', pace: '', accent: '', emotion: '', prompt: '', referenceHint: '' },
+      ...(note ? { seedNote: note } : {}),
+    };
+  });
+  return {
+    source: outline?.source ?? '',
+    lang: outline?.lang ?? DEFAULT_LANG,
+    summary: '',
+    characters,
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* validate                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -598,30 +660,6 @@ export function validateCast(characters, sourceText, lang = DEFAULT_LANG, style 
 
   if (!Array.isArray(characters) || characters.length === 0) {
     return ['cast 为空或不是数组'];
-  }
-
-  // --- 同剧角色画风必须一致 ---
-  // 这是整批图"像不像同一部片"的底线。每个角色的 image.style 给人读的画风
-  // 一句话，模型在第二趟出卡时可能按各自服装/年龄自由发挥（藏青/冷灰/大地色
-  // 各写一套），导致同框时像四个画师画的。预设只约束大类别（realistic/ghibli），
-  // 管不到剧内统一，所以用确定性检查兜底：归一化后多于一种值就报错，并点名
-  // 哪些角色用了不同画风。单角色（或未写 image.style 的角色）不触发。
-  const styleByChar = [];
-  for (const c of characters) {
-    const name = c?.name ?? '(无名)';
-    const style = c?.image?.style;
-    if (typeof style === 'string' && style.trim()) styleByChar.push([name, normalise(style)]);
-  }
-  if (styleByChar.length > 1) {
-    const seen = new Map();
-    for (const [name, norm] of styleByChar) {
-      if (!seen.has(norm)) seen.set(norm, []);
-      seen.get(norm).push(name);
-    }
-    if (seen.size > 1) {
-      const groups = [...seen.values()].map((names) => names.join('、')).join('  vs  ');
-      problems.push(`同剧角色画风不一致（image.style 必须统一）：${groups}`);
-    }
   }
 
   // --- 同批角色的提示词不许雷同 ---
@@ -690,7 +728,7 @@ export function validateCast(characters, sourceText, lang = DEFAULT_LANG, style 
     if (!image || typeof image !== 'object') {
       at(name, '缺少 image');
     } else {
-      for (const f of ['style', 'prompt', 'negativePrompt']) {
+      for (const f of ['prompt', 'negativePrompt']) {
         if (typeof image[f] !== 'string' || !image[f].trim()) at(name, `image.${f} 缺失或为空`);
       }
       if (typeof image.sheet !== 'string' || !image.sheet.trim()) {
@@ -779,23 +817,6 @@ export function validateCast(characters, sourceText, lang = DEFAULT_LANG, style 
         }
       }
     }
-    // --- 风格与提示词必须匹配 ---
-    // 两个预设的反向提示词几乎是相反的，搞反了整批图都毁。
-    if (image && SUPPORTED_STYLES.includes(style)) {
-      const neg = typeof image.negativePrompt === 'string' ? image.negativePrompt : '';
-      const bansRealism = /photorealistic|3d render/i.test(neg);
-      if (style === 'realistic' && bansRealism) {
-        at(name, 'style=realistic 却在 negativePrompt 里禁 photorealistic／3d render——自相矛盾');
-      }
-      if (style === 'ghibli' && !bansRealism) {
-        at(name, 'style=ghibli 的 negativePrompt 必须禁 photorealistic／3d render');
-      }
-      const preset = stylePreset(style);
-      if (typeof image.sheet === 'string' && !image.sheet.includes(preset.render)) {
-        at(name, `image.sheet 里没有 style=${style} 的渲染句，画风会飘`);
-      }
-    }
-
     // 只有这三种能可靠自动判别，其他语言不猜、跳过——误报比漏报更烦人。
     if (voice) {
       for (const f of HUMAN_VOICE_FIELDS) {
@@ -835,7 +856,7 @@ function structuredValidationErrors(problems) {
  * 顺序）。不给 order 就保持传入顺序——CLI 按文件名读卡，那是 slug
  * 字典序不是戏份序，所以报告要「按戏份排序」就必须给 order。
  */
-export function assembleCast(cards, { source, lang = DEFAULT_LANG, style = DEFAULT_STYLE, summary = '', ui = null, order = null } = {}) {
+export function assembleCast(cards, { source, lang = DEFAULT_LANG, summary = '', ui = null, order = null } = {}) {
   const rank = (c) => {
     const i = IMPORTANCE.indexOf(c?.importance);
     return i < 0 ? IMPORTANCE.length : i; // 越界的排最后，让 validate 去报，这里不崩
@@ -847,7 +868,7 @@ export function assembleCast(cards, { source, lang = DEFAULT_LANG, style = DEFAU
     .map((card, i) => [card, i])
     .sort((a, b) => rank(a[0]) - rank(b[0]) || byOrder(a[0]) - byOrder(b[0]) || a[1] - b[1])
     .map(([card]) => card);
-  const cast = { source, lang, style };
+  const cast = { source, lang };
   if (ui) cast.ui = ui;
   cast.summary = summary;
   cast.characters = characters;
@@ -1051,7 +1072,6 @@ export function renderMarkdown(characters, source, summary = '', lang = DEFAULT_
     }
 
     out.push(`### ${t.groups.image}`, '');
-    out.push(`**${t.image.style}**　${image.style}`, '');
     if (image.tags.length) out.push(`\`${image.tags.join('`, `')}\``, '');
     out.push(`**${t.image.prompt}**`, '', '```text', image.prompt, '```', '');
     if (image.promptLocal) out.push(`${image.promptLocal}`, '');
@@ -1204,11 +1224,13 @@ function renderCharacter(c, index, t) {
         <dl>${HUMAN_VOICE_FIELDS.map((f) => kv(t.voice[f], voice[f])).join('')}</dl>
       </div>
 
-      <div class="card">
-        <h4>${esc(t.image.style)}</h4>
-        <p class="style">${esc(image.style)}</p>
-        ${image.tags.length ? `<ul class="tags">${image.tags.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
-      </div>
+      ${
+        image.tags.length
+          ? `<div class="card"><h4>${esc(t.groups.image)}</h4>
+               <ul class="tags">${image.tags.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+             </div>`
+          : ''
+      }
     </aside>
   </div>
 
@@ -1385,8 +1407,8 @@ function renderGraph(ordered, t) {
  * `<` 转成 <：JSON 里 `<` 只可能出现在字符串值中，整体替换是安全的，
  * 而不转的话正文里一个 `</script` 就能把这个数据块提前截断。
  */
-function embedCast(characters, source, summary, lang, ui, style) {
-  const data = { source, lang, style, summary, ...(ui ? { ui } : {}), characters };
+function embedCast(characters, source, summary, lang, ui) {
+  const data = { source, lang, summary, ...(ui ? { ui } : {}), characters };
   return JSON.stringify(data).replace(/</g, '\\u003c');
 }
 
@@ -1396,7 +1418,6 @@ export function renderHtml(
   summary = '',
   lang = DEFAULT_LANG,
   ui = null,
-  style = DEFAULT_STYLE,
 ) {
   const t = strings(lang, ui);
   const shots = characters.filter((c) => c.sheetImage).length;
@@ -1560,7 +1581,6 @@ button{font-family:inherit}
 .kv dt{color:var(--ink-3);flex:none;width:46px}
 .kv dd{margin:0;min-width:0}
 .rel-n{color:var(--ink)!important;width:auto!important;min-width:46px}
-.style{margin:0;font-size:12.5px;line-height:1.7;color:var(--ink-2)}
 .tags{display:flex;flex-wrap:wrap;gap:5px;margin:10px 0 0;padding:0;list-style:none}
 .tags li{font:400 11px/1.5 var(--mono);color:var(--ink-2);border:1px solid var(--rule-2);
   background:var(--paper);border-radius:2px;padding:1px 6px}
@@ -1712,7 +1732,7 @@ button{font-family:inherit}
   <img alt="">
 </div>
 
-<script type="application/json" id="cast-data">${embedCast(characters, source, summary, lang, ui, style)}</script>
+<script type="application/json" id="cast-data">${embedCast(characters, source, summary, lang, ui)}</script>
 
 <script>
 const L = ${JSON.stringify({ copied: t.copied, failed: t.copyFailed })};
@@ -1927,13 +1947,14 @@ const USAGE = `novel-characters.mjs — novel-characters skill 的确定性工�
   merge <workdir>                  归并 roster-*.json，打印 {characters, mergeCandidates}
         [--apply merges.json]      落地复核后的合并决定：{"merges":[{"keep":…,"absorb":[…]}]}
   assemble <workdir> --source <书名>
-        [--lang] [--style] [--out] 把 card-*.json + summary.txt（+ ui.json）合成 cast.json
+        [--lang] [--out]           把 card-*.json + 故事摘要（+ 界面翻译）合成 cast.json
+        [--summary <file>]         故事摘要文件（默认 <workdir>/summary.txt）
+        [--ui <file>]              界面文案翻译（默认 <workdir>/ui.json，内置语言不需要）
         [--order merged.json]      同档角色的戏份顺序（默认自动找 <workdir>/merged.json）
   validate <cast.json> [book.txt]  校验；有违规逐条打印并 exit 1
   render <cast.json> [--html|--md] 渲染报告到 stdout（默认 --md）
   slug <name>                      角色名转安全文件名
   ui-template [lang]               打印界面文案骨架，供翻译成内置表没有的语言
-  styles [id]                      打印画风预设的完整内容
 
 通用选项：
   --lang <code>     报告语言，默认取 cast.json 的 lang，再默认 ${DEFAULT_LANG}
@@ -1941,8 +1962,8 @@ const USAGE = `novel-characters.mjs — novel-characters skill 的确定性工�
 
 render 选项：
   --source <name>   报告标题用的书名（默认取 cast.json 的 source 或文件名）
-  --images <dir>    图片目录名，默认 images
-                    会去找 <dir>/<slug>-sheet.png`;
+  --images <dir>    设定图所在目录，任意路径（相对当前目录解析）；默认 cast.json 同级的 images/
+                    会去找 <dir>/<slug>-sheet.png；报告里的图片路径按「报告写在 cast.json 旁边」计算`;
 
 function readJson(path) {
   return JSON.parse(readFileSync(resolve(path), 'utf8'));
@@ -1965,7 +1986,7 @@ function loadCast(path) {
     summary: Array.isArray(raw) ? '' : (raw.summary ?? ''),
     lang: Array.isArray(raw) ? DEFAULT_LANG : (raw.lang ?? DEFAULT_LANG),
     ui: Array.isArray(raw) ? null : (raw.ui ?? null),
-    style: Array.isArray(raw) ? DEFAULT_STYLE : (raw.style ?? DEFAULT_STYLE),
+    style: Array.isArray(raw) ? null : (raw.style ?? null),
   };
 }
 
@@ -2034,13 +2055,12 @@ function main(argv) {
   if (cmd === 'assemble') {
     const [workdir] = rest;
     if (!workdir || workdir.startsWith('--')) {
-      throw new Error('用法：assemble <workdir> --source <书名> [--lang zh] [--style realistic] [--out cast.json]');
+      throw new Error('用法：assemble <workdir> --source <书名> [--lang zh] [--out cast.json]');
     }
     const dir = resolve(workdir);
     const sourceName = flag(rest, '--source');
     if (!sourceName) throw new Error('assemble 需要 --source <书名>');
     const lang = flag(rest, '--lang', DEFAULT_LANG);
-    const style = flag(rest, '--style', DEFAULT_STYLE);
 
     const files = readdirSync(dir).filter((f) => /^card-.*\.json$/.test(f)).sort();
     if (!files.length) throw new Error(`${dir} 里没有 card-*.json`);
@@ -2069,14 +2089,15 @@ function main(argv) {
       cards.push(card);
     }
 
-    const summaryPath = join(dir, 'summary.txt');
+    // 三份附带文件都能单独指定路径；不给才去工作目录里找 skill 自己写下的那份
+    const summaryPath = resolve(flag(rest, '--summary', join(dir, 'summary.txt')));
     const summary = existsSync(summaryPath) ? readFileSync(summaryPath, 'utf8').trim() : '';
-    if (!summary) problems.push(`缺 ${summaryPath}（故事摘要）——用报告语言写 3–5 句进去`);
+    if (!summary) problems.push(`缺 ${summaryPath}（故事摘要）——用报告语言写 3–5 句进去，或用 --summary 指定`);
 
-    const uiPath = join(dir, 'ui.json');
+    const uiPath = resolve(flag(rest, '--ui', join(dir, 'ui.json')));
     const ui = existsSync(uiPath) ? readJson(uiPath) : null;
     if (needsUiTranslation(lang) && !ui) {
-      problems.push(`lang=${lang} 不在内置界面语言里，缺 ${uiPath}——用 ui-template 生成骨架翻译后放进去`);
+      problems.push(`lang=${lang} 不在内置界面语言里，缺 ${uiPath}——用 ui-template 生成骨架翻译后放进去，或用 --ui 指定`);
     }
 
     // 同档角色的戏份顺序来自 merge 的输出——卡按文件名读入是 slug 字典序，
@@ -2097,7 +2118,7 @@ function main(argv) {
       process.exit(1);
     }
 
-    const cast = assembleCast(cards, { source: sourceName, lang, style, summary, ui, order });
+    const cast = assembleCast(cards, { source: sourceName, lang, summary, ui, order });
     const json = JSON.stringify(cast, null, 2) + '\n';
     const out = flag(rest, '--out');
     if (out) {
@@ -2119,7 +2140,7 @@ function main(argv) {
     if (!bookPath) console.error('⚠️ 没给原文，跳过逐字引文校验');
     const allowPlaceholder = rest.includes('--allow-placeholder') || rest.includes('--scaffold-only');
     const problems = validateCast(characters, source, lang, style, { allowPlaceholder });
-    if (!SUPPORTED_STYLES.includes(style)) {
+    if (style && !SUPPORTED_STYLES.includes(style)) {
       problems.unshift(`顶层 style=${style} 不是已知预设（${SUPPORTED_STYLES.join('/')}）`);
     }
     // 顶层的故事摘要——报告要用，缺了就没法在顶部交代背景
@@ -2147,7 +2168,8 @@ function main(argv) {
       console.log(JSON.stringify({ ok: true, stage: 'characters', errors: [], gate_count: 0 }));
       return;
     }
-    console.log(`✓ ${characters.length} 个角色全部通过校验（lang=${lang}, style=${style}）`);
+    const styleSuffix = style ? `, style=${style}` : '';
+    console.log(`✓ ${characters.length} 个角色全部通过校验（lang=${lang}${styleSuffix}）`);
     return;
   }
 
@@ -2155,23 +2177,26 @@ function main(argv) {
     const [castPath] = rest;
     if (!castPath) throw new Error('用法：render <cast.json> [--html|--md]');
     const html = rest.includes('--html');
-    const imagesDir = flag(rest, '--images', 'images');
+    const imagesFlag = flag(rest, '--images');
     const sourceFlag = flag(rest, '--source');
 
-    const { characters, source, summary, lang: castLang, ui, style } = loadCast(castPath);
+    const { characters, source, summary, lang: castLang, ui } = loadCast(castPath);
     const lang = flag(rest, '--lang', castLang);
     const title = sourceFlag ?? source ?? basename(castPath).replace(/\.[^.]+$/, '');
 
-    // 图存在才挂上去；没有就渲染成占位，不影响其余内容。
+    // 图是用户在下游出好的素材，放哪由用户定：--images 按普通命令行路径解析，
+    // 不给才退回 cast.json 同级的 images/。报告默认写在 cast.json 旁边，
+    // src 写成相对那里的路径，整个目录一起挪也不断。图不存在就渲染成占位。
     const outDir = resolve(castPath, '..');
+    const imagesDir = imagesFlag ? resolve(imagesFlag) : join(outDir, 'images');
     for (const c of characters) {
-      const stem = `${imagesDir}/${slug(c.name)}`;
-      if (existsSync(join(outDir, `${stem}-sheet.png`))) c.sheetImage = `${stem}-sheet.png`;
+      const abs = join(imagesDir, `${slug(c.name)}-sheet.png`);
+      if (existsSync(abs)) c.sheetImage = relative(outDir, abs).split(sep).join('/');
     }
 
     process.stdout.write(
       (html
-        ? renderHtml(characters, title, summary, lang, ui, style)
+        ? renderHtml(characters, title, summary, lang, ui)
         : renderMarkdown(characters, title, summary, lang, ui)) + '\n',
     );
     return;
@@ -2182,26 +2207,6 @@ function main(argv) {
     console.log(
       JSON.stringify(
         { note: `把下面每个值翻译成 ${lang}，整块放进 cast.json 的顶层 "ui"`, ui: uiTemplate() },
-        null,
-        2,
-      ),
-    );
-    return;
-  }
-
-  if (cmd === 'styles') {
-    const only = rest[0];
-    if (only && !SUPPORTED_STYLES.includes(only)) {
-      throw new Error(`未知风格 ${only}（可用：${SUPPORTED_STYLES.join('/')}）`);
-    }
-    const ids = only ? [only] : SUPPORTED_STYLES;
-    console.log(
-      JSON.stringify(
-        {
-          default: DEFAULT_STYLE,
-          note: '整块取用，不要混搭；两个预设的 negative 几乎是相反的',
-          presets: Object.fromEntries(ids.map((id) => [id, STYLE_PRESETS[id]])),
-        },
         null,
         2,
       ),
