@@ -1,6 +1,6 @@
 ---
 name: novel-script
-version: 2.0.0
+version: 1.2.0
 description: |
   给 AI 短剧写剧本：把 novel-outline 的分集梗概落成结构化的场次 + 节拍流（动作节拍与台词行交替），
   台词逐句带说话人与语气，时长逐集按语速确定性折算。产出 script.json + Markdown + 单页评审报告
@@ -82,12 +82,12 @@ node {baseDir}/scripts/novel-script.mjs seed <outline.json> --eps 1-3 > <workdir
 
 每集一份任务，能并发就并发。每份任务拿到：
 
-- `{baseDir}/references/script-pass.md`、`{baseDir}/references/schema.md`、`{baseDir}/references/hook-and-opening.md`、`{baseDir}/references/opening-rules.md` 与 `{baseDir}/references/satisfaction-matrix.md`（读它们，照着做）
+- `{baseDir}/references/script-pass.md` 和 `{baseDir}/references/schema.md`（读它们，照着做）
 - 该集的 seed 骨架 + 大纲里这一集的梗概/爽点/人群方案
 - 该集用到的场景卡（art.json 里的锚点、光照状态）与角色信息（性情、说话方式——有 cast.json 更好）
 - **前一集的结尾悬念**（这一集的开场要接得上）
 
-核心要求都在 script-pass.md 里，最重的四条：**动作节拍只写常见动作**（挑担上船、搭手卸担这种 AI 见过千万次的；伸篙一挡、睫毛颤这种精巧动作生成必崩）；**时长预算先于一切**（三分钟一集约 50 个节拍，写完自己跑一遍 validate 看秒数）；台词口语、单句一口气、**谁的话像谁**（有 cast.json 就吃角色的性情与说话方式）；**每集第 1 拍冷开场给钩子的具象**（`hookBeat` 认领，门查位置；钩子类型参考 hook-and-opening.md，第 1 集开场结构参考 opening-rules.md，认领爽点兑现参考 satisfaction-matrix.md），结尾一拍必须是悬念。
+核心要求都在 script-pass.md 里，最重的四条：**动作节拍只写常见动作**（挑担上船、搭手卸担这种 AI 见过千万次的；伸篙一挡、睫毛颤这种精巧动作生成必崩）；**时长预算先于一切**（三分钟一集约 50 个节拍，写完自己跑一遍 validate 看秒数）；台词口语、单句一口气、**谁的话像谁**（有 cast.json 就吃角色的性情与说话方式）；**每集第 1 拍冷开场给钩子的具象**（`hookBeat` 认领，门查位置），结尾一拍必须是悬念。
 
 写完把 `seedNote` 删掉。
 

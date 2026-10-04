@@ -2,11 +2,11 @@
 
 # novel-outline
 
-Feed it a novel or an original idea plus target parameters, and get a five-piece short-drama adaptation and planning outline (with built-in 13 domestic and 6 overseas genre guides, 4-tier villain architecture, 5 hook models, and compliance checks):
+Feed it a novel plus target parameters, and get a five-piece short-drama adaptation outline:
 
-- **Adaptation and planning notes** — one-line core (Premise/Logline), keep/cut/merge tables, risk plans, and decision conclusions (`cutNote` "this means…" / `mergeNote` lead-roster rationale); source quotes for adaptations, core anchor points for original concepts
-- **Cast table** — tiered by asset weight: leads ≤ 5, named supporting ≤ 10, functional roles ≤ 10 (a face, not a name — labelled by function), each carrying a **← change record** (who they map to in the book, who got merged in, or `["原创"]` for original characters; supports 4-tier villain design)
-- **Beat table** — major/minor beats pinned to episodes, gaps ≤ 3 episodes, no dead zones, aligned with 10%–15% paywall placements
+- **Adaptation notes** — one-line core, keep/cut/merge tables, risk plans, and decision conclusions (`cutNote` "this means…" / `mergeNote` lead-roster rationale), with key decisions backed by **verbatim quotes from the source**
+- **Cast table** — tiered by asset weight: leads ≤ 5, named supporting ≤ 10, functional roles ≤ 10 (a face, not a name — labelled by function), each carrying a **← change record** (who they map to in the book, who got merged in)
+- **Beat table** — major/minor beats pinned to episodes, gaps ≤ 3 episodes, no dead zones
 - **Per-episode synopses** — three mandatory fields per episode: synopsis + hook + suspense; narrative prose only, quoted dialogue counts as out of scope
 - **Asset list** — **computed by script, never hand-written by the model**: scene/character usage, reuse plans for one-off scenes, production-risk warnings
 

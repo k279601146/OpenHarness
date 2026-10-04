@@ -4,7 +4,7 @@
 // without an npm install. Node 18+ (stdlib only).
 
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { join, relative, resolve, sep } from 'node:path';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /* ------------------------------------------------------------------ */
@@ -209,7 +209,7 @@ export function seedFromOutline(outline) {
     };
   });
 
-  return { source: outline?.source ?? '', scenes, props };
+  return { source: outline?.source ?? '', style: DEFAULT_STYLE, scenes, props };
 }
 
 /* ------------------------------------------------------------------ */
@@ -247,12 +247,14 @@ export function gateReport(doc, castNames = null) {
   const scenes = Array.isArray(doc?.scenes) ? doc.scenes : [];
   const props = Array.isArray(doc?.props) ? doc.props : [];
   const bad = {
-    anchors: [], lighting: [], people: [], english: [], names: [], variant: [],
+    anchors: [], lighting: [], people: [], english: [], names: [], variant: [], style: [],
     states: [], scale: [], hands: [], whitebg: [],
   };
   const ids = new Set(scenes.map((s) => s?.id));
+  const style = doc?.style ?? DEFAULT_STYLE;
+  const preset = scenePreset(style);
 
-  // 场景与道具共用的门：锚点 / 空景 / 英文 / 角色名
+  // 场景与道具共用的门：锚点 / 空景 / 英文 / 角色名 / 风格匹配
   for (const s of [...scenes, ...props]) {
     const label = s?.name ?? s?.id ?? '(无名)';
 
@@ -297,6 +299,11 @@ export function gateReport(doc, castNames = null) {
       else if (!thText(s?.changes)) bad.variant.push(`${label} 缺 changes`);
     }
 
+    // 风格与反向词匹配 + sheet 带渲染句
+    const bansRealism = /photorealistic|3d render/i.test(neg);
+    if (style === 'realistic' && bansRealism) bad.style.push(`${label} 禁了 photorealistic`);
+    if (style === 'ghibli' && !bansRealism) bad.style.push(`${label} 没禁 photorealistic`);
+    if (thText(s?.image?.sheet) && !s.image.sheet.includes(preset.render)) bad.style.push(`${label} 的 sheet 缺渲染句`);
   }
 
   // 道具专属的门
@@ -332,6 +339,7 @@ export function gateReport(doc, castNames = null) {
     castNames?.length ? bad.names.join('；') : '未提供 cast.json，本门跳过（视为通过）',
   );
   add('variants', '变体引用完整（variantOf 存在且带 changes）', bad.variant.length === 0, bad.variant.join('；'));
+  add('style-match', '风格与反向提示词匹配', bad.style.length === 0, bad.style.join('；'));
   add('prop-states', '道具状态至少 1 个且落成提示词', props.length === 0 || bad.states.length === 0, bad.states.join('；'));
   add('prop-scale', '道具尺度参照写进提示词', props.length === 0 || bad.scale.length === 0, bad.scale.join('；'));
   add('prop-hands', '道具参考图无手：反向提示词禁手', props.length === 0 || bad.hands.length === 0, bad.hands.join('；'));
@@ -351,6 +359,7 @@ export function validateArt(doc, castNames = null, options = {}) {
   if (!doc || typeof doc !== 'object') return ['art.json 不是对象'];
 
   if (!thText(doc.source)) p('缺少 source（剧名/书名）');
+  if (!SUPPORTED_STYLES.includes(doc.style)) p(`style 必须是 ${SUPPORTED_STYLES.join('/')}，实际是 ${JSON.stringify(doc.style)}`);
 
   const scenes = doc.scenes;
   if (!Array.isArray(scenes) || scenes.length === 0) {
@@ -495,6 +504,7 @@ const GATE_LABELS_EN = {
   'english': 'All image prompts in English',
   'no-names': 'Prompts carry no character names',
   'variants': 'Variant references complete (variantOf exists and carries changes)',
+  'style-match': 'Style matches its negative prompt',
   'prop-states': 'At least one prop state, written out as a prompt',
   'prop-scale': 'Prop scale reference written into the prompt',
   'prop-hands': 'No hands in prop plates: negatives ban hands',
@@ -522,6 +532,7 @@ const I18N = {
     langCode: 'zh',
     kicker: '美术设定集',
     docTitle: (s) => `${s} · 美术设定集`,
+    styleLine: (id) => `画风：${scenePreset(id).label}`,
     exportJson: '导出 JSON',
     gates: '质量门',
     gatesPass: '全部通过',
@@ -645,7 +656,7 @@ const mdHead = (cols) => [mdRow(cols), mdRow(cols.map(() => '---'))].join('\n');
 export function renderMarkdown(doc, lang = null) {
   const t = tOf(lang ?? doc?.lang);
   const props = doc.props ?? [];
-  const out = [`# ${t.docTitle(doc.source)}`, ''];
+  const out = [`# ${t.docTitle(doc.source)}`, '', `> ${t.styleLine(doc.style)}`, ''];
 
   out.push(`## ${t.secList}`, '', mdHead(t.listCols));
   for (const s of doc.scenes) {
@@ -993,7 +1004,7 @@ td:first-child{font-family:var(--mono);font-size:12px;color:var(--ink-2);white-s
 
 <header class="hd">
   <h1>${esc(doc.source)}</h1>
-  <span class="sub">${esc(t.kicker)}</span>
+  <span class="sub">${esc(t.kicker)} · ${esc(t.styleLine(doc.style))}</span>
   <span class="right">
     <span class="gatepill ${failed.length ? 'fail' : 'pass'}">${failed.length ? '✗' : '✓'} ${esc(t.gatePill(gates.length - failed.length, gates.length))}</span>
     <button class="expo" data-name="${esc(slug(doc.source))}-art.json">${esc(t.exportJson)}</button>
@@ -1102,12 +1113,13 @@ const USAGE = `novel-art.mjs — novel-art skill 的确定性工具（场景 + �
   validate <art.json> [--cast c.json]    校验；有违规逐条打印并 exit 1
                                          给了 cast.json 才查「提示词不含角色名」
   checkup <art.json> [--cast c.json]     只打印质量门 ✓/✗，有未过项 exit 1
-  render <art.json> [--html|--md]        渲染报告到 stdout（默认 --md）
-        [--lang zh|en]                   界面语言优先级：--lang > art.json 顶层 lang 字段 > 中文
-        [--images <dir>]                 设定图所在目录，任意路径（相对当前目录解析）；
-                                         默认 art.json 同级的 images/。找 <dir>/<slug>-sheet.png，
-                                         找到就嵌进报告；图片路径按「报告写在 art.json 旁边」计算
-  slug <name>                            场景名转安全文件名`;
+  render <art.json> [--html|--md] [--lang zh|en]
+                                         渲染报告到 stdout（默认 --md）
+                                         界面语言优先级：--lang > art.json 顶层 lang 字段 > 中文
+  styles [id]                            打印画风预设的完整内容
+  slug <name>                            场景名转安全文件名
+
+render 会自动去 images/<slug>-sheet.png 找图，找到就嵌进报告。`;
 
 function readJson(path) {
   return JSON.parse(readFileSync(resolve(path), 'utf8'));
@@ -1165,27 +1177,36 @@ function main(argv) {
       console.log(JSON.stringify({ ok: true, stage: 'art', errors: [], gate_count: 0 }));
       return;
     }
-    const styleSuffix = doc.style ? `（style=${doc.style}）` : '';
-    console.log(`✓ ${doc.scenes.length} 个场景${(doc.props ?? []).length ? ` + ${doc.props.length} 件道具` : ''}全部通过校验${styleSuffix}`);
+    console.log(`✓ ${doc.scenes.length} 个场景${(doc.props ?? []).length ? ` + ${doc.props.length} 件道具` : ''}全部通过校验（style=${doc.style}）`);
     return;
   }
 
   if (cmd === 'render') {
     const [path] = rest;
-    if (!path) throw new Error('用法：render <art.json> [--html|--md] [--lang zh|en] [--images <dir>]');
+    if (!path) throw new Error('用法：render <art.json> [--html|--md] [--lang zh|en]');
     const doc = readJson(path);
     const lang = flag(rest, '--lang');
-    // 图是用户在下游出好的素材，放哪由用户定：--images 按普通命令行路径解析，
-    // 不给才退回 art.json 同级的 images/。报告默认写在 art.json 旁边，
-    // src 写成相对那里的路径，整个目录一起挪也不断。图不存在就渲染成占位。
+    // 图存在才挂上去；没有就渲染成占位，不影响其余内容
     const outDir = resolve(path, '..');
-    const imagesFlag = flag(rest, '--images');
-    const imagesDir = imagesFlag ? resolve(imagesFlag) : join(outDir, 'images');
     for (const item of [...doc.scenes, ...(doc.props ?? [])]) {
-      const abs = join(imagesDir, `${slug(item.name)}-sheet.png`);
-      if (existsSync(abs)) item.sheetImage = relative(outDir, abs).split(sep).join('/');
+      const rel = `images/${slug(item.name)}-sheet.png`;
+      if (existsSync(resolve(outDir, rel))) item.sheetImage = rel;
     }
     process.stdout.write((rest.includes('--html') ? renderHtml(doc, lang) : renderMarkdown(doc, lang)) + '\n');
+    return;
+  }
+
+  if (cmd === 'styles') {
+    const only = rest[0];
+    if (only && !SUPPORTED_STYLES.includes(only)) {
+      throw new Error(`未知风格 ${only}（可用：${SUPPORTED_STYLES.join('/')}）`);
+    }
+    const ids = only ? [only] : SUPPORTED_STYLES;
+    console.log(JSON.stringify({
+      default: DEFAULT_STYLE,
+      note: '整块取用不混搭；环境预设与 novel-characters 的角色预设同名对齐但内容不同',
+      presets: Object.fromEntries(ids.map((id) => [id, SCENE_STYLE_PRESETS[id]])),
+    }, null, 2));
     return;
   }
 

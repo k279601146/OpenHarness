@@ -1,14 +1,13 @@
 ---
 name: novel-outline
-version: 2.0.0
+version: 1.2.0
 description: |
-  把一本小说改编或原创点子策划成短剧大纲五件套：改编与策划说明、人物表、爽点表、分集梗概、资产清单，
+  把一本小说改编成短剧大纲五件套：改编说明、人物表、爽点表、分集梗概、资产清单，
   产出 outline.json + Markdown + 单页评审报告（KPI 带、关键决策、爽点时间轴、调度矩阵、场景概览、质量门）。
   14 道质量门全部由脚本确定性检查（角色分档上限、主场景上限随集数动态、爽点间隔≤3集、每集钩子悬念必填……），不靠模型自觉；
-  支持体检模式：贴一份现成大纲进来，只跑质量门给诊断；
-  支持原创点子与出海短剧：内置 13 种主流题材与 6 种海外出海题材库、四层反派体系、五种钩子卡点、合规自检。
+  支持体检模式：贴一份现成大纲进来，只跑质量门给诊断。
   零依赖、零 API key，用当前会话额度。
-  Use when asked to 改编大纲、短剧大纲、拆大纲、小说转短剧、原创短剧、短剧策划、出海短剧、adaptation outline。
+  Use when asked to 改编大纲、短剧大纲、拆大纲、小说转短剧、adaptation outline。
 allowed-tools:
   - Read
   - Write
@@ -21,9 +20,6 @@ triggers:
   - 短剧大纲
   - 拆大纲
   - 小说转短剧
-  - 原创短剧
-  - 短剧策划
-  - 出海短剧
   - 大纲体检
   - adaptation outline
 metadata:
@@ -38,11 +34,11 @@ metadata:
 
 ## novel-outline
 
-输入一本小说或一个原创想法 + 目标参数，输出短剧改编/策划大纲五件套。**四件模型写、一件脚本算**（资产清单从分集数据自动汇总）。
+输入一本小说 + 目标参数，输出短剧改编大纲五件套。**四件模型写、一件脚本算**（资产清单从分集数据自动汇总）。
 
 `{baseDir}` = 本文件所在目录。脚本 `{baseDir}/scripts/novel-outline.mjs`，零依赖，`node` 直接跑。
 
-**边界（不做的事）**：不写剧本台词、不做分镜、不出图像/TTS 提示词。梗概是叙述体，出现引号对白就是越界——`validate` 会拦。想从大纲拆角色设定（画像/形象提示词/设定图），那是 `novel-characters` 的活。
+**边界（不做的事）**：不写剧本台词、不做分镜、不出图像/TTS 提示词。梗概是叙述体，出现引号对白就是越界——`validate` 会拦。想从小说拆角色设定（画像/形象提示词/设定图），那是 `novel-characters` 的活。
 
 ---
 
@@ -53,36 +49,33 @@ metadata:
 | 参数 | 处理 |
 | --- | --- |
 | **总集数 × 单集时长** | **必问**，没有合理默认 |
-| **题材** | **必问**，决定爽点类型，猜错整份废。参考 `{baseDir}/references/genre-guide.md`（含国内 13 种题材与海外 6 种出海题材） |
-| 创作模式 / 改编幅度 | 有小说原著时默认**抽核**（忠实 / 抽核 / 借壳）；**仅有想法/概念时选「原创」** |
-| 已有偏好 | 默认无（想保留哪个角色、哪场戏，或特定出海受众定位） |
+| **题材** | **必问**，决定爽点类型，猜错整份废 |
+| 改编幅度 | 默认**抽核**（忠实 / 抽核 / 借壳），告知即可 |
+| 已有偏好 | 默认无（想保哪个角色、哪场戏） |
 
 平台阈值不同可以带上 `params.thresholds` 覆盖（默认：主角组 ≤ 5、重要配角 ≤ 10、功能性角色 ≤ 10、爽点间隔 ≤ 3 集）。**主场景上限不用配，随集数自动算**：4 + ⌈集数/10⌉，夹在 5–15（60 集 → 10）。这是 AI 短剧的数——场景是生成的没有搭景钱，放宽换观赏性；显式给 `maxPrimaryScenes` 才覆盖。**短篇（20–30 集）建议收紧角色档的阈值**，默认值是按 60 集以上给的。
 
-**人物表从原料拆**：
-- 小说改编模式：从原文拆分档、人物线与改动记录。
-- 原创点子模式：参考 `{baseDir}/references/villain-design.md` 搭建四层反派梯队（大反派/隐藏反派入 `lead`，中反派入 `support`，小反派入 `functional`），原创人物 `from` 统一填 `["原创"]`。
-- 上游已有 `cast.json` 时：反向映射分档（protagonist/major → `lead`，supporting → `support`，minor → `functional`）。
+**人物表从原文拆**——大纲是角色设定的上游，`characters` 块定下的分档、人物线与来源，下游 `novel-characters` 直接拿去当角色清单，不用再判断一遍谁重要。
+
+例外是用户手上已经有 `cast.json`（此前单独跑过 `novel-characters`）：那就拿来当人物原料，角色、别名、关系都是现成的，不用重拆原文。分档按 `importance` 反向映射：protagonist/major → `lead`，supporting → `support`，minor → `functional`。
 
 ### Step 1 — 定位输入
 
-**分支 A · 小说改编模式（有原著输入）**：
-材料优先级写死：1. 用户点名的**精读章节** ➔ 2. **章节目录 + 简介** ➔ 3. 全文**分卷摘要**（Step 2）。
-**禁止凭书名脑补内容**——`adaptation.keep` 的关键取舍要附 `evidence`（原文逐字片段）。直接粘正文的先落成 .txt。
+材料优先级，写死：
 
-**分支 B · 原创点子与出海立项模式（仅有点子或概念）**：
-1. 读 `{baseDir}/references/genre-guide.md` 与 `{baseDir}/references/satisfaction-matrix.md` 锁定题材定位与五大爽点主副配比（出海剧参考欧美市场 6 大题材）；
-2. 读 `{baseDir}/references/villain-design.md` 规划小反派、中反派、大反派与隐藏反派的层级阻力；
-3. 读 `{baseDir}/references/opening-rules.md` 选用六大开场模板之一（前 5 秒定生死、前 30 秒立冲突）；
-4. 读 `{baseDir}/references/rhythm-and-paywall.md` 规划四段式节奏曲线与 10%–15% 付费卡点；
-5. 读 `{baseDir}/references/compliance-checklist.md` 排查国内外合规红线；
-6. **直接跳过 Step 2 分卷摘要**，进入 Step 3 构建骨架。
+1. 用户点名的**精读章节**
+2. **章节目录 + 简介**
+3. 全文**分卷摘要**（Step 2）
 
-### Step 2 — 分卷摘要（长篇小说才需要）
+**禁止凭书名脑补内容**——一切判断基于给到的文本。落地手段：`adaptation.keep` 的关键取舍要附 `evidence`（原文逐字片段）。
 
-**这一步是脚手架，不是交付物**——分卷摘要是给没读过原文的模型压缩用的。三种情况直接跳到 Step 3：
-- **原创点子立项模式**（无小说原文）
-- 短篇小说，单卷装得下
+直接粘正文的先落成 .txt。输出目录：用户指定就用，没指定用原书同级目录。
+
+### Step 2 — 分卷摘要（长文本才需要）
+
+**这一步是脚手架，不是交付物**——分卷摘要是给没读过原文的模型压缩用的。两种情况直接跳到 Step 3：
+
+- 短篇，单卷装得下
 - **当前会话已经通读过原文**——不用再压缩一遍，也不用事后补档
 
 长篇且没读过原文：
@@ -97,16 +90,13 @@ node {baseDir}/scripts/novel-outline.mjs chunk <book.txt> <workdir>
 
 ### Step 3 — 快版骨架 → 用户拍板 ⛔
 
-读 `{baseDir}/references/outline-pass.md`、`{baseDir}/references/schema.md`、`{baseDir}/references/satisfaction-matrix.md`、`{baseDir}/references/opening-rules.md` 与 `{baseDir}/references/hook-and-opening.md`，照着做。产出骨架四块（adaptation / characters / scenes / beats），写成 `<workdir>/outline.json`。
+读 `{baseDir}/references/outline-pass.md` 和 `{baseDir}/references/schema.md`，照着做。产出骨架四块（adaptation / characters / scenes / beats），写成 `<workdir>/outline.json`。
 
 ```bash
 node {baseDir}/scripts/novel-outline.mjs validate <workdir>/outline.json --stage beats
 ```
 
-过了 beats 档，**把三件事摆给用户拍板**：
-- 小说改编：砍了哪条线、合并了哪些人、大爆点落在第几集；
-- 原创点子：**核心对抗与反派层级、主角组人选、大爆点与付费卡点落在第几集**。
-不点头不进 Step 4——快版错了只损失一轮骨架，分集写完才发现方向错，全废。
+过了 beats 档，**把三件事摆给用户拍板：砍了哪条线、合了哪些人、大爆点落在第几集**。不点头不进 Step 4——快版错了只损失一轮骨架，分集写完才发现方向错，全废。
 
 ### Step 4 — 细版骨架
 

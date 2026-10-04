@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
  * outline.json 的 params.thresholds 可以逐项覆盖，不改代码。
  */
 
-export const ADAPT_MODES = ['忠实', '抽核', '借壳', '原创'];
+export const ADAPT_MODES = ['忠实', '抽核', '借壳'];
 export const BEAT_WEIGHTS = ['major', 'minor'];
 
 /*
@@ -391,7 +391,7 @@ export function validateOutline(outline, stage = 'full') {
       if (!Array.isArray(ad[key])) p(`adaptation.${key} 必须是数组`);
     }
     if (Array.isArray(ad.keep) && ad.keep.length === 0) p('adaptation.keep 至少要有一条——什么都不保还改编什么');
-    if (params?.adaptMode && !['忠实', '原创'].includes(params.adaptMode) && Array.isArray(ad.cut) && ad.cut.length === 0) {
+    if (params?.adaptMode && params.adaptMode !== '忠实' && Array.isArray(ad.cut) && ad.cut.length === 0) {
       p(`adaptMode=${params.adaptMode} 却一条线都没砍，说不过去`);
     }
     for (const [key, fields] of [['keep', ['what', 'why']], ['cut', ['what', 'why']], ['merge', ['what', 'why']], ['risks', ['what', 'plan']]]) {
@@ -635,9 +635,9 @@ const I18N = {
     langCode: 'zh',
     htmlLang: 'zh',
     kicker: '短剧改编大纲',
-    docTitle: (s, p) => `${s} · ${p?.adaptMode === '原创' ? '短剧策划大纲' : '短剧改编大纲'}`,
+    docTitle: (s) => `${s} · 短剧改编大纲`,
     paramsLine: (p) =>
-      `${p.episodes} 集 × ${p.minutesPerEpisode} 分钟 · ${p.genre} · ${p.adaptMode === '原创' ? '原创短剧' : p.adaptMode + '改编'}`,
+      `${p.episodes} 集 × ${p.minutesPerEpisode} 分钟 · ${p.genre} · ${p.adaptMode}改编`,
     exportJson: '导出 JSON',
     gates: '质量门',
     gatesPass: '全部通过',
@@ -652,7 +652,7 @@ const I18N = {
     dec: {
       cut: '砍了哪条线', merge: '合了哪些人', majors: '大爆点落在第几集',
       castSlots: (n, l, s, f) => `${n} 个角色位（主角组 ${l} · 重要配角 ${s} · 功能性 ${f}）`,
-      leads: '主角组', noCut: '未砍线（忠实/原创）', noMajor: '没有 major 爽点',
+      leads: '主角组', noCut: '未砍线（忠实改编）', noMajor: '没有 major 爽点',
       first: '首个', final: '终局',
     },
     secNotes: {
@@ -670,7 +670,7 @@ const I18N = {
       cast: '角色', castSub: (l, s, f) => `主角 ${l} · 配角 ${s} · 功能 ${f}`,
       scenes: '主场景', scenesOnce: (n) => (n ? `一次性场景 ${n}，需复用方案` : '无一次性场景'),
       risks: '生成难点', risksNone: '预警清单为空',
-      mode: '改编幅度', modeSub: (cut, merge, mode) => mode === '原创' ? '原创短剧策划' : `砍掉 ${cut} 条线 · 合并 ${merge} 组`,
+      mode: '改编幅度', modeSub: (cut, merge) => `砍 ${cut} 线 · 合 ${merge} 组`,
     },
     legendMajor: '大爆点', legendMinor: '常规爽点',
     gapNote: (n) => `— ${n} 集空档 —`,
@@ -732,9 +732,9 @@ const I18N = {
     langCode: 'en',
     htmlLang: 'en',
     kicker: 'Short-drama adaptation outline',
-    docTitle: (s, p) => `${s} · ${p?.adaptMode === '原创' ? 'Short-Drama Outline' : 'Short-Drama Adaptation Outline'}`,
+    docTitle: (s) => `${s} · Short-Drama Adaptation Outline`,
     paramsLine: (p) =>
-      `${p.episodes} eps × ${p.minutesPerEpisode} min · ${p.genre} · ${p.adaptMode === '原创' ? 'Original' : p.adaptMode + ' adaptation'}`,
+      `${p.episodes} eps × ${p.minutesPerEpisode} min · ${p.genre} · ${p.adaptMode} adaptation`,
     exportJson: 'Export JSON',
     gates: 'Quality gates',
     gatesPass: 'All passed',
@@ -749,7 +749,7 @@ const I18N = {
     dec: {
       cut: 'Which lines were cut', merge: 'Who got merged', majors: 'Where the major beats land',
       castSlots: (n, l, s, f) => `${n} cast slots (leads ${l} · supporting ${s} · functional ${f})`,
-      leads: 'Leads', noCut: 'No lines cut (faithful / original)', noMajor: 'No major beats',
+      leads: 'Leads', noCut: 'No lines cut (faithful adaptation)', noMajor: 'No major beats',
       first: 'First', final: 'Final',
     },
     secNotes: {
@@ -767,7 +767,7 @@ const I18N = {
       cast: 'Cast', castSub: (l, s, f) => `leads ${l} · support ${s} · functional ${f}`,
       scenes: 'Primary scenes', scenesOnce: (n) => (n ? `${n} one-off, reuse plan required` : 'No one-off scenes'),
       risks: 'Production risks', risksNone: 'Warning list empty',
-      mode: 'Adaptation mode', modeSub: (cut, merge, mode) => mode === '原创' ? 'Original series planning' : `${cut} line(s) cut · ${merge} merge(s)`,
+      mode: 'Adaptation mode', modeSub: (cut, merge) => `${cut} line(s) cut · ${merge} merge(s)`,
     },
     legendMajor: 'Major beat', legendMinor: 'Minor beat',
     gapNote: (n) => `— ${n}-ep gap —`,
@@ -861,7 +861,7 @@ export function renderMarkdown(outline, lang) {
   const gates = gateReport(outline);
   const out = [];
 
-  out.push(`# ${t.docTitle(source, params)}`, '', `> ${t.paramsLine(params)}`, '');
+  out.push(`# ${t.docTitle(source)}`, '', `> ${t.paramsLine(params)}`, '');
 
   // 质量门放最前面——先看有没有病，再看内容
   out.push(`## ${t.gates}`, '');
@@ -1091,7 +1091,7 @@ export function renderHtml(outline, lang) {
   <div class="kpi"><div class="l">${esc(t.kpi.cast)}</div><div class="v">${characters.length}</div><div class="d">${esc(t.kpi.castSub(tierN.lead ?? 0, tierN.support ?? 0, tierN.functional ?? 0))}</div></div>
   <div class="kpi"><div class="l">${esc(t.kpi.scenes)}</div><div class="v">${primaryScenes.length}${assets.scenes.length > primaryScenes.length ? ` <small>+${assets.scenes.length - primaryScenes.length}</small>` : ''}</div><div class="d">${esc(t.kpi.scenesOnce(onceScenes.length))}</div></div>
   <div class="kpi"><div class="l">${esc(t.kpi.risks)}</div><div class="v">${riskTotal}</div><div class="d">${esc(riskTotal ? snip(riskSub, 24) : t.kpi.risksNone)}</div></div>
-  <div class="kpi"><div class="l">${esc(t.kpi.mode)}</div><div class="v mode">${esc(params.adaptMode)}</div><div class="d">${esc(t.kpi.modeSub(ad.cut.length, ad.merge.length, params.adaptMode))}</div></div>
+  <div class="kpi"><div class="l">${esc(t.kpi.mode)}</div><div class="v mode">${esc(params.adaptMode)}</div><div class="d">${esc(t.kpi.modeSub(ad.cut.length, ad.merge.length))}</div></div>
 </div>`;
 
   // ---- 分集卡 ----
@@ -1238,7 +1238,7 @@ export function renderHtml(outline, lang) {
 <html lang="${t.htmlLang}"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(t.docTitle(source, params))}</title>
+<title>${esc(t.docTitle(source))}</title>
 <style>
 :root{
   --paper:#eceded; --panel:#f5f6f5; --side:#e4e6e3; --ink:#191d21; --ink-2:#5b636a; --ink-3:#8c9298;
