@@ -945,31 +945,72 @@ export function scaffoldFromScript(script, { outline = null, cast = null, art = 
   const allProps = [...artProps, ...outlineProps];
   for (const pr of allProps) {
     if (!pr?.id) continue;
-    const names = propDefMap.get(pr.id) || new Set();
-    if (pr.name && typeof pr.name === 'string') names.add(pr.name.trim());
-    propDefMap.set(pr.id, names);
-    propDefMap.set(pr.id.toLowerCase(), names);
+    const existing = propDefMap.get(pr.id);
+    const names = existing?.names || (existing instanceof Set ? existing : new Set());
+    if (pr.name && typeof pr.name === 'string') {
+      names.add(pr.name.trim());
+      for (const part of pr.name.split(/[与和及、/，,&+]/)) {
+        const cleanPart = part.trim();
+        if (cleanPart.length >= 2) {
+          names.add(cleanPart);
+          const sub = cleanPart.replace(/^(御赐|钦赐|传国|上古|纯金|赤足|精钢|古制|随身)/, '').trim();
+          if (sub.length >= 2) names.add(sub);
+        }
+      }
+    }
+    for (const anc of pr.anchors ?? []) {
+      if (anc && typeof anc.name === 'string') {
+        const aname = anc.name.trim();
+        names.add(aname);
+        const cleaned = aname.replace(/(半副|半剖|剖半|半露|半截|折叠|展开|解开|单只|双股|一只|一个|一件)/g, '').trim();
+        if (cleaned.length >= 2) names.add(cleaned);
+        for (const term of [aname, cleaned]) {
+          const matches = term.match(/([一-龥]{1,3}(?:袋|符|剑|斗|券|印|鞘|柄|结|环|瓶|壶|杯|箱|盒|囊))/g) || [];
+          for (const m of matches) {
+            if (m.length >= 2) names.add(m);
+          }
+        }
+      }
+    }
+    const summary = typeof pr.summary === 'string' ? pr.summary : '';
+    if (summary) {
+      for (const kw of ['龟袋', '金龟袋', '寿龟袋', '鱼符', '铜鱼符', '金鱼符', '佩剑', '古剑', '宝剑', '契券', '酒斗']) {
+        if (summary.includes(kw)) names.add(kw);
+      }
+    }
+    for (const a of pr.aliases ?? []) {
+      if (a && typeof a === 'string' && a.trim().length >= 2) names.add(a.trim());
+    }
+    for (const st of pr.states ?? []) {
+      if (st && typeof st.state === 'string' && st.state.trim().length >= 2) names.add(st.state.trim());
+    }
+    propDefMap.set(pr.id, { canonicalId: pr.id, names });
+    propDefMap.set(pr.id.toLowerCase(), { canonicalId: pr.id, names });
   }
 
   const matchPropsInText = (text, candidatePropIds) => {
-    if (!text || typeof text !== 'string' || !candidatePropIds?.length) return [];
+    if (!text || typeof text !== 'string') return [];
+    if (Array.isArray(candidatePropIds) && candidatePropIds.length === 0) return [];
     const matched = [];
-    for (const pid of candidatePropIds) {
-      const names = propDefMap.get(pid) || propDefMap.get(String(pid).toLowerCase());
-      if (text.includes(pid)) {
-        matched.push(pid);
+    const idsToCheck = Array.isArray(candidatePropIds) ? candidatePropIds : [...propDefMap.keys()];
+    for (const rawPid of idsToCheck) {
+      const entry = propDefMap.get(rawPid) || propDefMap.get(String(rawPid).toLowerCase());
+      const canonId = entry?.canonicalId || rawPid;
+      const names = entry?.names;
+      if (text.includes(rawPid) || text.includes(canonId)) {
+        matched.push(canonId);
         continue;
       }
       if (names) {
         for (const name of names) {
           if (name && name.length >= 2 && text.includes(name)) {
-            matched.push(pid);
+            matched.push(canonId);
             break;
           }
         }
       }
     }
-    return matched;
+    return [...new Set(matched)];
   };
 
   const tk = H3_TOKENS[lang] ?? H3_TOKENS.en;
@@ -1000,11 +1041,11 @@ export function scaffoldFromScript(script, { outline = null, cast = null, art = 
           }
         }
         let propRef = [];
-        if (Array.isArray(sc.props) && sc.props.length > 0) {
-          const matched = matchPropsInText(b.text, sc.props);
-          if (matched.length > 0) {
-            propRef = matched;
-          }
+        const candidateProps = Array.isArray(sc.props) ? sc.props : [];
+        const fullBeatText = [b.text, b.delivery].filter(Boolean).join(' ');
+        const matched = matchPropsInText(fullBeatText, candidateProps);
+        if (matched.length > 0) {
+          propRef = matched;
         }
         sceneCuts.push({
           beats: [b.n, b.n],
