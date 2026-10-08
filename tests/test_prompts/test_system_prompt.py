@@ -93,7 +93,14 @@ def test_build_system_prompt_protects_model_and_developer_details():
 def test_build_system_prompt_identity_inquiry_guidance():
     prompt = build_system_prompt()
     assert "你是 Bahew Agent" in prompt
-    assert "涉及身份相关" in prompt
+    assert "身份认同与自我介绍" in prompt
     assert "Bahew Agent 相关描述" in prompt
-    assert "身份、模型与开发方询问处理" in prompt
+    assert "严禁声称自己是任何第三方模型或供应商" in prompt
+
+
+def test_build_system_prompt_excludes_removed_credential_and_takeover_boundaries():
+    prompt = build_system_prompt()
+    assert "凭证与密钥保护" not in prompt
+    assert "账户接管" not in prompt
+    assert "实名认证" not in prompt
 
