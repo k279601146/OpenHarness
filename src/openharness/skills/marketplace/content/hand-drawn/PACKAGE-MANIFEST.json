@@ -1,0 +1,77 @@
+{
+  "format_version": 1,
+  "files": {
+    "AGENTS.md": {
+      "bytes": 2964,
+      "sha256": "0f9b54805ea3b76b98a74b518369d3c02d9dfce608bb9ab10649b6edc1cd0fd8"
+    },
+    "INSTALL.md": {
+      "bytes": 2627,
+      "sha256": "55209a1fc08daff0ea6fe3632833f2cfd993ee410822089bdd4984e059ce0054"
+    },
+    "LICENSE": {
+      "bytes": 1063,
+      "sha256": "1315a1123cedfccc762cfbf2685be6abf61b56714866928d9eb7ab6e52a505ca"
+    },
+    "PROTOCOL.md": {
+      "bytes": 19428,
+      "sha256": "27f42c6c8f7b99f782c0adc58dc76bddcb46412b49a0b3367e5285604913468e"
+    },
+    "SKILL.md": {
+      "bytes": 2773,
+      "sha256": "119dc297f97bd21c752e0bfb208435320c8808822b125d0e674c70fe06943a86"
+    },
+    "STYLES.md": {
+      "bytes": 71892,
+      "sha256": "c1793d1514bd01bc8ec511c1072bdeea37281c435a42944a38613ea037480887"
+    },
+    "assets/image-manifest.json": {
+      "bytes": 20439,
+      "sha256": "9c6b57ae20bb4fcf7487763adfd4558c1c52b96e669bb1eacd868b5f241c3caf"
+    },
+    "assets/style-19/anchor-roundhead-redline.png.privacy.json": {
+      "bytes": 819,
+      "sha256": "6501db417dbdf32c2c2a7ebecca3447ad84ba77e68f608d5a7c9156123b39d7a"
+    },
+    "assets/style-19/anchor-roundhead-redline.png.provenance.json": {
+      "bytes": 528,
+      "sha256": "574e63d3d19f1b4be306455e4369234fb59ac3f441dde5406a0041a332e5a8c2"
+    },
+    "assets/style-20/anchor-warm-yellow-ink-story.png.privacy.json": {
+      "bytes": 831,
+      "sha256": "32251b7eeb82145d7f7f7f0497e74f654958660040c0478e7d632de2e860131b"
+    },
+    "assets/style-20/anchor-warm-yellow-ink-story.png.provenance.json": {
+      "bytes": 544,
+      "sha256": "db261a74dc9a08f8a21f24d04bcd40f3419206d84a70df6948d2c462e45eb7f7"
+    },
+    "assets/style-3.1/anchor-family.png.privacy.json": {
+      "bytes": 432,
+      "sha256": "da060426c252d267f8f096840e18e7ff7e559ac9a1984d628a33c34b1879001f"
+    },
+    "assets/style-3.1/anchor-family.png.provenance.json": {
+      "bytes": 737,
+      "sha256": "f2841050efba0a51bb8a99beccc1da2afce5da7dd0d3f77bc100a1fe5231dad8"
+    },
+    "docs/image-hosting.md": {
+      "bytes": 4177,
+      "sha256": "219068e0f8cfa0782beb4cb8b564b281e408e4a1bfb5ed042456aae3fc4c6fbc"
+    },
+    "scripts/check_skill.py": {
+      "bytes": 14341,
+      "sha256": "bd58fbe91e1b5e27291f37ac565a5bf4f5a06b8ff7427b2163fedbe5b5a696d3"
+    },
+    "scripts/hosted_images.py": {
+      "bytes": 11632,
+      "sha256": "89fc8e59b615be9473af1d6cd1bfe5158319f8f78f9d32a157beb4bb6097b232"
+    },
+    "scripts/render_prompt.py": {
+      "bytes": 39589,
+      "sha256": "8eb9fa27a918db2d9e3c715584067731cc4a59b9f1e036d148e7e01b47f360eb"
+    },
+    "scripts/validate_style_20_asset.py": {
+      "bytes": 9188,
+      "sha256": "daf7c6f36a05a1766f52bb37e90fdc50ab890f816aab37789214fd3b503eea30"
+    }
+  }
+}

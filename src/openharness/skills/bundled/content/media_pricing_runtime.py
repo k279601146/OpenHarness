@@ -1525,6 +1525,7 @@ class MediaPricingResult:
     active_price_basis: str | None = None
     original_price: Any = None
     after_discount: Any = None
+    allow_zero: bool = False
 
     def to_metadata(self) -> dict[str, Any]:
         metadata = {
@@ -1537,6 +1538,7 @@ class MediaPricingResult:
             "pricing_source": self.pricing_source,
             "source_checked_at": self.source_checked_at,
             "pricing_breakdown": self.pricing_breakdown,
+            "allow_zero": self.allow_zero,
         }
         if self.provider_multiplier != 1.0:
             metadata["provider_multiplier"] = self.provider_multiplier
@@ -2413,6 +2415,50 @@ def _resolve_provider_multiplier(loaded: dict[str, Any], provider_family: str) -
     return 1.0
 
 
+def _is_zero_number(val: Any) -> bool:
+    if val is None:
+        return False
+    try:
+        return float(val) == 0.0
+    except (ValueError, TypeError):
+        return False
+
+
+def _is_free_or_allow_zero_rule(rule: dict[str, Any]) -> bool:
+    if bool(rule.get("allow_zero") or rule.get("is_free") or rule.get("free")):
+        return True
+    model_name = str(rule.get("model_id") or rule.get("official_model_id") or rule.get("price_model_id") or "").lower()
+    if model_name.endswith("-free") or "-free-" in model_name or model_name.startswith("free-"):
+        return True
+    has_checked_price = False
+    for mapping_key in (
+        "cost_per_second_by_resolution",
+        "usd_per_second_by_resolution",
+        "cost_per_second_with_audio_by_resolution",
+        "usd_per_second_with_audio_by_resolution",
+        "price_by_size_tier",
+        "call_cost_by_action",
+        "cost_by_quality_size",
+        "cost_by_size",
+        "call_cost_by_resolution",
+        "call_cost_by_command",
+        "after_discount",
+        "original_price",
+    ):
+        mapping = rule.get(mapping_key)
+        if isinstance(mapping, dict) and mapping:
+            has_checked_price = True
+            if not all(_is_zero_number(v) for v in mapping.values()):
+                return False
+    for single_key in ("cost_per_second", "unit_cost", "cost_per_1k_chars"):
+        val = rule.get(single_key)
+        if val is not None:
+            has_checked_price = True
+            if not _is_zero_number(val):
+                return False
+    return has_checked_price
+
+
 def _pricing_result(loaded: dict[str, Any], rule: dict[str, Any], official_cost: float, breakdown: dict[str, Any]) -> MediaPricingResult:
     official_cost = round(max(float(official_cost or 0), 0.0), 8)
     currency = str(rule.get("currency") or "USD").upper()
@@ -2422,12 +2468,14 @@ def _pricing_result(loaded: dict[str, Any], rule: dict[str, Any], official_cost:
     provider_family = _infer_provider_family(rule)
     provider_multiplier = _resolve_provider_multiplier(loaded, provider_family)
     billing_units = official_cost * currency_rate * credits_per_usd * multiplier * provider_multiplier
+    allow_zero = _is_free_or_allow_zero_rule(rule)
     pricing_breakdown = {
         **breakdown,
         "currency_rate_to_usd": currency_rate,
         "credits_per_usd": credits_per_usd,
         "provider_multiplier": provider_multiplier,
         "provider_family": provider_family,
+        "allow_zero": allow_zero,
     }
     for key in ("price_model_id", "active_price_basis", "original_price", "after_discount"):
         if key in rule:
@@ -2447,6 +2495,7 @@ def _pricing_result(loaded: dict[str, Any], rule: dict[str, Any], official_cost:
         active_price_basis=str(rule.get("active_price_basis") or "").strip() or None,
         original_price=rule.get("original_price"),
         after_discount=rule.get("after_discount"),
+        allow_zero=allow_zero,
     )
 
 
