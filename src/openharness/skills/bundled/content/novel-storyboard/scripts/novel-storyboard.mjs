@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 
 export const DEFAULT_PARAMS = {
   maxSegmentSeconds: 15, // 视频模型单段生成上限（秒）
+  minSegmentSeconds: 6,  // 视频模型单段生成下限（秒），杜绝低于 6 秒的残缺碎视频段
   minCutSeconds: 2,      // 单个分镜下限
   maxCutSeconds: 5,      // 单个分镜上限——3 秒左右是短剧的呼吸
   maxOnScreen: 3,        // 单个分镜同框人数上限，超了必须带拆解说明
@@ -480,10 +481,12 @@ export function gateReport(board, ctx = {}) {
     for (const seg of ep?.segments ?? []) {
       const sid = seg?.id ?? '?';
       const cuts = seg?.cuts ?? [];
+      const sceneForCap = sEp ? sEp.scenes[seg?.sceneIndex - 1] : null;
       const total = segSeconds(seg);
+      const minSeg = (sceneForCap && sceneForCap.beats.length < 2) ? params.minCutSeconds : (params.minSegmentSeconds ?? 6);
 
-      if (!(total > 0) || total > params.maxSegmentSeconds) {
-        bad.segCap.push(`${sid} 共 ${total} 秒`);
+      if (!(total >= minSeg) || total > params.maxSegmentSeconds) {
+        bad.segCap.push(`${sid} 共 ${total} 秒（要求 ${minSeg}–${params.maxSegmentSeconds} 秒）`);
       }
 
       const h3 = String(seg?.h3Prompt ?? '');
@@ -728,7 +731,7 @@ export function gateReport(board, ctx = {}) {
   const NO_RECIPE = '本批分镜没有引用配方';
 
   add('coverage', '剧本节拍被恰好一次、按顺序、连续认领（分镜级）', bad.coverage.length === 0, script ? bad.coverage.join('；') : SKIP_SCRIPT);
-  add('segment-cap', `每段 0 < 总秒数 ≤ ${params.maxSegmentSeconds}（一次生成的上限）`, eps.length > 0 && bad.segCap.length === 0, bad.segCap.join('；'));
+  add('segment-cap', `每段 ${params.minSegmentSeconds ?? 6} ≤ 总秒数 ≤ ${params.maxSegmentSeconds}（单次生成饱满度与上限）`, eps.length > 0 && bad.segCap.length === 0, bad.segCap.join('；'));
   add('cut-length', `每个分镜 ${params.minCutSeconds}–${params.maxCutSeconds} 秒——短剧的注意力节奏`, eps.length > 0 && bad.cutLen.length === 0, bad.cutLen.join('；'));
   add('dialogue-fit', '认领节拍的台词装得进分镜秒数', bad.fit.length === 0, script ? bad.fit.join('；') : SKIP_SCRIPT);
   add('ep-duration', `每集总时长在剧本目标 ±${Math.round(params.tolerance * 100)}% 内`, bad.duration.length === 0, script ? bad.duration.join('；') : SKIP_SCRIPT);
@@ -1026,7 +1029,7 @@ export function scaffoldFromScript(script, { outline = null, cast = null, art = 
       const sceneCuts = [];
       for (const b of sc.beats) {
         const isLine = b.kind === 'line';
-        const cutSec = r1(Math.max(2.0, b.seconds));
+        const cutSec = r1(Math.min(p.maxCutSeconds ?? 5.0, Math.max(p.minCutSeconds ?? 2.0, b.seconds)));
         const size = isLine ? 'medium' : 'wide';
         const camera = isLine ? 'Push In' : 'Static Shot';
         let charRef = [];
@@ -1132,17 +1135,112 @@ export function scaffoldFromScript(script, { outline = null, cast = null, art = 
         });
       };
 
-      for (const c of sceneCuts) {
-        if (currentSegCuts.length > 0 && r1(currentSegSec + c.seconds) > 15.0) {
-          finalizeSeg(currentSegCuts);
-          currentSegCuts = [];
-          currentSegSec = 0;
+      // 均分与残段吸收：确保多拍场次每个桶至少 2 镜、总时长在 [minTarget, maxSeg] 内，且单镜绝不突破 maxCutSeconds
+      const maxSeg = p.maxSegmentSeconds ?? 15.0;
+      const minTarget = p.minSegmentSeconds ?? 6.0;
+      const maxCut = p.maxCutSeconds ?? 5.0;
+      const totalSceneSec = r1(sceneCuts.reduce((sum, c) => sum + c.seconds, 0));
+
+      let segBuckets = [];
+      if (sceneCuts.length <= 1 || totalSceneSec <= maxSeg) {
+        if (sceneCuts.length > 0) segBuckets = [sceneCuts];
+      } else {
+        const minK = Math.max(1, Math.ceil(totalSceneSec / maxSeg));
+        const maxK = Math.max(minK, Math.floor(sceneCuts.length / 2));
+        for (let k = minK; k <= maxK; k++) {
+          const target = totalSceneSec / k;
+          const memo = new Map();
+          const solve = (startIdx, remBuckets) => {
+            const key = `${startIdx}:${remBuckets}`;
+            if (memo.has(key)) return memo.get(key);
+            const remCuts = sceneCuts.length - startIdx;
+            if (remCuts < remBuckets * 2) {
+              memo.set(key, null);
+              return null;
+            }
+            if (remBuckets === 1) {
+              const slice = sceneCuts.slice(startIdx);
+              const sec = r1(slice.reduce((s, c) => s + c.seconds, 0));
+              if (sec > maxSeg) {
+                memo.set(key, null);
+                return null;
+              }
+              const penalty = sec < minTarget ? (minTarget - sec) * 100 : 0;
+              const res = { cost: (sec - target) ** 2 + penalty, buckets: [slice] };
+              memo.set(key, res);
+              return res;
+            }
+            let best = null;
+            let curSum = 0;
+            const maxEnd = sceneCuts.length - (remBuckets - 1) * 2;
+            for (let end = startIdx; end < maxEnd; end++) {
+              curSum = r1(curSum + sceneCuts[end].seconds);
+              if (end - startIdx + 1 < 2) continue;
+              if (curSum > maxSeg) break;
+              const sub = solve(end + 1, remBuckets - 1);
+              if (!sub) continue;
+              const penalty = curSum < minTarget ? (minTarget - curSum) * 100 : 0;
+              const cost = (curSum - target) ** 2 + penalty + sub.cost;
+              if (!best || cost < best.cost) {
+                best = { cost, buckets: [sceneCuts.slice(startIdx, end + 1), ...sub.buckets] };
+              }
+            }
+            memo.set(key, best);
+            return best;
+          };
+          const found = solve(0, k);
+          if (found) {
+            segBuckets = found.buckets;
+            break;
+          }
         }
-        currentSegCuts.push(c);
-        currentSegSec = r1(currentSegSec + c.seconds);
+        if (!segBuckets.length) {
+          let cur = [];
+          let curS = 0;
+          for (const c of sceneCuts) {
+            if (cur.length > 0 && r1(curS + c.seconds) > maxSeg) {
+              segBuckets.push(cur);
+              cur = [];
+              curS = 0;
+            }
+            cur.push(c);
+            curS = r1(curS + c.seconds);
+          }
+          if (cur.length > 0) segBuckets.push(cur);
+          if (segBuckets.length >= 2) {
+            const lastB = segBuckets[segBuckets.length - 1];
+            const prevB = segBuckets[segBuckets.length - 2];
+            while (lastB.length < 2 && prevB.length > 2) {
+              const moved = prevB.pop();
+              if (moved) lastB.unshift(moved);
+            }
+          }
+        }
       }
-      if (currentSegCuts.length > 0) {
-        finalizeSeg(currentSegCuts);
+
+      for (const bucket of segBuckets) {
+        if (!bucket.length) continue;
+        const bucketSec = r1(bucket.reduce((sum, c) => sum + c.seconds, 0));
+        if (bucket.length >= 2 && bucketSec < minTarget) {
+          let remaining = r1(minTarget - bucketSec);
+          while (remaining > 0.001) {
+            let progressed = false;
+            for (let ci = bucket.length - 1; ci >= 0 && remaining > 0.001; ci--) {
+              const room = r1(maxCut - bucket[ci].seconds);
+              if (room <= 0.001) continue;
+              const add = r1(Math.min(0.5, room, remaining));
+              if (add > 0) {
+                bucket[ci].seconds = r1(bucket[ci].seconds + add);
+                remaining = r1(remaining - add);
+                progressed = true;
+              }
+            }
+            if (!progressed) break;
+          }
+        } else if (bucket.length === 1 && bucketSec < minTarget) {
+          bucket[0].seconds = r1(Math.min(maxCut, Math.max(bucket[0].seconds, minTarget)));
+        }
+        finalizeSeg(bucket);
       }
     }
 
