@@ -413,6 +413,39 @@ async def test_fetch_public_http_response_gateway_requires_token(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_fetch_public_http_response_gateway_surfaces_error_detail(monkeypatch):
+    class FakeClient:
+        def __init__(self, **_: object) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url: str, **kwargs: object) -> httpx.Response:
+            request = httpx.Request("POST", url)
+            return httpx.Response(
+                502,
+                json={"error": "fetch_gateway_failed", "message": "unsupported_content_type"},
+                request=request,
+            )
+
+    async def fake_ensure_public_http_url(url: str) -> None:
+        assert url == "https://gateway.example.com/"
+
+    monkeypatch.setenv("OPENHARNESS_WEB_FETCH_GATEWAY_URL", "https://gateway.example.com/")
+    monkeypatch.setenv("OPENHARNESS_WEB_FETCH_GATEWAY_TOKEN", "x" * 32)
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr("openharness.utils.network_guard.ensure_public_http_url", fake_ensure_public_http_url)
+    monkeypatch.setattr("openharness.utils.network_guard._ensure_gateway_public_http_url", lambda url: None)
+
+    with pytest.raises(NetworkGuardError, match="status 502: unsupported_content_type"):
+        await fetch_public_http_response("https://example.com/unsupported")
+
+
+@pytest.mark.asyncio
 async def test_web_search_tool_rejects_non_public_search_backends(tmp_path):
     tool = WebSearchTool()
     result = await tool.execute(

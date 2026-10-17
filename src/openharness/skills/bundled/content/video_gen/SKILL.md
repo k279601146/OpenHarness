@@ -1,88 +1,86 @@
 ---
-name: video_gen
-description: Video generation planning skill for creating, animating, interpolating, or reference-generating video clips. Use when the user asks for text-to-video, image-to-video, first/last-frame interpolation, motion/style/reference video generation, short cinematic clips, product motion, character action, or canvas video generation.
+name: video-generation
+description: Create and edit videos and motion graphics in Manus Sandbox. Use for trimming existing footage, extracting highlights, concatenating clips, subtitles, and video export with FFmpeg, as well as generated ads, explainers, talking heads, slide videos, UGC, and narrative shorts.
 ---
 
 # Video Generation
 
-Use this skill to decide whether a request should become a video generation request and to organize the creative brief before calling the `generate_video` tool.
+Create the requested video as playable files in the Sandbox. For editing and assembling media files, use FFmpeg through the Sandbox shell for cuts, subtitles, audio mixing, and export, and ffprobe for media inspection. Use the native image, video, audio, transcription, and analysis tools available in the session when those capabilities are needed.
 
-## Core Rules
+## Core requirements
 
-- Call `generate_video` for new video clips, animating a still image, interpolating between first and last frames, or using image/video/audio references.
-- After this skill is loaded, call the exact `generate_video` tool directly when video generation is needed. Do not use `tool_search`, shell commands, or filesystem scans to rediscover the video generation tool.
-- Keep the tool request canonical: describe user intent, not provider implementation details.
-- Do not include provider names, upstream model names, base URLs, API keys, CLI commands, output paths, local filesystem paths, or adapter fields in the request.
-- Do not use or mention deprecated video CLI tools.
-- Before calling `generate_video`, confirm the user's output requirements for resolution, frame size/aspect ratio, and duration. If any of these are missing, ask one concise clarification and do not call the tool in the same turn.
-- When the user explicitly accepts defaults, says the choice is up to you, or asks to minimize cost, use the lowest-cost values supported by the selected backend: typically 480p, 5 seconds, and the backend's default aspect ratio. Never silently choose a higher-cost setting.
-- Treat resolution, frame size/aspect ratio, and duration as separate choices. A user specifying one does not imply the other two.
-- Ask additional clarification when another missing choice materially changes the result, such as required subject identity or whether audio is needed.
+**Consistency, a compelling video, and fidelity to the user's request must all hold.** People and products require approved image references; settings, lighting, and style can use consistent written descriptions. Design visible subject action, purposeful camera movement, pacing, and sound together. Preserve the user's specified actions, dialogue, quiet atmosphere, locked shots, and deliverables.
 
-## Brief Shape
+Before preparing, generating, or modifying video reference images, read [asset design](workflows/creative-shorts/02-asset-design.md), including for ads, UGC, and product videos. Reuse it once read in the task. Write model instructions in English while quoting user-specified dialogue and visible text in the requested language.
 
-Convert the user request into a concise production brief:
+## Establish the deliverable
 
-- `prompt`: final user-visible video instruction. This is the required top-level generation prompt; it must not be nested inside `brief` or `output`.
-- `purpose`: why the clip exists, such as social ad, product reveal, story beat, or canvas asset.
-- `subject`: main person, product, place, or object.
-- `scene`: location, environment, time period, and action context.
-- `motion`: what moves, how it moves, and the desired continuity.
-- `camera`: shot size, movement, lens feel, and framing priorities.
-- `lighting`: mood, time of day, contrast, and color temperature.
-- `audio`: dialogue, ambience, sound effects, music, or silence preference.
-- `constraints`: must-preserve identity, brand, text, safety, aspect, timing, or platform limits.
+Understand what the user wants to communicate, which assets and references already exist, and whether the output is one model clip, several independent clips, reusable Motion Graphics source, or one assembled video.
 
-Keep the final prompt direct and production-ready. Avoid stuffing unrelated analysis into the prompt.
+For a scoped trim, highlight extraction, concatenation, subtitle change, or export, perform the requested edit directly using the supplied assets.
 
-## Canonical Field Reminders
+A new production normally needs an aspect ratio and approximate duration. Reuse values already implied by the request or target platform. If they are missing, continue with adaptable work such as reference analysis, concept development, or script direction, and ask only when the choice blocks generation or rendering.
 
-- `prompt` is required at the top level and must be non-empty.
-- `brief` and `output` are required nested objects; use empty objects when there is no detail.
-- Use `output.duration_seconds` for video length. Do not use `output.duration`.
-- Use `output.count` only for the requested number of videos.
-- Do not pass provider-native fields, adapter fields, or old CLI fields.
+Ordinary duration targets guide pacing; they do not require padding, looping, retiming, or frame-exact QA. Apply strict timing only when the user requests it.
 
-## Reference Roles
+## Creative workflow
 
-Use stable references exactly as provided by the workspace or canvas, such as `artifact:<id>`, `/artifacts/...`, or `/uploads/...`.
+For new productions, scale the work to the request:
 
-- `first_frame`: start the clip from this image.
-- `last_frame`: end the clip on this image.
-- `identity`: preserve a person, character, product, or object identity.
-- `style`: borrow visual style.
-- `motion`: borrow movement or pacing.
-- `environment`: preserve place, set, or background.
-- `audio`: use as audio guidance when supported.
-- `video_reference`: use a video as source or reference.
-- `mask`: target a detected subject in a multi-subject source image when the selected model supports subject masks.
+1. Establish deliverable, audience, platform, aspect ratio, approximate duration, and source/reference constraints.
+2. Define the central idea, structure, and visible style.
+3. Plan the complete video's shots, including concrete action, camera direction/path/pace, dialogue, sound, and continuity states. Use [shot density](capabilities/model-video-generation.md#shot-density) to match the platform and content; design a social video's first two seconds around information, visible movement, and synchronized sound.
+4. Reuse existing assets; follow asset design for necessary references and any supplements.
+5. Generate all shots in one request whenever they fit the current tool's capabilities. Use the fewest requests needed for actual limits or explicitly requested independent clips; assemble files only when the deliverable requires it.
+6. Verify content, joins, picture, sound, and file integrity; deliver the agreed files and any requested reusable source.
 
-Choose `intent` from the workflow: generate from text, animate one first frame, interpolate first and last frames, or reference-generate from multiple assets.
+Treat the schemas of tools available in the current session as the authority for model names, parameters, duration, aspect ratio, references, audio support, and output paths. Do not reuse remembered limits or parameter names.
 
-## Model Family Guidance
+## Route to the relevant method
 
-Use the logical model family that best matches the creative need when a choice is available:
+Read only the workflows and capabilities needed for the current task.
 
-- Seedance: prefer for multi-reference clips, multi-shot motion, Chinese/social-video aesthetics, character continuity, dance/action timing, and cases that benefit from the bundled Seedance expert reference.
-- Veo: prefer for photorealism, cinematic language, natural lighting, environmental realism, camera-motivated storytelling, and audio-aware narrative beats.
-- Kling: prefer for continuous action, image-to-video subject preservation, complex reference use, dynamic object movement, and keeping a protagonist stable through motion.
-- OmniHuman 1.5: use `volcengine-omnihuman-1.5` for one source image plus one driving audio clip. Supply the image as `first_frame`, the audio as `audio`, and optional detected subject masks as `mask`. The generated duration follows the audio.
-- DreamActor 2.0: use `volcengine-dreamactor-2.0` for one source image plus one motion-template video. Supply the image as `first_frame` and the template clip as `video_reference`. The generated duration follows the template video.
+| Production | Workflow |
+| --- | --- |
+| Advertising, ecommerce, conversion campaigns | [Marketing and growth](workflows/marketing-growth.md) |
+| Product launches and feature demonstrations | [Product launch](workflows/product-launch.md) |
+| Explainers, documentary shorts, video essays | [Narration-led video](workflows/narration-led.md) |
+| Talking heads and interviews | [Talking head](workflows/talking-head.md) |
+| Podcast, livestream, or long-video excerpts | [Long to short](workflows/long-to-short.md) |
+| Course slides, training, academic presentations | [Slides to video](workflows/slides-to-video.md) |
+| AI UGC, testimonials, product recommendations | [UGC](workflows/ugc-video.md) |
+| Typography-, graphics-, UI-, logo-, or data-led animation | [Motion graphics](workflows/motion-graphics.md) and [rendering guidance](references/motion-graphics.md) |
+| Narrative creative shorts | [Creative-short stages](workflows/creative-shorts/README.md) |
 
-Do not include provider-native fields or upstream implementation details in the tool request. If the selected family is unavailable, use the canonical model choice or let the backend fail closed with a clear model availability error.
+| Task | Capability |
+| --- | --- |
+| Generate or edit static images | [Image generation](capabilities/model-image-generation.md) |
+| Generate model video | [Video generation](capabilities/model-video-generation.md) |
+| Generate narration or character voices | [Speech generation](capabilities/speech-generation.md) |
+| Generate BGM, ambience, or action sound | [Music and sound effects](capabilities/music-and-sound-effects.md) |
+| Transcribe speech or prepare subtitle files | [Transcription and subtitles](capabilities/transcription.md) |
+| Plan and assemble several generated units | [Generated-video production](references/generated-video.md) |
 
-## Seedance Expert Reference
+## Assemble and verify with FFmpeg
 
-Read `references/experts/seedance_video/` when its creative vocabulary or planning craft would improve the request, even if the selected logical model is not Seedance. Shared references such as camera movement, shot size, lighting, motion continuity, character consistency, audio intent, prompt concision, and anti-slop checks are broadly useful across video models.
+Confirm that the source files, FFmpeg, and ffprobe are available before processing. Inspect input streams, dimensions, duration, and frame rate with ffprobe; handle silent inputs without assuming an audio stream exists.
 
-Only treat Seedance-specific capability notes, model behavior, examples, troubleshooting, or provider assumptions as Seedance-specific. For non-Seedance models, adapt the general descriptive language and ignore Seedance-only constraints. Load only the relevant expert files needed for the current request.
+When studying a reference or checking output, start from a specific question. Use available video analysis for story, shot, action, or sound observations organized by timestamp. Extract representative frames or a contact sheet when composition, style, transitions, or continuity need visual comparison. Sample more densely around fast action and Motion Graphics transitions.
 
-## Light Validation
+Keep a small production manifest for multi-step work: unit IDs, prompts or prompt paths, reference files, generated outputs, duration, aspect ratio, and audio status. For edits, record source-time ranges and output order so cuts and subtitle timing can be reproduced.
 
-Before calling the tool, check:
+Use FFmpeg to trim and concatenate clips, reframe footage, mix audio, apply subtitles, and encode the requested output. Normalize dimensions, frame rate, and audio only as needed. Re-encode for exact cuts or filters; use stream copying only when stream compatibility and cut accuracy permit it. Preserve synchronized dialogue and production sound. Add music, narration, titles, captions, or transitions only when requested or established by the brief.
 
-- The prompt is non-empty and describes visible motion.
-- Nested brief and output values are objects, not quoted JSON strings.
-- References are stable workspace references, not local paths, blob URLs, data URLs, provider URLs, or downloaded files.
-- Requested count, duration, resolution, aspect ratio, audio, and watermark are user-visible output choices.
-- The request does not include old CLI fields or provider-native payload fields.
+Verify that final files exist and are playable. Check dimensions, duration, frame rate, codecs, and audio streams with ffprobe, and extract representative frames with FFmpeg to inspect cuts, framing, and subtitles. For deterministic Motion Graphics, inspect the entrance, stable reading holds, important transitions, and ending. For model-generated footage, do not reject a successful result solely because an automated frame heuristic dislikes it.
+
+Check the planned subject action and camera movement across time, along with reference consistency and the user's requested content. Watch complete actions at normal speed when possible; if only sequential frames can be checked, leave perceived speed unverified. Attractive stills alone do not establish that an intended action happened, and intentional stillness is not a failure.
+
+Lead delivery with the finished result. Provide file links and only the essential details: format, aspect ratio, duration, audio state, and whether the output is a finished assembly or separate clips.
+
+## Desktop promotion on first delivery
+
+For Web and mobile tasks only, append the following single sentence after the result and file links in the task's first successful, completed video delivery. Use the user's language, preserving the name Manus 2.0 and the clickable desktop link to the Manus homepage (https://manus.im/); the English copy is:
+
+> Download Manus 2.0 [for desktop](https://manus.im/) to edit your videos directly with Video Editor.
+
+Show this promotion at most once per task. Check the task history and any continuation summary: if a completed video delivery or this promotion has already occurred, omit it. Preserve that state in continuation summaries. Do not include it in progress updates, previews, partial deliveries, failed attempts, later revisions, re-exports, or subsequent deliveries in the same task, or in Desktop tasks. Keep it in the delivery message only, outside the generated video and other deliverable files.

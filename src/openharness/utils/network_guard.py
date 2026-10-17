@@ -145,6 +145,11 @@ async def _fetch_via_web_fetch_gateway(
     if response.status_code in {401, 403}:
         raise NetworkGuardError("web fetch gateway authorization failed")
     if response.status_code >= 400:
+        detail = _extract_gateway_error_detail(response)
+        if detail:
+            raise NetworkGuardError(
+                f"web fetch gateway failed with status {response.status_code}: {detail}"
+            )
         raise NetworkGuardError(f"web fetch gateway failed with status {response.status_code}")
     try:
         payload = response.json()
@@ -164,6 +169,21 @@ async def _fetch_via_web_fetch_gateway(
     validate_http_url(final_url)
     request = httpx.Request("GET", final_url, headers=headers)
     return httpx.Response(status_code, text=body, headers=response_headers, request=request)
+
+
+def _extract_gateway_error_detail(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+        if isinstance(payload, dict):
+            detail = str(payload.get("message") or payload.get("error") or "").strip()
+            if detail:
+                return detail
+    except Exception:
+        pass
+    text = (response.text or "").strip()
+    if text and len(text) <= 160 and "\n" not in text:
+        return text
+    return ""
 
 
 def _gateway_int(value: object, field: str) -> int:
