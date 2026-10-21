@@ -646,6 +646,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
         },
         "agnes-video-2.5-flash": {
             "enabled": True,
+            "allow_zero": True,
             "currency": "USD",
             "multiplier": 1.0,
             "scheme": "video_seconds_pricing",
@@ -654,9 +655,9 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "allowed_upstream_model_ids": ["agnes-video-2.5-flash"],
             "source_url": "https://www.agnes-ai.cn/zh-Hans/docs/agnes-video-25-flash.md",
             "source_checked_at": "2026-09-14",
-            "cost_per_second_by_resolution": {"720p": 0.025},
-            "original_price": {"default": 0.025, "720p": 0.025},
-            "after_discount": {"default": 0.025, "720p": 0.025},
+            "cost_per_second_by_resolution": {"720p": 0.0},
+            "original_price": {"default": 0.0, "720p": 0.0},
+            "after_discount": {"default": 0.0, "720p": 0.0},
             "active_price_basis": "after_discount",
             "default_duration_seconds": 5,
             "default_resolution": "720p",
@@ -664,6 +665,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
         },
         "agnes-video-v2.0": {
             "enabled": True,
+            "allow_zero": True,
             "currency": "USD",
             "multiplier": 1.0,
             "scheme": "video_seconds_pricing",
@@ -672,9 +674,9 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "allowed_upstream_model_ids": ["agnes-video-v2.0"],
             "source_url": "https://wiki.agnes-ai.com/llms.txt",
             "source_checked_at": "2026-07-31",
-            "cost_per_second_by_resolution": {"480p": 0.005, "720p": 0.005, "1080p": 0.005},
-            "original_price": {"default": 0.005, "480p": 0.005, "720p": 0.005, "1080p": 0.005},
-            "after_discount": {"default": 0.005, "480p": 0.005, "720p": 0.005, "1080p": 0.005},
+            "cost_per_second_by_resolution": {"480p": 0.0, "720p": 0.0, "1080p": 0.0},
+            "original_price": {"default": 0.0, "480p": 0.0, "720p": 0.0, "1080p": 0.0},
+            "after_discount": {"default": 0.0, "480p": 0.0, "720p": 0.0, "1080p": 0.0},
             "active_price_basis": "after_discount",
             "default_duration_seconds": 5,
             "default_resolution": "720p",
@@ -2481,6 +2483,17 @@ def _is_free_or_allow_zero_rule(rule: dict[str, Any]) -> bool:
     model_name = str(rule.get("model_id") or rule.get("official_model_id") or rule.get("price_model_id") or "").lower()
     if model_name.endswith("-free") or "-free-" in model_name or model_name.startswith("free-"):
         return True
+    if model_name.startswith("agnes-video") or str(rule.get("provider") or "").lower() == "agnes_video":
+        return True
+    if _is_zero_number(rule.get("multiplier")):
+        return True
+
+    active_basis = str(rule.get("active_price_basis") or "after_discount").strip().lower()
+    active_map = rule.get(active_basis)
+    if isinstance(active_map, dict) and active_map:
+        if all(_is_zero_number(v) for v in active_map.values()):
+            return True
+
     has_checked_price = False
     for mapping_key in (
         "cost_per_second_by_resolution",
@@ -2494,13 +2507,19 @@ def _is_free_or_allow_zero_rule(rule: dict[str, Any]) -> bool:
         "call_cost_by_resolution",
         "call_cost_by_command",
         "after_discount",
-        "original_price",
     ):
         mapping = rule.get(mapping_key)
         if isinstance(mapping, dict) and mapping:
             has_checked_price = True
             if not all(_is_zero_number(v) for v in mapping.values()):
                 return False
+    if active_basis == "original_price":
+        orig = rule.get("original_price")
+        if isinstance(orig, dict) and orig:
+            has_checked_price = True
+            if not all(_is_zero_number(v) for v in orig.values()):
+                return False
+
     for single_key in ("cost_per_second", "unit_cost", "cost_per_1k_chars"):
         val = rule.get(single_key)
         if val is not None:
@@ -2515,7 +2534,7 @@ def _pricing_result(loaded: dict[str, Any], rule: dict[str, Any], official_cost:
     currency = str(rule.get("currency") or "USD").upper()
     currency_rate = float(loaded.get("currency_rates", {}).get(currency, 0) or 0)
     credits_per_usd = float(loaded.get("credits_per_usd") or os.getenv("BILLING_CREDITS_PER_USD", DEFAULT_CREDITS_PER_USD) or DEFAULT_CREDITS_PER_USD)
-    multiplier = float(rule.get("multiplier", 1) or 1)
+    multiplier = float(rule.get("multiplier", 1) if rule.get("multiplier") is not None else 1)
     provider_family = _infer_provider_family(rule)
     provider_multiplier = _resolve_provider_multiplier(loaded, provider_family)
     billing_units = official_cost * currency_rate * credits_per_usd * multiplier * provider_multiplier
