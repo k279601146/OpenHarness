@@ -8,7 +8,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from openharness.tools.ask_user_interaction import AskUserQuestionPaused
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
 
@@ -18,9 +17,14 @@ AskUserPrompt = Callable[[str | dict[str, Any]], Awaitable[str]]
 class AskUserQuestionOption(BaseModel):
     """One selectable answer option for an interactive question."""
 
-    label: str = Field(description="Non-empty option label shown to the user")
+    label: str = Field(
+        description="Non-empty, human-readable option label shown to the user in natural language (e.g. '周杰伦《反方向的钟》', '副歌高潮片段（约30秒）'). Never use code identifiers, snake_case or technical keys."
+    )
     recommended: bool = Field(default=False, description="Whether this option is recommended")
-    value: str | None = Field(default=None, description="Optional machine-readable option value")
+    value: str | None = Field(
+        default=None,
+        description="Optional machine-readable option value (e.g. 'jay_backwards_clock'). If omitted, label is used."
+    )
 
 
 class AskUserQuestionItem(BaseModel):
@@ -51,7 +55,7 @@ class AskUserQuestionTool(BaseTool):
         "Ask the interactive user for clarification and return the answer. "
         "Use this tool whenever the user's requirement is ambiguous, missing a decision, or needs confirmation before proceeding; "
         "do not ask those questions only in plain assistant text. "
-        "For each question, provide non-empty selectable options and mark one recommended option to help the user decide."
+        "For each question, provide non-empty selectable options with user-friendly natural language labels (never code or snake_case identifiers) and mark one recommended option to help the user decide."
     )
     input_model = AskUserQuestionToolInput
 

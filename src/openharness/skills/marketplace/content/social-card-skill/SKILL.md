@@ -1,6 +1,29 @@
 ---
-name: guizang-social-card-skill
-description: Generate Guizang-style social card image sets, Live Photo motion cards, material-first Live Photo puzzle layouts, triple Live Photo collages, long-video-to-Live-Photo treatments, and WeChat official account cover pairs from articles, scripts, screenshots, product notes, subtitles, photos, or user-supplied videos. Use when the user asks for 小红书图文, Rednote/Xiaohongshu images, social cards, carousel images, 3:4 covers, Live Photo, 实况照片, 单视频实况拼图, 二宫格实况拼图, 三连实况拼图, 四宫格实况拼图, 微信公众号封面, WeChat 21:9 + 1:1 covers, Swiss Style, or magazine-style social images.
+name: social-card-skill
+description: Generate Guizang-style social card image sets, Live Photo motion cards,
+  material-first Live Photo puzzle layouts, triple Live Photo collages, long-video-to-Live-Photo
+  treatments, and WeChat official account cover pairs from articles, scripts, screenshots,
+  product notes, subtitles, photos, or user-supplied videos.
+metadata:
+  display_name: 归藏社交图文与实况卡片
+  category: design_creative
+  summary: 生成小红书图文卡片、Live Photo 实况动图与公众号封面套图
+  version: 1.0.0
+  triggers:
+  - 小红书图文
+  - 实况照片
+  - 社交卡片
+  - Live Photo
+  - 微信公众号封面
+  - 瑞士平面风格
+  locales:
+    en:
+      display_name: Guizang Social Card & Live Photo
+      summary: Generate Xiaohongshu social cards, Live Photo layouts, and WeChat cover
+        pairs
+    zh-Hant:
+      display_name: 歸藏社交圖文與實況卡片
+      summary: 生成小紅書圖文卡片、Live Photo 實況動圖與公眾號封面套圖
 ---
 
 # Guizang Social Card Skill

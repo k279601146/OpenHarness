@@ -1,6 +1,28 @@
 ---
 name: hand-drawn
-description: Use when users ask for a hand-drawn or illustrated image prompt, name one of the repository's 20 numbered styles or the 3.1 stable variant, or mention triggers such as 亲子手绘、家庭蜡笔画、蜡笔、吉卜力、水墨、像素、淡彩速写、动画概念、水粉、北欧绘本、纸雕、软胶潮玩、墨线绘本、暖色扁平绘本、圆头红线、暖黄墨线、family-crayon-card、warm-flat-storybook、roundhead-redline、warm-yellow-ink-story. Produces prompt text or a formal reference-bearing call bundle and does not generate images.
+description: Use when users ask for a hand-drawn or illustrated image prompt, name
+  one of the repository 20 numbered styles or the 3.1 stable variant, or mention triggers
+  such as 亲子手绘、家庭蜡笔画、蜡笔、吉卜力、水墨、像素、淡彩速写、动画概念、水粉、北欧绘本、纸雕、软胶潮玩、墨线绘本、暖色扁平绘本、圆头红线、暖黄墨线。
+metadata:
+  display_name: 手绘插画风格生成器
+  category: image_generation
+  summary: 覆盖 20 款经典手绘画风与故事绘本的精准提示词生成
+  version: 1.0.0
+  triggers:
+  - 手绘插画
+  - 绘本画风
+  - 吉卜力水墨
+  - 像素风
+  - 淡彩速写
+  - 水粉纸雕
+  locales:
+    en:
+      display_name: Hand-Drawn Illustration Generator
+      summary: Generate prompts for 20 classic hand-drawn illustration and storybook
+        styles
+    zh-Hant:
+      display_name: 手繪插畫風格生成器
+      summary: 覆蓋 20 款經典手繪畫風與故事繪本的精準提示詞生成
 ---
 
 # 手绘风格 prompt 生成器

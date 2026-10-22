@@ -1,10 +1,26 @@
 ---
 name: portrait-face-director
-description: |
-  把脸谱、气质和参考图拆解为可执行的人像面部结构提示词。技能以脸型、三庭五眼、眼型、鼻子、嘴唇、面部折叠度、肤质、发型、妆容和构图替代“猫系脸”等模糊标签，并默认所有人物为成年人。适用于头像、半身肖像、时装人像和角色脸部设计；真人参考只提取泛化结构与气质，不复刻明星、网红或真实个人身份。
-category: graphic_design
-summary: 以面部结构而非抽象标签设计原创成人肖像
-version: 1.0.0
+description: 围绕骨相轮廓、五官比例、真实皮肤纹理与神态细节设计高辨识度原创肖像。避免抽象网红脸与塑料假面感，建立可复用的面部特征锁。
+metadata:
+  display_name: 电影级人像骨相捏脸导演
+  category: image_generation
+  summary: 以解剖骨相和细腻光影设计高保真原创人像与角色肖像
+  version: 1.0.0
+  triggers:
+  - 人像捏脸
+  - 骨相写真
+  - 原创肖像
+  - 真实皮肤质感
+  - 角色面部锁
+  - 电影级人像
+  locales:
+    en:
+      display_name: Cinematic Portrait & Facial Director
+      summary: Direct high-fidelity facial bone structure, skin micro-texture, and
+        lighting
+    zh-Hant:
+      display_name: 電影級人像骨相捏臉導演
+      summary: 以解剖骨相和細膩光影設計高保真原創人像與角色肖像
 ---
 
 # 人像捏脸导演

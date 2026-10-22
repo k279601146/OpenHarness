@@ -1,3 +1,26 @@
+---
+name: mobskill
+description: 移动应用商店上架素材设计工具包。规划并生成 App Store 与 Google Play 宣传海报、应用图标、特性展示图与功能卖点图。
+metadata:
+  display_name: 应用商店上架素材设计
+  category: design_creative
+  summary: App Store 与 Google Play 宣传图、图标与应用商店展示设计
+  version: 1.0.0
+  triggers:
+  - 应用商店素材
+  - App Store截图
+  - Google Play宣传图
+  - 应用图标设计
+  - 商店上架图
+  locales:
+    en:
+      display_name: Mobile App Listing Kit
+      summary: Design App Store & Google Play screenshots, icons, and listing assets
+    zh-Hant:
+      display_name: 應用商店上架素材設計
+      summary: App Store 與 Google Play 宣傳圖、圖標與應用商店展示設計
+---
+
 ## Conversation Language
 
 Before user-visible output, set the language in this order: explicit user request > runtime/app UI locale > dominant language of the latest user message > English. Do not default to Chinese from the Skill source, examples, triggers, title, or conversation history. Keep replies, updates, `ask_human` cards and options, and delivery notes in that language unless bilingual output or fixed copy is requested; generation prompts may remain English.

@@ -1,10 +1,26 @@
 ---
 name: healing-original-ip
-description: |
-  从零孵化一个让人愿意记住、愿意持续观看并能长期产出内容的治愈系原创 IP。技能把受众、情绪方向、角色类型和生活场景组织成角色内核、视觉记忆点、世界观、标志动作、栏目设定与首批选题，并保留可扩展的内容生态。适用于原创角色、品牌吉祥物、表情包和治愈短视频主角；不复刻知名 IP、明星或用户本人，也不把单一可爱外形当作完整角色设计。
-category: creative
-summary: 设计讨喜、可辨识并可持续运营的原创治愈 IP
-version: 1.0.0
+description: 设计具有情感陪伴价值、圆润体态与温润质感的原创治愈系 IP 角色。规划三视图、表情包矩阵、潮玩手办适配与场景插画。
+metadata:
+  display_name: 治愈系原创 IP 孵化
+  category: design_creative
+  summary: 设计温暖陪伴、可辨识并可持续运营的原创治愈 IP
+  version: 1.0.0
+  triggers:
+  - 治愈系IP
+  - 可爱萌宠
+  - 盲盒公仔
+  - 潮玩IP
+  - 陪伴玩偶
+  - 原创插画IP
+  locales:
+    en:
+      display_name: Healing Original IP Incubator
+      summary: Incubate comforting, recognizable, and durable original characters
+        and mascot IPs
+    zh-Hant:
+      display_name: 治癒系原創 IP 孵化
+      summary: 設計溫暖陪伴、可辨識並可持續運營的原創治癒 IP
 ---
 
 # 治愈系原创 IP 孵化

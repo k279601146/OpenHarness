@@ -1,6 +1,25 @@
 ---
 name: game-marketing-video
 description: 面向手游和端游的游戏营销视频技能，覆盖买量广告、商店宣传片、版本活动视频、预告片和社交媒体短片。用于收集游戏营销 brief、判断玩法卖点、整理投放或传播约束，并把领域简报编排成单次多镜头视频请求交给通用视频生成能力执行。
+metadata:
+  display_name: 游戏营销视频导演
+  category: commercial_ads
+  summary: 面向手游与端游的买量广告、商店宣传片与版本预告片编排
+  version: 1.0.0
+  triggers:
+  - 游戏营销视频
+  - 游戏买量广告
+  - 游戏商店视频
+  - 游戏预告片
+  - 玩法展示视频
+  locales:
+    en:
+      display_name: Game Marketing Video Director
+      summary: Direct user acquisition ads, app store trailers, and gameplay teasers
+        for games
+    zh-Hant:
+      display_name: 遊戲營銷視頻導演
+      summary: 面向手遊與端遊的買量廣告、商店宣傳片與版本預告片編排
 ---
 
 # 游戏营销视频

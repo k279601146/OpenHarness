@@ -1,10 +1,26 @@
 ---
-name: 角色设计
-description: |
-  从人设内核、行为签名和视觉概念出发，完成原创角色设定、立绘、三视图、表情表、姿态表与道具关系规划。技能把渴望、缺口、矛盾和价值观外化为轮廓、比例、色彩、服装、材质及可辨识的动作签名，并可诊断“立不住、没特点或跨镜头不一致”等问题。适用于影视、短剧、动画、游戏和品牌 IP 的角色前期设计；不代替完整剧本创作，也不复刻受保护角色或真人身份。
-category: creative
-summary: 将角色内核外化为可辨识、可持续使用的视觉资产
-version: 1.0.0
+name: character-design
+description: 围绕核心人设、行为标签与视觉原点，提供原创角色设定、三视图、动态与道具关系规划。把角色性格、矛盾与高光外化为标志性视觉资产。
+metadata:
+  display_name: 原创角色概念设计
+  category: design_creative
+  summary: 将角色内核外化为可辨识、可持续使用的视觉资产
+  version: 1.0.0
+  triggers:
+  - 角色设计
+  - 角色三视图
+  - 角色设定
+  - 原创IP角色
+  - 动漫人设
+  - 角色道具
+  locales:
+    en:
+      display_name: Original Character Concept Design
+      summary: Translate character essence into recognizable, reusable visual concept
+        assets
+    zh-Hant:
+      display_name: 原創角色概念設計
+      summary: 將角色內核外化為可辨識、可持續使用的視覺資產
 ---
 
 # 角色设计

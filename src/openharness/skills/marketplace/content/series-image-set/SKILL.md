@@ -1,10 +1,26 @@
 ---
-name: 系列套图生成
-description: |
-  将母版提示词、参考图、产品或角色资料整理成风格统一、变量清晰且可复用的系列图片方案。技能提取不可变的 Series Lock（主体、材质、色彩、光线和镜头语言），再建立 Variation Matrix，为每个设计编号分配明确的角色、场景、动作或构图变化。适用于系列套图、同款风格延展、海报组图、产品或 IP 视觉矩阵；用户只要提示词时可停在方案预览，不强行生成图片。
-category: graphic_design
-summary: 以视觉母体和变量矩阵驱动统一风格的系列图片
-version: 1.0.0
+name: series-image-set
+description: 提取视觉母体（主体特征、色彩体系、光影与镜头语法），建立变量矩阵，批量生成多张风格严格统一且内容递进的系列套图。
+metadata:
+  display_name: 统一风格系列套图锁
+  category: image_generation
+  summary: 以视觉母体和变量矩阵驱动统一风格的系列图片
+  version: 1.0.0
+  triggers:
+  - 系列套图
+  - 风格一致性
+  - 多图统一风格
+  - 系列插画
+  - 品牌套图
+  - 视觉连贯性
+  locales:
+    en:
+      display_name: Consistent Style Series Image Set
+      summary: Drive unified-style multi-image series using visual anchors and variation
+        matrices
+    zh-Hant:
+      display_name: 統一風格系列套圖鎖
+      summary: 以視覺母體和變量矩陣驅動統一風格的系列圖片
 ---
 
 # 系列套图生成

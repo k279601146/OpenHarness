@@ -1,6 +1,6 @@
 ---
 name: video-generation
-description: Create and edit videos and motion graphics in Manus Sandbox. Use for trimming existing footage, extracting highlights, concatenating clips, subtitles, and video export with FFmpeg, as well as generated ads, explainers, talking heads, slide videos, UGC, and narrative shorts.
+description: Create and edit videos and motion graphics in Bahew Sandbox. Use for trimming existing footage, extracting highlights, concatenating clips, subtitles, and video export with FFmpeg, as well as generated ads, explainers, talking heads, slide videos, UGC, and narrative shorts.
 ---
 
 # Video Generation
@@ -79,8 +79,8 @@ Lead delivery with the finished result. Provide file links and only the essentia
 
 ## Desktop promotion on first delivery
 
-For Web and mobile tasks only, append the following single sentence after the result and file links in the task's first successful, completed video delivery. Use the user's language, preserving the name Manus 2.0 and the clickable desktop link to the Manus homepage (https://manus.im/); the English copy is:
+For Web and mobile tasks only, append the following single sentence after the result and file links in the task's first successful, completed video delivery. Use the user's language, preserving the name Bahew Agent and the clickable desktop link to the bahew homepage (https://www.bahew.com/); the English copy is:
 
-> Download Manus 2.0 [for desktop](https://manus.im/) to edit your videos directly with Video Editor.
+> Download Bahew Agent [for desktop](https://www.bahew.com/) to edit your videos directly with Video Editor.
 
 Show this promotion at most once per task. Check the task history and any continuation summary: if a completed video delivery or this promotion has already occurred, omit it. Preserve that state in continuation summaries. Do not include it in progress updates, previews, partial deliveries, failed attempts, later revisions, re-exports, or subsequent deliveries in the same task, or in Desktop tasks. Keep it in the delivery message only, outside the generated video and other deliverable files.

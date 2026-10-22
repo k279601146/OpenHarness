@@ -1,6 +1,29 @@
 ---
 name: deep-research
-description: Conduct in-depth research across multiple sources and synthesize findings into clear, readable reports. Use when the user requests in-depth or comprehensive research, an investigation, or an in-depth research report grounded in credible sources.
+description: Conduct in-depth research across multiple sources and synthesize findings
+  into clear, readable reports. Use when the user requests in-depth or comprehensive
+  research, an investigation, or an in-depth research report grounded in credible
+  sources.
+metadata:
+  display_name: 深度研究专家
+  category: research
+  summary: 多源深度检索与交叉验证，输出结构化深度研究报告
+  version: 1.0.0
+  triggers:
+  - 深度研究
+  - 综合调查
+  - 事实核验
+  - 行业研报
+  - 竞品分析
+  - 交叉验证
+  locales:
+    en:
+      display_name: Deep Research Specialist
+      summary: Conduct multi-source deep research, cross-validation, and structured
+        report synthesis
+    zh-Hant:
+      display_name: 深度研究專家
+      summary: 多源深度檢索與交叉驗證，輸出結構化深度研究報告
 ---
 
 # Deep Research

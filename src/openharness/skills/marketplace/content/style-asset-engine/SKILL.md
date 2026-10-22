@@ -1,10 +1,26 @@
 ---
-name: 名导十五秒视频风格资产引擎
-description: |
-  从用户有权使用的参考图提取可复用的视觉风格资产，再把一句话动作需求编排成十五秒三段式视频分镜和提示词。技能结构化记录构图、景别、光线、材质、色彩关系、颗粒介质、导演句法、可变项和禁用项，并将动作拆成建立状态、能量变化、结果余韵三段。适用于风格研究、视觉资产卡、广告前期和短视频分镜；没有参考图时不强行套用特定风格，也不直接访问第三方 provider。
-category: creative
-summary: 将参考图风格结构化并复用于十五秒叙事
-version: 1.0.0
+name: style-asset-engine
+description: 解析经典电影导演的视听语言（色调、景深、光比、运镜节奏与构图），提炼为模块化视觉资产，复用于 15 秒短片叙事创作。
+metadata:
+  display_name: 电影大师视听风格资产引擎
+  category: video_generation
+  summary: 将大师视听语言结构化并复用于 15 秒高质量视频叙事
+  version: 1.0.0
+  triggers:
+  - 电影大师风格
+  - 导演视听语言
+  - 风格迁移
+  - 15秒电影短片
+  - 运镜节奏
+  - 影视调色
+  locales:
+    en:
+      display_name: Cinematic Auteur Style Asset Engine
+      summary: Structure director visual language into reusable assets for 15s narrative
+        videos
+    zh-Hant:
+      display_name: 電影大師視聽風格資產引擎
+      summary: 將大師視聽語言結構化並複用於 15 秒高質量視頻敘事
 ---
 
 # 名导十五秒视频风格资产引擎

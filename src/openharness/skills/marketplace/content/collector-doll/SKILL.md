@@ -1,10 +1,26 @@
 ---
 name: collector-doll
-description: |
-  将用户的主题、审美、昵称和穿搭偏好转译为原创收藏级时尚娃娃形象。技能明确区分成人收藏级 fashion doll、可动玩偶、搪胶或乙烯基材质与真人肖像，统筹头身比例、关节、发型妆容、服装鞋包、配饰、背景和包装外的展示氛围。适用于原创玩偶、潮玩角色、收藏卡面和品牌吉祥物概念；不做真人复刻、明星脸、品牌包装复制或儿童化性感表达。
-category: graphic_design
-summary: 设计具有玩具材质和时尚造型的原创收藏娃娃
-version: 1.0.0
+description: 将人物灵感、昵称和审美偏好转化为原创收藏级时尚玩偶。明确区分 fashion doll、球体关节偶、软胶潮玩等品类，规划头雕、妆容、发型与材质细节。
+metadata:
+  display_name: 收藏级 Doll 玩偶设计
+  category: design_creative
+  summary: 设计具有精巧材质和时尚造型的原创收藏玩偶
+  version: 1.0.0
+  triggers:
+  - 收藏级玩偶
+  - BJD娃娃
+  - 潮玩设计
+  - 娃娃头雕
+  - 时尚玩偶
+  - 玩具材质
+  locales:
+    en:
+      display_name: Collector Doll Design Studio
+      summary: Design original collectible fashion dolls with stylized materials and
+        couture aesthetics
+    zh-Hant:
+      display_name: 收藏級 Doll 玩偶設計
+      summary: 設計具有精巧材質和時尚造型的原創收藏玩偶
 ---
 
 # 收藏级 Doll 设计

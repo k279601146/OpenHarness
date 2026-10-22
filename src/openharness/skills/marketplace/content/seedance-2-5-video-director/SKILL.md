@@ -1,6 +1,32 @@
 ---
 name: seedance-2-5-video-director
-description: Design, derive, optimize, diagnose, and rewrite scripts or copy-ready prompts specifically for Dreamina/即梦 Seedance 2.5. Use for new text/image/video/audio-to-video concepts, exact-timeline videos, 30-180-second Long Video, extension, video editing, Clay Renderer, seamless transitions, multi-grid storyboards, realistic acted dialogue, relationship drama, sports or variety-show live camera grammar, character and wardrobe locking, example-structure adaptation, voice/timbre reference, BGM removal, creative transfer, perspective reconstruction, and green-screen compositing. Produce only the requested deliverable—director brief, video script, diagnosis, revision, or final Seedance 2.5 prompt—and never submit a paid video-generation job.
+description: Design, derive, optimize, diagnose, and rewrite scripts or copy-ready
+  prompts specifically for Dreamina/即梦 Seedance 2.5. Use for new text/image/video/audio-to-video
+  concepts, exact-timeline videos, 30-180-second Long Video, extension, video editing,
+  Clay Renderer, seamless transitions, multi-grid storyboards, realistic acted dialogue,
+  relationship drama, sports or variety-show live camera grammar, character and wardrobe
+  locking, example-structure adaptation, voice/timbre reference, BGM removal, creative
+  transfer, perspective reconstruction, and green-screen compositing.
+metadata:
+  display_name: 即梦 Seedance 2.5 视频导演
+  category: video_generation
+  summary: 专为即梦 Seedance 2.5 设计的高保真提示词与多镜头编排
+  version: 1.0.0
+  triggers:
+  - 即梦视频
+  - Seedance 2.5
+  - 视频导演
+  - 长视频生成
+  - 黏土渲染
+  - 多分镜视频
+  locales:
+    en:
+      display_name: Seedance 2.5 Video Director
+      summary: Design and optimize high-fidelity prompts and multi-shot videos for
+        Seedance 2.5
+    zh-Hant:
+      display_name: 即夢 Seedance 2.5 視頻導演
+      summary: 專為即夢 Seedance 2.5 設計的高保真提示詞與多鏡頭編排
 ---
 
 # Seedance 2.5 Video Director

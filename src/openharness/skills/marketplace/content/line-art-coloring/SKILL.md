@@ -1,10 +1,26 @@
 ---
 name: line-art-coloring
-description: |
-  依据一张或多张有权使用的色彩参考，为二维动画线稿批量上色并保持线条、角色身份和光影风格一致。技能先建立线条、闭合区域、主色板、光源方向、阴影层级和高光规则，再用一张基准色稿校验溢色与遮线问题后扩展到整批编号。适用于动画原画、角色设定、分镜草稿和批量美术整理；不处理照片修图，也不覆盖未经授权的艺术家签名。
-category: graphic_design
-summary: 锁定线稿结构并批量迁移统一色彩风格
-version: 1.0.0
+description: 保持二维动漫线稿、漫画分镜或工业草图线条完整无变形，按参考色板、光影关系或指定艺术风格进行批量平涂、赛璐璐或厚涂上色。
+metadata:
+  display_name: 二维动画线稿批量上色
+  category: image_generation
+  summary: 锁定线稿结构并按参考色板批量迁移统一色彩风格
+  version: 1.0.0
+  triggers:
+  - 线稿上色
+  - 动漫赛璐璐
+  - 漫画填色
+  - 插画铺色
+  - 线稿保真
+  - 色彩迁移
+  locales:
+    en:
+      display_name: 2D Line Art Batch Coloring
+      summary: Lock linework structure and batch-colorize anime sketches with reference
+        palettes
+    zh-Hant:
+      display_name: 二維動畫線稿批量上色
+      summary: 鎖定線稿結構並按參考色板批量遷移統一色彩風格
 ---
 
 # 二维动画线稿批量上色

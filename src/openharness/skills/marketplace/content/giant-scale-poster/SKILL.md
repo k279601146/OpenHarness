@@ -1,10 +1,26 @@
 ---
-name: 巨物尺度清透海报
-description: |
-  将任意主题对象转译为“巨物压近、明亮呼吸带、微小尺度标记、透明反射介质”的高概念视觉海报。技能围绕巨物来源、遮蔽边缘、透光带、微小载体、反射方向、前景层次和色彩情绪建立构图 brief，并为标题、副标题和辅助信息预留安全区。适用于电影海报、活动主视觉、展览概念图和宣传封面；不处理复杂信息排版，也不伪造真实品牌 Logo 或官方信息。
-category: graphic_design
-summary: 用巨小反差和透明反射构建清透概念海报
-version: 1.0.0
+name: giant-scale-poster
+description: 利用超大尺度对比与清透半透明材质，构建具有强烈视觉冲击力的概念海报。融合空气透视、环境微距反差与纯净光影。
+metadata:
+  display_name: 巨物尺度清透海报
+  category: design_creative
+  summary: 用巨小反差和透明反射构建清透概念海报
+  version: 1.0.0
+  triggers:
+  - 巨物海报
+  - 极简概念海报
+  - 透光材质
+  - 比例反差
+  - 艺术排版
+  - 空气透视
+  locales:
+    en:
+      display_name: Giant Scale Ethereal Poster
+      summary: Craft concept posters with monumental scale contrast, translucency,
+        and airy light
+    zh-Hant:
+      display_name: 巨物尺度清透海報
+      summary: 用巨小反差和透明反射構建清透概念海報
 ---
 
 # 巨物尺度清透海报

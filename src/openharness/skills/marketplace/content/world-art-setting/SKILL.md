@@ -1,10 +1,26 @@
 ---
-name: 世界观美术设定
-description: |
-  构建世界观法则、历史文化和视觉体系，并产出建筑、服装、器物、地标与场景设定提示词。技能从核心规则、资源与权力系统、历史转折、社会习俗和神话禁忌出发，进一步落到材料、建筑结构、服装层级、色彩、光照、空间动线和跨场景一致性锚点。适用于原创世界、短剧、动画和游戏美术前期；不负责完整剧本，也避免把真实文化群体简化为刻板符号。
-category: creative
-summary: 用世界宪法和视觉锚点保持跨场景美术一致
-version: 1.0.0
+name: world-art-setting
+description: 为原创小说、游戏或影视构建跨场景的美术世界观设定集。梳理建筑规制、地理风貌、服饰层级、色彩图腾与时代材质，保持宏观与微观一致。
+metadata:
+  display_name: 世界观美术概念设定集
+  category: design_creative
+  summary: 用世界宪法和视觉锚点保持跨场景美术一致
+  version: 1.0.0
+  triggers:
+  - 世界观设定
+  - 美术设定集
+  - 奇幻科幻场景,
+  - 建筑规制
+  - 概念美术
+  - 跨场景一致性
+  locales:
+    en:
+      display_name: World Art & Setting Bible
+      summary: Maintain cross-scene aesthetic coherence using world bibles and visual
+        anchors
+    zh-Hant:
+      display_name: 世界觀美術概念設定集
+      summary: 用世界憲法和視覺錨點保持跨場景美術一致
 ---
 
 # 世界观美术设定

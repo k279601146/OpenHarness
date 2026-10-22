@@ -1,10 +1,26 @@
 ---
-name: 珠宝设计出款
-description: |
-  从文字、草图、产品图或风格参考出发，完成戒指、项链、耳环、手链、吊坠、胸针和高级珠宝的原创设计与批量出款。技能先锁定轮廓、比例、连接方式、宝石位置、金属和佩戴关系，再建立设计矩阵，输出具有结构逻辑、工艺假设和系列辨识度的候选方案。适用于单款精品、批量出款、系列延展和材质变体；不负责电商九图、详情页、文案或投放视频。
-category: graphic_design
-summary: 珠宝结构设计、材质推演与批量候选方案
-version: 1.0.0
+name: jewelry-design
+description: 面向高级珠宝、日常轻奢与国风文创的高清出款设计。明确镶嵌工艺、金属成色、宝石切工与反射光泽，输出结构清晰的可生产草图方案。
+metadata:
+  display_name: 珠宝首饰设计工坊
+  category: design_creative
+  summary: 珠宝镶嵌结构设计、宝石材质推演与批量候选方案
+  version: 1.0.0
+  triggers:
+  - 珠宝设计
+  - 戒指项链出款
+  - 宝石切工
+  - 贵金属镶嵌
+  - 轻奢首饰
+  - 珠宝3D概念
+  locales:
+    en:
+      display_name: Jewelry Design Studio
+      summary: Design fine jewelry structures, gemstone materials, and production-ready
+        concepts
+    zh-Hant:
+      display_name: 珠寶首飾設計工坊
+      summary: 珠寶鑲嵌結構設計、寶石材質推演與批量候選方案
 ---
 
 # 珠宝设计出款

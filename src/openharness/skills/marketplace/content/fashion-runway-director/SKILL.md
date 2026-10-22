@@ -1,10 +1,26 @@
 ---
-name: 时尚走秀短视频导演
-description: |
-  将模特、服装和场景输入拆解成约 15 秒的高奢走秀短视频分镜。技能用前几秒的局部特写建立材质钩子，以 Power Walk 跟拍展示廓形，再通过宏观环境、微距细节、逆光和建筑漏光形成节奏，最终落到英雄定格或品牌信息。适用于品牌广告、时装秀预告、街拍和社交媒体时尚短片；只交付时间轴分镜与提示词，不直接执行视频生成。
-category: creative
-summary: 用宏微交替、步态和光影组织高奢走秀分镜
-version: 1.0.0
+name: fashion-runway-director
+description: 将模特、服装与秀场场景编排为约 15 秒高奢走秀短视频分镜。通过脚步特写、步态展示、面料微距与定点亮相交替，形成高级叙事节奏。
+metadata:
+  display_name: 时尚走秀短视频导演
+  category: video_generation
+  summary: 用宏微交替、步态和光影组织高奢走秀分镜
+  version: 1.0.0
+  triggers:
+  - 走秀视频
+  - T台秀场
+  - 模特台步
+  - 高奢走秀
+  - 时装周短片
+  - 秀场分镜
+  locales:
+    en:
+      display_name: Fashion Runway Video Director
+      summary: Choreograph 15s luxury runway videos with macro closeups, gait, and
+        couture lighting
+    zh-Hant:
+      display_name: 時尚走秀短視頻導演
+      summary: 用宏微交替、步態和光影組織高奢走秀分鏡
 ---
 
 # 时尚走秀短视频导演

@@ -1,10 +1,26 @@
 ---
-name: AI造型师高转化模特图
-description: |
-  将同一件服装的产品图或文字描述转成五种面向不同受众的专业模特展示方案。技能先建立服装身份锁，再分别规划发型、妆容、配饰、姿态、场景、灯光和镜头，使五套造型有明确差异但不改变版型、颜色、图案和材质。适用于服装上身图、造型策划、品牌视觉和商业摄影提示词；不处理非服装产品，也不复刻具体真人。
-category: graphic_design
-summary: 保留服装身份并规划五种商业模特造型
-version: 1.0.0
+name: fashion-model-stylist
+description: 围绕同一服装商品图，转化为不同商业场景下的专业模特展示。规划发型、妆容、体态、光影和镜头语言，保持服装形制、色彩与材质绝对真实。
+metadata:
+  display_name: AI 模特造型师与商拍
+  category: commercial_ads
+  summary: 保持服装真实并规划高转化商业模特展示
+  version: 1.0.0
+  triggers:
+  - AI模特试穿
+  - 服装商拍
+  - 电商模特
+  - 模特换装
+  - 商业造型
+  - 服装穿搭
+  locales:
+    en:
+      display_name: AI Fashion Model Stylist
+      summary: Preserve garment fidelity while styling high-conversion commercial
+        model looks
+    zh-Hant:
+      display_name: AI 模特造型師與商拍
+      summary: 保持服裝真實並規劃高轉化商業模特展示
 ---
 
 # AI 造型师高转化模特图

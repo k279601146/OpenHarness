@@ -1,6 +1,26 @@
 ---
 name: short-drama-product-ad
-description: 短剧带货广告创作与生成编排技能。用于服装、美妆、珠宝、家居、食品等商品的剧情化短视频，尤其适合“快速反转、打脸、身份反差、低调奢侈、卖点揭示”类型。负责结构化采集商品信息和视频规格，规划短剧大纲，生成或接收角色/场景资产，组织画布分组，编写分镜提示词，执行视频生成前确认，并处理修改、重试、权限、额度和素材缺失等分支。
+description: 短剧带货广告创作与交付能力。适用于服装、美妆、珠宝、家居、食品和数码品类的剧情化带货视频，通过反转剧情、痛点冲突、高光展示和行动召唤传递品牌与商品信息。
+metadata:
+  display_name: 短剧带货广告导演
+  category: commercial_ads
+  summary: 融合反转剧情与带货卖点的高转化短剧带货视频编排
+  version: 1.0.0
+  triggers:
+  - 短剧带货
+  - 剧情广告
+  - 反转带货
+  - 电商短剧
+  - 痛点冲突
+  - 带货分镜
+  locales:
+    en:
+      display_name: Short Drama Product Ad Director
+      summary: Story-driven commercial video ads blending drama hooks with product
+        highlights
+    zh-Hant:
+      display_name: 短劇帶貨廣告導演
+      summary: 融合反轉劇情與帶貨賣點的高轉化短劇帶貨視頻編排
 ---
 
 # 短剧带货广告

@@ -225,6 +225,12 @@ def load_skills_from_dirs(
         for child in sorted(root.iterdir()):
             if child.is_dir():
                 skill_path = child / "SKILL.md"
+                if not skill_path.exists():
+                    for alt_name in ("skill.md", "Skill.md"):
+                        alt_path = child / alt_name
+                        if alt_path.exists():
+                            skill_path = alt_path
+                            break
                 if skill_path.exists():
                     candidates.append(skill_path)
         for path in candidates:

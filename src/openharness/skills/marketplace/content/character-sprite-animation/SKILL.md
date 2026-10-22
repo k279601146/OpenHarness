@@ -1,10 +1,26 @@
 ---
-name: 角色精灵图动画产线
-description: |
-  将游戏角色图或文字角色设定转成可执行的 4–6 秒动作测试与逐帧动画方案。技能围绕角色轮廓、服装配色、武器道具、起止姿态和镜头安全区组织准备、发力、结果三段动作，重点避免爆框、肢体漂移和特效越界。适用于待机、普攻、必杀、召唤和角色技能展示；不负责长片剪辑，也不复刻未授权的游戏角色。
-category: creative
-summary: 以角色锚点和安全画面区制作 4–6 秒动作片段
-version: 1.0.0
+name: character-sprite-animation
+description: 将角色设定转为可执行的 4–6 秒动作序列与精灵图分帧规划。围绕角色轮廓、关键动势与安全帧边界，组织平滑连续的动态展示。
+metadata:
+  display_name: 角色精灵图动画产线
+  category: video_generation
+  summary: 以角色锚点和安全画面区制作 4–6 秒动作片段
+  version: 1.0.0
+  triggers:
+  - 精灵图动画
+  - 动作切片
+  - 角色动效
+  - 2D骨骼帧
+  - 动作循环
+  - 游戏角色动作
+  locales:
+    en:
+      display_name: Character Sprite Animation Pipeline
+      summary: Create 4-6s dynamic action loops and sprite motion sequences with character
+        anchors
+    zh-Hant:
+      display_name: 角色精靈圖動畫產線
+      summary: 以角色錨點和安全畫面區製作 4–6 秒動作片段
 ---
 
 # 角色精灵图动画产线

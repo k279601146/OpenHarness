@@ -1,10 +1,25 @@
 ---
 name: jewelry-design-evolution
-description: |
-  在已有珠宝图、草图、裸石或元素图基础上，通过选择式变量和进化矩阵生成 4 个可比较的原创方向。技能建立底座身份锁，区分必须保留的轮廓、比例、镶嵌与佩戴关系，再分别探索主题、形态语言、材质和工艺变化，便于用户一次评审后定稿。适用于保留原款结构的设计迭代、竞品启发和系列分支探索；不负责商品上架素材，也不复制竞品品牌标识。
-category: graphic_design
-summary: 以身份锁和选择矩阵探索珠宝设计进化方向
-version: 1.0.0
+description: 以现有珠宝款式为基底，保持核心设计基因与品牌特征，沿现代极简、复古巴洛克、自然有机或未来几何等风格轴系推演进化方案。
+metadata:
+  display_name: 珠宝设计风格演化
+  category: design_creative
+  summary: 保持核心设计基因并推演多风格维度的珠宝进化方案
+  version: 1.0.0
+  triggers:
+  - 珠宝演化
+  - 珠宝改款
+  - 风格延展
+  - 系列化设计
+  - 珠宝设计迭代
+  locales:
+    en:
+      display_name: Jewelry Design Evolution
+      summary: Evolve jewelry concepts across diverse style axes while locking core
+        identity
+    zh-Hant:
+      display_name: 珠寶設計風格演化
+      summary: 保持核心設計基因並推演多風格維度的珠寶進化方案
 ---
 
 # 珠宝设计进化

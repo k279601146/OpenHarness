@@ -1,10 +1,26 @@
 ---
-name: 先锋服装商拍视觉指导
-description: |
-  将服装商品图或文字描述升级为具有冲突感、系列感和杂志镜头语言的先锋时装大片方案。技能先提取服装的廓形、颜色、图案、面料和五金等不可变细节，再从场景、成年模特、造型、道具、镜头与光影建立完整视觉方向。适用于品牌视觉、高级商拍、杂志封面和社交媒体主视觉；不处理普通棚拍、干净陈列图或详情页九图。
-category: graphic_design
-summary: 以场景先行和服装保真构建先锋时装大片
-version: 1.0.0
+name: avant-garde-fashion-shoot
+description: 将服装商品图转化为以场景冲突、构图张力和情绪氛围为特色的先锋时尚大片。提取服装廓形、色彩、图案与材质事实，规划模特、姿态、光影和场景层级。
+metadata:
+  display_name: 先锋服装商拍视觉指导
+  category: design_creative
+  summary: 以场景先行和服装保真构建先锋时装大片
+  version: 1.0.0
+  triggers:
+  - 先锋时装
+  - 概念大片
+  - 服装商拍
+  - 秀场概念
+  - 视觉构图
+  - 材质光影
+  locales:
+    en:
+      display_name: Avant-Garde Fashion Shoot
+      summary: Construct avant-garde fashion campaigns with scene primacy and apparel
+        fidelity
+    zh-Hant:
+      display_name: 先鋒服裝商拍視覺指導
+      summary: 以場景先行和服裝保真構建先鋒時裝大片
 ---
 
 # 先锋服装商拍视觉指导

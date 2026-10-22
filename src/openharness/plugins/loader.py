@@ -228,6 +228,12 @@ def _walk_plugin_markdown(
     for current_root, dirnames, filenames in os.walk(root, followlinks=True):
         current = Path(current_root)
         skill_file = current / "SKILL.md"
+        if not skill_file.exists():
+            for alt_name in ("skill.md", "Skill.md"):
+                alt_path = current / alt_name
+                if alt_path.exists():
+                    skill_file = alt_path
+                    break
         if stop_at_skill_dir and skill_file.exists():
             files.append(skill_file)
             dirnames[:] = []
@@ -275,6 +281,12 @@ def _load_plugin_skills(path: Path) -> list[SkillDefinition]:
         return []
     skills: list[SkillDefinition] = []
     direct_skill = path / "SKILL.md"
+    if not direct_skill.exists():
+        for alt_name in ("skill.md", "Skill.md"):
+            alt_candidate = path / alt_name
+            if alt_candidate.exists():
+                direct_skill = alt_candidate
+                break
     if direct_skill.exists():
         content = direct_skill.read_text(encoding="utf-8")
         metadata = _parse_skill_metadata(path.name, content)
@@ -302,6 +314,12 @@ def _load_plugin_skills(path: Path) -> list[SkillDefinition]:
         if not child.is_dir():
             continue
         skill_path = child / "SKILL.md"
+        if not skill_path.exists():
+            for alt_name in ("skill.md", "Skill.md"):
+                alt_candidate = child / alt_name
+                if alt_candidate.exists():
+                    skill_path = alt_candidate
+                    break
         if not skill_path.exists():
             continue
         content = skill_path.read_text(encoding="utf-8")
