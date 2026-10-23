@@ -180,7 +180,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
                 "3072x3072": "3k",
                 "4096x4096": "4k",
             },
-            "max_output_count": 1,
+            "max_output_count": 4,
         },
         "apimart-gpt-image-2": {
             "enabled": True,
@@ -211,7 +211,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
                 "3840x2160": "4k",
                 "2160x3840": "4k",
             },
-            "max_output_count": 2,
+            "max_output_count": 4,
         },
         "apimart-gpt-image-2.5-flare": {
             "enabled": True,
@@ -379,7 +379,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "source_checked_at": "2026-07-09",
             "default_billing_size_tier": "1K",
             "price_by_size_tier": {"1k": 1.2, "2k": 2.5, "4k": 5.0},
-            "max_output_count": 1,
+            "max_output_count": 4,
         },
         "nano-banana-2": {
             "enabled": True,
@@ -402,7 +402,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "default_billing_size_tier": "1K",
             "price_by_size_tier": {"1k": 1.2, "2k": 2.5, "4k": 5.0},
             "tier_aliases": {"0.5k": "1k"},
-            "max_output_count": 1,
+            "max_output_count": 4,
         },
         "nano-banana-2-lite": {
             "enabled": True,
@@ -423,7 +423,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "default_billing_size_tier": "1K",
             "price_by_size_tier": {"1k": 0.8, "2k": 1.6, "4k": 3.2},
             "tier_aliases": {"0.5k": "1k"},
-            "max_output_count": 1,
+            "max_output_count": 4,
         },
         "nano-banana-pro": {
             "enabled": True,
@@ -437,7 +437,7 @@ DEFAULT_MEDIA_MODEL_PRICING_RULES: dict[str, Any] = {
             "source_checked_at": "2026-07-09",
             "default_billing_size_tier": "1K",
             "price_by_size_tier": {"1k": 2.2, "2k": 4.5, "4k": 8.0},
-            "max_output_count": 1,
+            "max_output_count": 4,
         },
         "doubao-seedream-5-0-260128": {
             "enabled": True,
@@ -1064,7 +1064,7 @@ def _apimart_image_size_rule(
     allowed_upstream_model_ids: list[str] | None = None,
     original_price: dict[str, float] | None = None,
     tier_aliases: dict[str, str] | None = None,
-    max_output_count: int = 1,
+    max_output_count: int = 4,
 ) -> dict[str, Any]:
     return {
         "enabled": True,
@@ -1096,7 +1096,7 @@ def _apimart_image_call_rule(
     *,
     allowed_upstream_model_ids: list[str] | None = None,
     original_price: dict[str, float] | None = None,
-    max_output_count: int = 1,
+    max_output_count: int = 4,
 ) -> dict[str, Any]:
     del logical_model_id
     return {
@@ -1734,8 +1734,9 @@ def estimate_image_pricing(
     output_count = max(int(output_count or 1), 1)
     resolved_reference_count = _reference_count(reference_count)
     max_output_count = int(rule.get("max_output_count", 0) or 0)
-    if max_output_count > 0 and output_count > max_output_count:
-        raise ValueError(f"Image output_count {output_count} exceeds max_output_count {max_output_count} for {model_id}")
+    effective_max_output_count = max(4, max_output_count) if max_output_count > 0 else 0
+    if effective_max_output_count > 0 and output_count > effective_max_output_count:
+        raise ValueError(f"Image output_count {output_count} exceeds max_output_count {effective_max_output_count} for {model_id}")
     scheme = str(rule["scheme"])
     if scheme == "image_size_tier_pricing":
         resolved_tier = _resolve_image_billing_size_tier(
@@ -2201,7 +2202,7 @@ def _validate_image_scheme(model_id: str, rule: dict[str, Any]) -> None:
         if "default" not in normalized_costs:
             raise ValueError(f"image.{model_id}.call_cost_by_action.default is required")
         rule["call_cost_by_action"] = normalized_costs
-        rule["max_output_count"] = int(_positive_float(rule.get("max_output_count", 1), f"image.{model_id}.max_output_count", allow_zero=False))
+        rule["max_output_count"] = max(4, int(_positive_float(rule.get("max_output_count", 4), f"image.{model_id}.max_output_count", allow_zero=False)))
         if any(key in rule and rule.get(key) is not None for key in ("reference_unit_cost", "cost_per_reference", "reference_cost")):
             rule["reference_unit_cost"] = _reference_unit_cost(rule, "image")
         return
@@ -2223,7 +2224,7 @@ def _validate_image_scheme(model_id: str, rule: dict[str, Any]) -> None:
     if default_tier not in normalized_prices:
         raise ValueError(f"image.{model_id}.default_billing_size_tier must exist in price_by_size_tier")
     rule["default_billing_size_tier"] = default_tier.upper()
-    rule["max_output_count"] = int(_positive_float(rule.get("max_output_count", 1), f"image.{model_id}.max_output_count", allow_zero=False))
+    rule["max_output_count"] = max(4, int(_positive_float(rule.get("max_output_count", 4), f"image.{model_id}.max_output_count", allow_zero=False)))
     if any(key in rule and rule.get(key) is not None for key in ("reference_unit_credits", "credits_per_reference", "reference_credits")):
         rule["reference_unit_credits"] = _reference_unit_credits(rule)
     aliases = rule.get("tier_aliases")
