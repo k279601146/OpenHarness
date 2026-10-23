@@ -54,7 +54,13 @@ class AskUserFormField(BaseModel):
 
     id: str = Field(description="Stable field identifier")
     label: str = Field(description="User-facing field label")
-    type: AskUserFormFieldType = Field(description="Field type")
+    type: AskUserFormFieldType = Field(
+        description=(
+            "Field type. Use 'image_reference' for image uploads (screenshots, logos, visual assets), "
+            "'file_upload' for documents or generic files, 'select' / 'multi_select' for categorical choices, "
+            "'text' / 'textarea' for copy and descriptions."
+        )
+    )
     description: str | None = Field(default=None, description="Optional long description")
     help_text: str | None = Field(default=None, description="Short helper text")
     placeholder: str | None = Field(default=None, description="Placeholder shown in text inputs")
@@ -202,7 +208,8 @@ class AskUserFormTool(BaseTool):
     name = "ask_user_form"
     description = (
         "Ask the interactive user to fill a structured form and return a canonical submission. "
-        "Use this tool for multi-field intake, ad briefs, production briefs, or any workflow that needs sectioned input, uploads, defaults, and review before continuing."
+        "Use this tool for multi-field intake, ad briefs, production briefs, or any workflow that needs sectioned input, uploads, defaults, and review before continuing. "
+        "When collecting project briefs that involve visual assets, UI screenshots, logos, or reference files, always include fields with type='image_reference' or type='file_upload' directly in the form sections so users can upload their files immediately upfront."
     )
     input_model = AskUserFormToolInput
     default_start_message = "正在打开结构化表单..."

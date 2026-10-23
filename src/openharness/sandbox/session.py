@@ -454,6 +454,15 @@ async def _ensure_remote_task_dirs(session: E2BSandboxSession, thread_id: str) -
         f"{shlex.quote(SANDBOX_ARTIFACTS_ROOT)} "
         f"{shlex.quote(SANDBOX_SKILLS_ROOT)}"
     )
+    try:
+        await session.exec_command(
+            "mkdir -p /home/user/.config/matplotlib && "
+            "if [ ! -f /home/user/.config/matplotlib/matplotlibrc ]; then "
+            "printf 'font.sans-serif: Noto Sans CJK SC, WenQuanYi Micro Hei, DejaVu Sans, sans-serif\\naxes.unicode_minus: False\\n' > /home/user/.config/matplotlib/matplotlibrc; "
+            "fi"
+        )
+    except Exception:
+        pass
 
 
 async def _sync_local_workspace_to_task_dir(session: E2BSandboxSession, thread_id: str) -> None:
