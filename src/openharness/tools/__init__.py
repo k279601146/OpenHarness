@@ -27,6 +27,7 @@ from openharness.tools.glob_tool import GlobTool
 from openharness.tools.grep_tool import GrepTool
 from openharness.tools.generate_image_tool import GenerateImageTool
 from openharness.tools.generate_video_tool import GenerateVideoTool
+from openharness.tools.generate_audio_tool import GenerateAudioTool
 from openharness.tools.merge_video_tool import MergeVideoTool
 from openharness.tools.list_mcp_resources_tool import ListMcpResourcesTool
 from openharness.tools.mcp_auth_tool import McpAuthTool
@@ -57,6 +58,7 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         GrepTool(),
         GenerateImageTool(),
         GenerateVideoTool(),
+        GenerateAudioTool(),
         MergeVideoTool(),
         CreateHanddrawStoryVideoTool(),
         SkillTool(),
@@ -94,6 +96,7 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
 
 __all__ = [
     "BaseTool",
+    "GenerateAudioTool",
     "ToolExecutionContext",
     "ToolRegistry",
     "ToolResult",

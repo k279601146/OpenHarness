@@ -84,6 +84,7 @@ def _format_tool_validation_error(tool_name: str, exc: ValidationError) -> str:
     object_fields_by_tool = {
         "generate_image": {"brief", "output", "edit_policy", "text_policy"},
         "generate_video": {"brief", "output"},
+        "generate_audio": {"brief", "output"},
         "create_handdraw_story_video": {"output", "caption_policy", "bgm"},
     }
     object_fields = object_fields_by_tool.get(tool_name, set())
@@ -240,6 +241,7 @@ CORE_TOOL_SCHEMA_NAMES = {
 MEDIA_TOOL_SCHEMA_NAMES = {
     "generate_image",
     "generate_video",
+    "generate_audio",
     "merge_video_tool",
     "create_handdraw_story_video",
     "prepare_web_image_reference",
@@ -1828,11 +1830,16 @@ async def _maybe_await(value: Any) -> Any:
 
 
 def _is_media_generation_tool(tool_name: str) -> bool:
-    return str(tool_name or "").lower() in {"generate_image", "generate_video"}
+    return str(tool_name or "").lower() in {"generate_image", "generate_video", "generate_audio"}
 
 
 def _media_kind_for_tool(tool_name: str) -> str:
-    return "video" if str(tool_name or "").lower() == "generate_video" else "image"
+    low = str(tool_name or "").lower()
+    if low == "generate_video":
+        return "video"
+    if low == "generate_audio":
+        return "audio"
+    return "image"
 
 
 def _media_output_count(tool_name: str, tool_input: dict[str, object]) -> int:

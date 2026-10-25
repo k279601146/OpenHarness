@@ -28,13 +28,45 @@ class ImageBlock(BaseModel):
     source_path: str = ""
 
     @classmethod
-    def from_path(cls, path: str | Path) -> "ImageBlock":
-        """Load a local image file into a base64-backed content block."""
+    def from_path(cls, path: str | Path, *, max_edge: int | None = 1600, quality: int = 92) -> "ImageBlock":
+        """Load a local image file into a base64-backed content block, optimizing large images for LLM vision."""
         resolved = Path(path).expanduser().resolve()
         media_type, _ = mimetypes.guess_type(str(resolved))
         if not media_type or not media_type.startswith("image/"):
             raise ValueError(f"Unsupported image attachment: {resolved}")
-        payload = base64.b64encode(resolved.read_bytes()).decode("ascii")
+        raw_bytes = resolved.read_bytes()
+
+        # If vision optimization is requested and file is large (>256KB), generate an optimized vision buffer
+        if max_edge and len(raw_bytes) > 256 * 1024:
+            try:
+                import io
+                from PIL import Image
+
+                with Image.open(resolved) as img:
+                    w, h = img.size
+                    longest = max(w, h)
+                    needs_resize = longest > max_edge
+                    if needs_resize or (media_type == "image/png" and len(raw_bytes) > 500 * 1024):
+                        if needs_resize:
+                            scale = max_edge / longest
+                            new_size = (int(w * scale), int(h * scale))
+                            resampled = img.resize(new_size, Image.Resampling.LANCZOS)
+                        else:
+                            resampled = img
+
+                        if resampled.mode in ("CMYK", "P"):
+                            resampled = resampled.convert("RGBA" if "transparency" in resampled.info else "RGB")
+
+                        buf = io.BytesIO()
+                        resampled.save(buf, format="WEBP", quality=quality, method=6)
+                        compressed_bytes = buf.getvalue()
+                        if len(compressed_bytes) < len(raw_bytes):
+                            payload = base64.b64encode(compressed_bytes).decode("ascii")
+                            return cls(media_type="image/webp", data=payload, source_path=str(resolved))
+            except Exception:
+                pass  # Fall back to raw bytes on any image processing error
+
+        payload = base64.b64encode(raw_bytes).decode("ascii")
         return cls(media_type=media_type, data=payload, source_path=str(resolved))
 
 
