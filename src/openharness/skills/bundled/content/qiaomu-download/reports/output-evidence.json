@@ -1,0 +1,75 @@
+{
+  "ok": true,
+  "evidence_kind": "provider_backed",
+  "validated_at": "2026-09-20",
+  "providers": [
+    "YouTube",
+    "Bilibili",
+    "X/Twitter",
+    "Spotify metadata + YouTube match"
+  ],
+  "cookie_mode": "none",
+  "cases": [
+    {
+      "provider": "X/Twitter",
+      "source_url": "https://x.com/wey_gu/status/2100943729502953564",
+      "extractor": "Twitter",
+      "media_id": "2100943709814857729",
+      "metadata_ok": true,
+      "download_ok": true,
+      "ffprobe_ok": true,
+      "container": "mp4",
+      "video_codec": "h264",
+      "audio_codec": "aac",
+      "width": 544,
+      "height": 960,
+      "duration_seconds": 2.067,
+      "bytes": 236430
+    },
+    {
+      "provider": "YouTube",
+      "source_url": "https://www.youtube.com/watch?v=0Uu_VJeVVfo",
+      "extractor": "Youtube",
+      "media_id": "0Uu_VJeVVfo",
+      "metadata_ok": true,
+      "width": 1920,
+      "height": 1080
+    },
+    {
+      "provider": "Bilibili",
+      "source_url": "https://www.bilibili.com/video/BV1xx411c7mD/",
+      "extractor": "BiliBili",
+      "media_id": "BV1xx411c7mD",
+      "metadata_ok": true,
+      "width": 512,
+      "height": 384
+    },
+    {
+      "provider": "Spotify metadata + YouTube match",
+      "source_url": "https://open.spotify.com/track/6R4jGWPkqmfGHyaLTJekTr",
+      "metadata_ok": true,
+      "candidate_search_ok": true,
+      "selected_audio_source": "https://www.youtube.com/watch?v=828gaktZx9I",
+      "selected_channel": "untitled (halo)",
+      "match_confidence": 94.23,
+      "full_download_rerun": true,
+      "download_ok": true,
+      "spotify_tags_applied": true,
+      "ffprobe_ok": true,
+      "container": "mp3",
+      "audio_codec": "mp3",
+      "audio_bitrate": 128000,
+      "duration_seconds": 239.509,
+      "bytes": 3833219
+    }
+  ],
+  "integration": {
+    "wechat_channels": {
+      "embedded_adapter_doctor": true,
+      "unit_tests": 15,
+      "live_download_rerun": false,
+      "live_download_evidence": "inherited from qiaomu-wx-video specialist implementation",
+      "missing_evidence": "fresh end-to-end WeChat download through qiaomu-download 1.2.0"
+    }
+  }
+}

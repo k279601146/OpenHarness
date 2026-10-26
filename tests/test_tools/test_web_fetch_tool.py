@@ -458,3 +458,121 @@ async def test_web_search_tool_rejects_non_public_search_backends(tmp_path):
 
     assert result.is_error is True
     assert "non-public" in result.output
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_falls_back_to_cloakbrowser_on_403(monkeypatch, tmp_path):
+    class FakeResponse:
+        status_code = 403
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError("403 Forbidden", request=httpx.Request("GET", "https://example.com/blocked"), response=httpx.Response(403))
+
+    async def fake_fetch(*args, **kwargs):
+        resp = FakeResponse()
+        resp.raise_for_status()
+
+    monkeypatch.setattr("openharness.tools.web_fetch_tool.fetch_public_http_response", fake_fetch)
+    monkeypatch.setattr("openharness.tools.web_fetch_tool._validate_url", lambda url: (True, ""))
+
+    class FakeProcess:
+        returncode = 0
+        async def communicate(self):
+            return b"<html><body><h1>Rendered Title</h1><p>Dynamic Content</p></body></html>", b""
+
+    class FakeSession:
+        is_running = True
+        async def exec_command(self, *args, **kwargs):
+            return FakeProcess()
+
+    async def fake_get_session(context):
+        return FakeSession()
+
+    monkeypatch.setattr("openharness.tools.sandbox_workspace.uses_e2b_task_workspace", lambda ctx: True)
+    monkeypatch.setattr("openharness.tools.sandbox_workspace.get_e2b_task_session", fake_get_session)
+
+    tool = WebFetchTool()
+    context = ToolExecutionContext(cwd=tmp_path, metadata={"workspace_backend": "e2b"})
+    result = await tool.execute(WebFetchToolInput(url="https://example.com/blocked"), context)
+
+    assert result.is_error is False
+    assert result.metadata["fetch_kind"] == "cloakbrowser_fallback"
+    assert "Rendered Title" in result.output
+    assert "Dynamic Content" in result.output
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_falls_back_to_cloakbrowser_on_spa_skeleton(monkeypatch, tmp_path):
+    class FakeResponse:
+        status_code = 200
+        url = "https://example.com/spa"
+        headers = {"content-type": "text/html"}
+        text = '<html><head><script src="app.js"></script></head><body><div id="root"></div></body></html>'
+        def raise_for_status(self):
+            pass
+
+    async def fake_fetch(*args, **kwargs):
+        return FakeResponse()
+
+    monkeypatch.setattr("openharness.tools.web_fetch_tool.fetch_public_http_response", fake_fetch)
+    monkeypatch.setattr("openharness.tools.web_fetch_tool._validate_url", lambda url: (True, ""))
+
+    class FakeProcess:
+        returncode = 0
+        async def communicate(self):
+            return b"<html><body><div id=\"root\"><h1>Hydrated React Dashboard</h1></div></body></html>", b""
+
+    class FakeSession:
+        is_running = True
+        async def exec_command(self, *args, **kwargs):
+            return FakeProcess()
+
+    async def fake_get_session(context):
+        return FakeSession()
+
+    monkeypatch.setattr("openharness.tools.sandbox_workspace.uses_e2b_task_workspace", lambda ctx: True)
+    monkeypatch.setattr("openharness.tools.sandbox_workspace.get_e2b_task_session", fake_get_session)
+
+    tool = WebFetchTool()
+    context = ToolExecutionContext(cwd=tmp_path, metadata={"workspace_backend": "e2b"})
+    result = await tool.execute(WebFetchToolInput(url="https://example.com/spa"), context)
+
+    assert result.is_error is False
+    assert result.metadata["fetch_kind"] == "cloakbrowser_fallback"
+    assert "Hydrated React Dashboard" in result.output
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_explicit_use_browser(monkeypatch, tmp_path):
+    http_called = False
+    async def fake_fetch(*args, **kwargs):
+        nonlocal http_called
+        http_called = True
+        raise RuntimeError("Should not be called")
+
+    monkeypatch.setattr("openharness.tools.web_fetch_tool.fetch_public_http_response", fake_fetch)
+    monkeypatch.setattr("openharness.tools.web_fetch_tool._validate_url", lambda url: (True, ""))
+
+    class FakeProcess:
+        returncode = 0
+        async def communicate(self):
+            return b"<html><body><p>Direct Browser Output</p></body></html>", b""
+
+    class FakeSession:
+        is_running = True
+        async def exec_command(self, *args, **kwargs):
+            return FakeProcess()
+
+    async def fake_get_session(ctx):
+        return FakeSession()
+
+    monkeypatch.setattr("openharness.tools.sandbox_workspace.uses_e2b_task_workspace", lambda ctx: True)
+    monkeypatch.setattr("openharness.tools.sandbox_workspace.get_e2b_task_session", fake_get_session)
+
+    tool = WebFetchTool()
+    context = ToolExecutionContext(cwd=tmp_path, metadata={"workspace_backend": "e2b"})
+    result = await tool.execute(WebFetchToolInput(url="https://example.com/direct", use_browser=True), context)
+
+    assert http_called is False
+    assert result.is_error is False
+    assert result.metadata["fetch_kind"] == "cloakbrowser_fallback"
+    assert "Direct Browser Output" in result.output

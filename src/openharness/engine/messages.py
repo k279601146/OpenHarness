@@ -11,6 +11,27 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, field_validator
 
 
+COMMON_IMAGE_MIME_TYPES: dict[str, str] = {
+    ".webp": "image/webp",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".jfif": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+    ".tiff": "image/tiff",
+    ".tif": "image/tiff",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".heic": "image/heic",
+    ".heif": "image/heif",
+    ".avif": "image/avif",
+}
+
+for _ext, _mime in COMMON_IMAGE_MIME_TYPES.items():
+    mimetypes.add_type(_mime, _ext)
+
+
 class TextBlock(BaseModel):
     """Plain text content."""
 
@@ -28,10 +49,19 @@ class ImageBlock(BaseModel):
     source_path: str = ""
 
     @classmethod
-    def from_path(cls, path: str | Path, *, max_edge: int | None = 1600, quality: int = 92) -> "ImageBlock":
+    def from_path(
+        cls,
+        path: str | Path,
+        *,
+        media_type: str | None = None,
+        max_edge: int | None = 1600,
+        quality: int = 92,
+    ) -> "ImageBlock":
         """Load a local image file into a base64-backed content block, optimizing large images for LLM vision."""
         resolved = Path(path).expanduser().resolve()
-        media_type, _ = mimetypes.guess_type(str(resolved))
+        if not media_type or not media_type.startswith("image/"):
+            guessed, _ = mimetypes.guess_type(str(resolved))
+            media_type = guessed or COMMON_IMAGE_MIME_TYPES.get(resolved.suffix.lower())
         if not media_type or not media_type.startswith("image/"):
             raise ValueError(f"Unsupported image attachment: {resolved}")
         raw_bytes = resolved.read_bytes()

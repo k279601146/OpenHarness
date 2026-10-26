@@ -2040,13 +2040,24 @@ def estimate_audio_pricing(
     scheme = str(rule["scheme"])
     if scheme == "audio_tts_character_pricing":
         allow_zero_chars = bool(rule.get("allow_zero") or not rule.get("enabled", True) or "free" in model_id.lower())
-        cost_per_1k_chars = _lookup_active_price(rule, "default", fallback_value=rule.get("cost_per_1k_chars"), field=f"audio.{model_id}.cost_per_1k_chars", allow_zero=allow_zero_chars)
+        raw_char_cost = rule.get("cost_per_character")
+        fallback_1k = rule.get("cost_per_1k_chars")
+        if (fallback_1k is None or (float(fallback_1k or 0) <= 0 and not allow_zero_chars)) and raw_char_cost is not None and float(raw_char_cost or 0) > 0:
+            fallback_1k = float(raw_char_cost) * 1000.0
+        elif fallback_1k is not None and float(fallback_1k or 0) == 0 and raw_char_cost is not None and float(raw_char_cost or 0) > 0:
+            fallback_1k = float(raw_char_cost) * 1000.0
+
+        cost_per_1k_chars = _lookup_active_price(rule, "default", fallback_value=fallback_1k, field=f"audio.{model_id}.cost_per_1k_chars", allow_zero=allow_zero_chars)
+        if (cost_per_1k_chars is None or float(cost_per_1k_chars or 0) == 0) and raw_char_cost is not None and float(raw_char_cost or 0) > 0:
+            cost_per_1k_chars = float(raw_char_cost) * 1000.0
+
         if cost_per_1k_chars is None:
             raise ValueError(f"Audio pricing does not include cost_per_1k_chars for {model_id}")
         official_cost = cost_per_1k_chars * (resolved_chars / 1000.0) * output_count + reference_cost
         breakdown = {
             "scheme": scheme,
             "cost_per_1k_chars": cost_per_1k_chars,
+            "cost_per_character": (float(cost_per_1k_chars) / 1000.0) if cost_per_1k_chars is not None else (float(raw_char_cost) if raw_char_cost is not None else 0.0),
             "prompt_chars": resolved_chars,
             "output_count": output_count,
             "reference_count": resolved_reference_count,
@@ -2054,7 +2065,8 @@ def estimate_audio_pricing(
             "reference_cost": reference_cost,
         }
     elif scheme == "audio_tts_unit_pricing":
-        unit_cost = _lookup_active_price(rule, "default", fallback_value=rule.get("unit_cost"), field=f"audio.{model_id}.unit_cost", allow_zero=not rule.get("enabled", True))
+        allow_zero_unit = bool(rule.get("allow_zero") or not rule.get("enabled", True) or "free" in model_id.lower())
+        unit_cost = _lookup_active_price(rule, "default", fallback_value=rule.get("unit_cost"), field=f"audio.{model_id}.unit_cost", allow_zero=allow_zero_unit)
         if unit_cost is None:
             raise ValueError(f"Audio pricing does not include unit_cost for {model_id}")
         official_cost = unit_cost * output_count + reference_cost

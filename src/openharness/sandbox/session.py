@@ -463,6 +463,15 @@ async def _ensure_remote_task_dirs(session: E2BSandboxSession, thread_id: str) -
         )
     except Exception:
         pass
+    try:
+        await session.exec_command(
+            "if [ ! -e /usr/local/bin/chromium ]; then "
+            "CHROME_PATH=$(find /opt/playwright-browsers -name 'chrome' -type f 2>/dev/null | head -n 1); "
+            "if [ -n \"$CHROME_PATH\" ]; then sudo ln -sf \"$CHROME_PATH\" /usr/local/bin/chromium && sudo ln -sf \"$CHROME_PATH\" /usr/local/bin/google-chrome; fi; "
+            "fi"
+        )
+    except Exception:
+        pass
 
 
 async def _sync_local_workspace_to_task_dir(session: E2BSandboxSession, thread_id: str) -> None:
