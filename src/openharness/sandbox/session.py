@@ -465,6 +465,9 @@ async def _ensure_remote_task_dirs(session: E2BSandboxSession, thread_id: str) -
         pass
     try:
         await session.exec_command(
+            "mkdir -p /home/user/.cloakbrowser /home/user/.cache/ms-playwright /home/user/.cache/openharness/cloakbrowser/profiles && "
+            "if [ -d /opt/cloakbrowser-cache ]; then ln -sfn /opt/cloakbrowser-cache/* /home/user/.cloakbrowser/ 2>/dev/null || true; fi && "
+            "if [ -d /opt/playwright-browsers ]; then ln -sfn /opt/playwright-browsers/* /home/user/.cache/ms-playwright/ 2>/dev/null || true; fi && "
             "if [ ! -e /usr/local/bin/chromium ]; then "
             "CHROME_PATH=$(find /opt/playwright-browsers -name 'chrome' -type f 2>/dev/null | head -n 1); "
             "if [ -n \"$CHROME_PATH\" ]; then sudo ln -sf \"$CHROME_PATH\" /usr/local/bin/chromium && sudo ln -sf \"$CHROME_PATH\" /usr/local/bin/google-chrome; fi; "

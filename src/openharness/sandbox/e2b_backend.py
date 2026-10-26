@@ -272,7 +272,13 @@ class E2BSandboxSession:
         # 从 2.0 开始，我们抛弃了 .npm-global 等生硬的 prefix 补丁，
         # 我们在 bootstrap 中直接将 /usr/local 等原生 Node 安装目录授权给 user 用户。
         # 因此，此处无需再向 PATH 中生硬注入任何路径，保持 E2B 原生环境变量的最佳状态即可。
-        envs = env.copy() if env else {}
+        envs = {
+            "CLOAKBROWSER_CACHE_DIR": "/opt/cloakbrowser-cache",
+            "CLOAKBROWSER_PROFILE_ROOT": "/home/user/.cache/openharness/cloakbrowser/profiles",
+            "PLAYWRIGHT_BROWSERS_PATH": "/opt/playwright-browsers",
+        }
+        if env:
+            envs.update(env)
         # envs["NODE_TLS_REJECT_UNAUTHORIZED"] = "0"
 
         sandbox_cwd = _normalize_e2b_cwd(cwd)
