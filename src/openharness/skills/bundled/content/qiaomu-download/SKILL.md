@@ -14,6 +14,7 @@ version: 1.3.1
 2. 先识别 URL：
    - `weixin.qq.com/sph/*`：直接使用内置视频号适配器，见“视频号流程”。
    - `open.spotify.com/track/*`：使用内置 Spotify 公共元数据与 YouTube 候选匹配器，输出带 Spotify 标题、艺人、专辑标签的 MP3。
+   - `douyin.com/*`、`v.douyin.com/*`：自动使用内置抖音适配器，通过沙箱 CloakBrowser 无感绕过风控签名直链下载并经 ffprobe 验证。
    - 其他 HTTPS URL：每个新任务先运行 `python3 scripts/download.py doctor --upgrade`，再由 yt-dlp 动态探测。
 3. 对小红书、抖音、TikTok、Instagram、Facebook、微博等容易触发登录验证或风控的平台，下载前简短提醒：“将只通过分享链接和 yt-dlp 解析，不操作客户端或网页 UI；若出现登录、验证码或安全验证，需要你手动完成。”提醒后直接继续。
 4. 普通视频运行 `python3 scripts/download.py download URL`；MP3、字幕、元数据分别使用 `audio`、`subtitles`、`info`。用户指定画质时加 `--quality 1080p|720p|480p`。

@@ -50,9 +50,11 @@ KNOWN_PLATFORMS = {
     "b23.tv": "Bilibili", "x.com": "X", "twitter.com": "X", "vimeo.com": "Vimeo",
     "tiktok.com": "TikTok", "instagram.com": "Instagram", "facebook.com": "Facebook",
     "twitch.tv": "Twitch", "reddit.com": "Reddit", "open.spotify.com": "Spotify",
+    "douyin.com": "Douyin", "iesdouyin.com": "Douyin",
 }
 WECHAT_ADAPTER = Path(__file__).with_name("wechat_adapter.py")
 SPOTIFY_ADAPTER = Path(__file__).with_name("spotify_adapter.py")
+DOUYIN_ADAPTER = Path(__file__).with_name("douyin_adapter.py")
 
 
 class SkillError(RuntimeError):
@@ -161,6 +163,8 @@ def platform_name(url: str) -> str:
     host = (urlsplit(url).hostname or "").lower()
     if host == "weixin.qq.com" and urlsplit(url).path.startswith("/sph/"):
         return "WeChat Channels"
+    if is_douyin_url(url):
+        return "Douyin"
     for suffix, name in KNOWN_PLATFORMS.items():
         if host == suffix or host.endswith("." + suffix):
             return name
@@ -174,6 +178,11 @@ def is_wechat_channels_url(url: str) -> bool:
 
 def is_spotify_url(url: str) -> bool:
     return (urlsplit(url).hostname or "").rstrip(".").lower() == "open.spotify.com"
+
+
+def is_douyin_url(url: str) -> bool:
+    host = (urlsplit(url).hostname or "").rstrip(".").lower()
+    return host == "douyin.com" or host.endswith(".douyin.com") or host == "iesdouyin.com" or host.endswith(".iesdouyin.com")
 
 
 def run_spotify_adapter(url: str, output_dir: Path, timeout: int) -> dict[str, Any]:
@@ -238,6 +247,75 @@ def wechat_doctor(url: str | None = None) -> dict[str, Any]:
         return json.loads(completed.stdout)
     except json.JSONDecodeError:
         return {"ok": False, "adapter": "embedded-wechat", "error": "doctor returned invalid JSON"}
+
+
+def run_douyin_adapter(url: str, output_dir: Path, timeout: int, audio_only: bool = False) -> dict[str, Any]:
+    if not DOUYIN_ADAPTER.is_file():
+        raise SkillError("dependency", "embedded Douyin adapter is missing")
+    command = [sys.executable, str(DOUYIN_ADAPTER), "download", url, "--dir", str(output_dir),
+               "--timeout", str(timeout)]
+    if audio_only:
+        command.append("--audio-only")
+    try:
+        completed = subprocess.run(command, check=False, capture_output=True, text=True, timeout=timeout + 30)
+    except subprocess.TimeoutExpired as exc:
+        raise SkillError("douyin_download", f"Douyin adapter timed out after {timeout}s") from exc
+
+    stdout = completed.stdout.strip()
+    payload = None
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        for line in reversed(stdout.splitlines()):
+            line = line.strip()
+            if line.startswith("{") and line.endswith("}"):
+                try:
+                    payload = json.loads(line)
+                    break
+                except json.JSONDecodeError:
+                    continue
+        if not payload:
+            match = re.search(r"(\{[\s\S]*\})", stdout)
+            if match:
+                try:
+                    payload = json.loads(match.group(1))
+                except json.JSONDecodeError:
+                    pass
+    if not isinstance(payload, dict):
+        raise SkillError("douyin_download", f"Douyin adapter returned invalid output: {completed.stderr or completed.stdout}")
+    return payload
+
+
+def run_douyin_info(url: str, timeout: int) -> dict[str, Any]:
+    if not DOUYIN_ADAPTER.is_file():
+        raise SkillError("dependency", "embedded Douyin adapter is missing")
+    command = [sys.executable, str(DOUYIN_ADAPTER), "info", url, "--timeout", str(timeout)]
+    try:
+        completed = subprocess.run(command, check=False, capture_output=True, text=True, timeout=timeout + 30)
+    except subprocess.TimeoutExpired as exc:
+        raise SkillError("douyin_info", f"Douyin adapter timed out after {timeout}s") from exc
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        match = re.search(r"(\{[\s\S]*\})", completed.stdout)
+        if match:
+            payload = json.loads(match.group(1))
+        else:
+            raise SkillError("douyin_info", f"Douyin adapter info returned invalid JSON: {completed.stderr or completed.stdout}")
+    return payload
+
+
+def douyin_doctor(url: str | None = None) -> dict[str, Any]:
+    if not DOUYIN_ADAPTER.is_file():
+        return {"ok": False, "adapter": "douyin-stealth-browser", "error": "adapter missing"}
+    command = [sys.executable, str(DOUYIN_ADAPTER), "doctor"]
+    if url:
+        command += ["--url", url]
+    completed = subprocess.run(command, check=False, capture_output=True, text=True, timeout=30)
+    try:
+        return json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return {"ok": False, "adapter": "douyin-stealth-browser", "error": "doctor returned invalid JSON"}
 
 
 def detect_cookie_browser(mode: str) -> str | None:
@@ -345,7 +423,7 @@ def doctor(upgrade: bool, timeout: int) -> dict[str, Any]:
         "latest_stable_version": latest, "outdated": outdated, "manager": manager,
         "upgrade_requested": upgrade, "upgraded": upgraded},
         "ffmpeg_version": optional_tool_version("ffmpeg"), "ffprobe_version": optional_tool_version("ffprobe"),
-        "wechat_channels": wechat_doctor(), "spotify": spotify_doctor()}
+        "wechat_channels": wechat_doctor(), "spotify": spotify_doctor(), "douyin": douyin_doctor()}
 
 
 def load_metadata_once(url: str, browser: str | None, timeout: int) -> dict[str, Any]:
@@ -557,6 +635,15 @@ def main() -> None:
                     result = run_spotify_adapter(url, prepare_output_dir(args.output_dir), args.timeout)
                 else:
                     raise SkillError("unsupported", f"{args.command} is not supported for Spotify links; use download or audio")
+            elif is_douyin_url(url):
+                if args.command == "download":
+                    result = run_douyin_adapter(url, prepare_output_dir(args.output_dir), args.timeout, audio_only=False)
+                elif args.command == "audio":
+                    result = run_douyin_adapter(url, prepare_output_dir(args.output_dir), args.timeout, audio_only=True)
+                elif args.command == "info":
+                    result = run_douyin_info(url, args.timeout)
+                else:
+                    raise SkillError("unsupported", f"{args.command} is not supported for Douyin links; use download, audio, or info")
             elif args.command == "info":
                 metadata, browser, warnings = load_metadata(url, args.cookies_from_browser, args.timeout)
                 result = {"ok": True, "command": "info", **metadata_summary(metadata, url),

@@ -122,6 +122,21 @@ class DownloadSkillTests(unittest.TestCase):
             )
         self.assertEqual(result, payload)
 
+    def test_accepts_douyin_for_embedded_adapter(self) -> None:
+        for url in ("https://v.douyin.com/Mihsk2CYLt8/", "https://www.douyin.com/video/7669658755223153067"):
+            self.assertEqual(download.normalize_url(url), url)
+            self.assertTrue(download.is_douyin_url(url))
+            self.assertEqual(download.platform_name(url), "Douyin")
+
+    def test_douyin_adapter_result_is_forwarded(self) -> None:
+        payload = {"ok": True, "platform": "Douyin", "files": [{"path": "/tmp/douyin.mp4"}]}
+        completed = download.subprocess.CompletedProcess([], 0, json.dumps(payload), "")
+        with patch.object(download.subprocess, "run", return_value=completed):
+            result = download.run_douyin_adapter(
+                "https://v.douyin.com/Mihsk2CYLt8/", Path("/tmp"), 30
+            )
+        self.assertEqual(result, payload)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
