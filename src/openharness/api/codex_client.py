@@ -18,7 +18,7 @@ from openharness.api.client import (
 )
 from openharness.api.errors import AuthenticationFailure, OpenHarnessApiError, RateLimitFailure, RequestFailure
 from openharness.api.usage import UsageSnapshot
-from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock, ToolUseBlock
+from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock, ToolUseBlock, VideoBlock
 
 DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api"
 JWT_CLAIM_PATH = "https://api.openai.com/auth"
@@ -97,6 +97,11 @@ def _convert_messages_to_codex(messages: list[ConversationMessage]) -> list[dict
                     user_content.append({
                         "type": "input_image",
                         "image_url": f"data:{block.media_type};base64,{block.data}",
+                    })
+                elif isinstance(block, VideoBlock):
+                    user_content.append({
+                        "type": "input_video",
+                        "video_url": f"data:{block.media_type};base64,{block.data}",
                     })
             if user_content:
                 result.append({"role": "user", "content": user_content})

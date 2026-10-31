@@ -1851,3 +1851,36 @@ class TestResponsesReasoningRoundTrip:
 
         assert message.text == "answer"
         assert getattr(message, "_reasoning") == "thinking..."
+
+
+class TestVideoMultimodalConversion:
+    def test_converts_user_video_into_responses_input(self):
+        from openharness.engine.messages import VideoBlock
+        msg = ConversationMessage(
+            role="user",
+            content=[
+                TextBlock(text="请分析这个视频"),
+                VideoBlock(media_type="video/mp4", data="AAAA", source_path="test.mp4"),
+            ],
+        )
+        out = _convert_messages_to_responses_input([msg])
+        assert len(out) == 1
+        assert out[0]["role"] == "user"
+        content = out[0]["content"]
+        assert len(content) == 2
+        assert content[0] == {"type": "input_text", "text": "请分析这个视频"}
+        assert content[1] == {"type": "input_video", "video_url": "data:video/mp4;base64,AAAA"}
+
+    def test_converts_user_video_into_openai_chat_content(self):
+        from openharness.engine.messages import VideoBlock
+        from openharness.api.openai_client import _convert_user_content_to_openai
+        blocks = [
+            TextBlock(text="看视频"),
+            VideoBlock(media_type="video/mp4", data="BBBB", source_path="test.mp4"),
+        ]
+        out = _convert_user_content_to_openai(blocks)
+        assert isinstance(out, list)
+        assert len(out) == 2
+        assert out[0] == {"type": "text", "text": "看视频"}
+        assert out[1] == {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,BBBB"}}
+

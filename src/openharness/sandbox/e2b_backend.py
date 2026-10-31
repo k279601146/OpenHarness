@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from openharness.config import Settings
 from openharness.sandbox.adapter import SandboxAvailability, SandboxUnavailableError
 
@@ -308,6 +310,19 @@ class E2BSandboxSession:
             logger.error(f"E2B system level error: {e}")
             raise SandboxUnavailableError(f"E2B integration error: {e}")
 
+    def get_download_url(self, container_path: str, use_signature_expiration: int = 3600) -> str | None:
+        """获取沙箱内指定路径的直接下载链接（若沙箱实例支持）"""
+        if not self._sandbox or not hasattr(self._sandbox, "download_url"):
+            return None
+        try:
+            try:
+                return self._sandbox.download_url(container_path, use_signature_expiration=use_signature_expiration)
+            except Exception:
+                return self._sandbox.download_url(container_path)
+        except Exception as e:
+            logger.debug(f"Failed to get download_url for {container_path}: {e}")
+            return None
+
     async def read_file(self, container_path: str) -> str:
         """读取文件为文本字符串"""
         content = await self.read_file_binary(container_path)
@@ -316,10 +331,49 @@ class E2BSandboxSession:
         return content
 
     async def read_file_binary(self, container_path: str) -> bytes:
-        """读取文件为原始二进制字节流"""
+        """读取文件为原始二进制字节流。
+
+        优先尝试使用 E2B 官方原生 download_url + HTTP/1.1 获取：
+        避免大文件 (>1.5MB) 通过内部 gRPC/HTTP2 控制面 (files.read) 触发 too_many_data_frames 协议错误。
+        如果 download_url 不可用或请求失败，自动优雅回退到 files.read()。
+        """
         if not self._sandbox:
             raise SandboxUnavailableError()
+
         loop = asyncio.get_event_loop()
+
+        # 1. 优先尝试使用 E2B 官方原生 download_url (走 HTTP/1.1 规避 HTTP/2 帧溢出限制)
+        if hasattr(self._sandbox, "download_url"):
+            try:
+                download_url = await loop.run_in_executor(
+                    None,
+                    lambda: self.get_download_url(container_path),
+                )
+                if download_url:
+                    headers: dict[str, str] = {}
+                    if hasattr(self._sandbox, "connection_config"):
+                        cfg = self._sandbox.connection_config
+                        if getattr(cfg, "headers", None) and isinstance(cfg.headers, dict):
+                            headers.update(cfg.headers)
+                        if getattr(cfg, "sandbox_headers", None) and isinstance(cfg.sandbox_headers, dict):
+                            headers.update(cfg.sandbox_headers)
+                        if getattr(cfg, "api_key", None) and isinstance(cfg.api_key, str):
+                            headers["X-API-Key"] = cfg.api_key
+
+                    timeout = httpx.Timeout(connect=15.0, read=120.0, write=30.0, pool=30.0)
+                    async with httpx.AsyncClient(http2=False, timeout=timeout, follow_redirects=True) as client:
+                        resp = await client.get(download_url, headers=headers)
+                        if resp.status_code == 200:
+                            return resp.content
+                        logger.warning(
+                            f"E2B download_url GET returned HTTP {resp.status_code} for {container_path}, falling back to files.read"
+                        )
+            except Exception as exc:
+                logger.warning(
+                    f"E2B download_url attempt failed for {container_path}: {exc}, falling back to files.read"
+                )
+
+        # 2. 回退机制：E2B files.read()
         try:
             # E2B sandbox.files.read() 返回的可能是字节或字符串
             content = await loop.run_in_executor(

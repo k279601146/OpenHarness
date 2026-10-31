@@ -31,6 +31,17 @@ COMMON_IMAGE_MIME_TYPES: dict[str, str] = {
 for _ext, _mime in COMMON_IMAGE_MIME_TYPES.items():
     mimetypes.add_type(_mime, _ext)
 
+COMMON_VIDEO_MIME_TYPES: dict[str, str] = {
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+    ".avi": "video/x-msvideo",
+    ".mkv": "video/x-matroska",
+}
+
+for _ext, _mime in COMMON_VIDEO_MIME_TYPES.items():
+    mimetypes.add_type(_mime, _ext)
+
 
 class TextBlock(BaseModel):
     """Plain text content."""
@@ -100,6 +111,39 @@ class ImageBlock(BaseModel):
         return cls(media_type=media_type, data=payload, source_path=str(resolved))
 
 
+class VideoBlock(BaseModel):
+    """Video content encoded inline for multimodal providers."""
+
+    type: Literal["video"] = "video"
+    media_type: str
+    data: str
+    source_path: str = ""
+
+    @classmethod
+    def from_path(
+        cls,
+        path: str | Path,
+        *,
+        media_type: str | None = None,
+        max_bytes: int = 35 * 1024 * 1024,
+    ) -> "VideoBlock":
+        """Load a local video file into a base64-backed content block."""
+        resolved = Path(path).expanduser().resolve()
+        if not resolved.is_file():
+            raise FileNotFoundError(f"Video file not found: {resolved}")
+        if not media_type or not media_type.startswith("video/"):
+            guessed, _ = mimetypes.guess_type(str(resolved))
+            media_type = guessed or COMMON_VIDEO_MIME_TYPES.get(resolved.suffix.lower())
+        if not media_type or not media_type.startswith("video/"):
+            raise ValueError(f"Unsupported video attachment: {resolved}")
+        size = resolved.stat().st_size
+        if max_bytes and size > max_bytes:
+            raise ValueError(f"Video file size {size} exceeds max allowed inline limit {max_bytes}")
+        raw_bytes = resolved.read_bytes()
+        payload = base64.b64encode(raw_bytes).decode("ascii")
+        return cls(media_type=media_type, data=payload, source_path=str(resolved))
+
+
 class ToolUseBlock(BaseModel):
     """A request from the model to execute a named tool."""
 
@@ -121,7 +165,7 @@ class ToolResultBlock(BaseModel):
 
 
 ContentBlock = Annotated[
-    TextBlock | ImageBlock | ToolUseBlock | ToolResultBlock,
+    TextBlock | ImageBlock | VideoBlock | ToolUseBlock | ToolResultBlock,
     Field(discriminator="type"),
 ]
 
@@ -175,7 +219,7 @@ class ConversationMessage(BaseModel):
             for block in self.content:
                 if isinstance(block, TextBlock) and block.text.strip():
                     return False
-                if isinstance(block, (ImageBlock, ToolUseBlock, ToolResultBlock)):
+                if isinstance(block, (ImageBlock, VideoBlock, ToolUseBlock, ToolResultBlock)):
                     return False
         return True
 
@@ -243,6 +287,15 @@ def serialize_content_block(block: ContentBlock) -> dict[str, Any]:
     elif isinstance(block, ImageBlock):
         result = {
             "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": block.media_type,
+                "data": block.data,
+            },
+        }
+    elif isinstance(block, VideoBlock):
+        result = {
+            "type": "video",
             "source": {
                 "type": "base64",
                 "media_type": block.media_type,

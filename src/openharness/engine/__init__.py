@@ -11,6 +11,7 @@ if TYPE_CHECKING:  # pragma: no cover
         TextBlock,
         ToolResultBlock,
         ToolUseBlock,
+        VideoBlock,
     )
     from openharness.engine.query_engine import QueryEngine
     from openharness.engine.stream_events import (
@@ -31,17 +32,19 @@ __all__ = [
     "ToolExecutionStarted",
     "ToolResultBlock",
     "ToolUseBlock",
+    "VideoBlock",
 ]
 
 
 def __getattr__(name: str):
-    if name in {"ConversationMessage", "ImageBlock", "TextBlock", "ToolResultBlock", "ToolUseBlock"}:
+    if name in {"ConversationMessage", "ImageBlock", "TextBlock", "ToolResultBlock", "ToolUseBlock", "VideoBlock"}:
         from openharness.engine.messages import (
             ConversationMessage,
             ImageBlock,
             TextBlock,
             ToolResultBlock,
             ToolUseBlock,
+            VideoBlock,
         )
 
         return {
@@ -50,6 +53,7 @@ def __getattr__(name: str):
             "TextBlock": TextBlock,
             "ToolResultBlock": ToolResultBlock,
             "ToolUseBlock": ToolUseBlock,
+            "VideoBlock": VideoBlock,
         }[name]
 
     if name == "QueryEngine":
