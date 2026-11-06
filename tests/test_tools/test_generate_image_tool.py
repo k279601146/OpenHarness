@@ -273,3 +273,42 @@ def test_generate_image_supports_gpt_image_2_5_quality_and_models() -> None:
     assert data.output.quality == "max"
     assert data.output.transparent_background is True
 
+
+def test_generate_image_supports_gpt_image_2_6_features() -> None:
+    data = GenerateImageInput(
+        prompt="A vector logo for an open-source project.",
+        brief={},
+        output={
+            "complexity": "medium",
+            "output_format": "svg",
+            "moderation": "low",
+            "safety_identifier": "safe_hash_abc",
+        },
+        edit_policy={},
+        text_policy={},
+        references=[{"input_ref": "artifact:sketch", "role": "markup"}],
+        model_id="gpt-image-2.6-sunburst",
+    )
+    assert data.model_id == "gpt-image-2.6-sunburst"
+    assert data.output.complexity == "medium"
+    assert data.output.output_format == "svg"
+    assert data.output.moderation == "low"
+    assert data.output.safety_identifier == "safe_hash_abc"
+    assert data.references[0].role == "markup"
+
+    gif_data = GenerateImageInput(
+        prompt="A running cat animation.",
+        brief={},
+        output={
+            "output_format": "gif",
+            "frame_count": 8,
+            "frame_duration_ms": 120,
+        },
+        edit_policy={},
+        text_policy={},
+        model_id="gpt-image-2.6-flare",
+    )
+    assert gif_data.output.output_format == "gif"
+    assert gif_data.output.frame_count == 8
+    assert gif_data.output.frame_duration_ms == 120
+

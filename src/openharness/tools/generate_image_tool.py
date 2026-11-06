@@ -100,11 +100,12 @@ class ImageGenerationReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     input_ref: str = Field(description="Stable artifact/upload/public image reference.")
-    role: Literal["edit_target", "style", "mask"] = Field(
+    role: Literal["edit_target", "style", "mask", "markup"] = Field(
         default="edit_target",
         description=(
             "Reference role. Use edit_target by default when the user asks to use, follow, or base the result on "
-            "a reference image; use style only when the user explicitly asks to reference style/aesthetic only."
+            "a reference image; use style only when the user explicitly asks to reference style/aesthetic only; "
+            "use mask for inpainting masks; use markup for annotated transparent PNG overlay sketches."
         ),
     )
 
@@ -126,9 +127,13 @@ class ImageGenerationOutput(BaseModel):
     height: int | None = Field(default=None, ge=1)
     quality_goal: Literal["auto", "draft", "balanced", "high_quality", "text_accuracy", "xhigh", "max"] | None = None
     quality: Literal["auto", "low", "medium", "high", "xhigh", "max"] | None = None
-    output_format: Literal["png", "jpeg", "webp"] | None = Field(
+    complexity: Literal["low", "medium", "high"] | None = Field(
         default=None,
-        description="Desired image output format. Compression is only valid for jpeg and webp.",
+        description="Complexity setting for GPT Image 2.6 models (low, medium, high). Controls planning depth.",
+    )
+    output_format: Literal["png", "jpeg", "webp", "svg", "gif"] | None = Field(
+        default=None,
+        description="Desired image output format. Supports png, jpeg, webp, svg, gif.",
     )
     output_compression: int | None = Field(
         default=None,
@@ -136,8 +141,29 @@ class ImageGenerationOutput(BaseModel):
         le=100,
         description="Compression level for jpeg/webp outputs, from 0 to 100.",
     )
+    frame_count: int | None = Field(
+        default=None,
+        ge=2,
+        le=16,
+        description="Number of frames for animated GIF output (2-16, default 9).",
+    )
+    frame_duration_ms: int | None = Field(
+        default=None,
+        ge=20,
+        le=2000,
+        description="Frame duration in milliseconds for animated GIF output (20-2000, default 200).",
+    )
     count: int | None = Field(default=None, ge=1, le=10)
     transparent_background: bool | None = None
+    moderation: Literal["auto", "low"] | None = Field(
+        default=None,
+        description="Moderation level (auto, low).",
+    )
+    safety_identifier: str | None = Field(
+        default=None,
+        max_length=128,
+        description="Stable, privacy-preserving hashed user identifier.",
+    )
 
 
 class ImageGenerationEditPolicy(BaseModel):
