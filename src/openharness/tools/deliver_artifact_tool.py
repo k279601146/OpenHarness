@@ -83,6 +83,17 @@ class DeliverArtifactTool(BaseTool):
         if not arguments.package_as_zip:
             requested_paths = _filter_already_published_paths(context, requested_paths, reused)
             if not requested_paths:
+                hook = context.metadata.get("hook")
+                if hook is not None and hasattr(hook, "reemit_artifact"):
+                    for item in reused:
+                        try:
+                            await hook.reemit_artifact(
+                                item,
+                                reason=f"Delivered sandbox artifact: {_artifact_display_path(item)}",
+                                tool_use_id=_context_tool_use_id(context),
+                            )
+                        except Exception:
+                            pass
                 reused_paths = [
                     _artifact_display_path(artifact)
                     for artifact in reused
@@ -193,7 +204,7 @@ class DeliverArtifactTool(BaseTool):
                     content = await session.read_file_binary(sandbox_path)
                     content_bytes = _ensure_bytes(content)
                     existing = _find_existing_artifact(context, content_bytes)
-                    if existing:
+                    if existing and bool(existing.get("is_delivered")):
                         reused.append(existing)
                         continue
 
@@ -226,11 +237,23 @@ class DeliverArtifactTool(BaseTool):
                     sandbox_path=source_sandbox_path,
                     sandbox_path_role="canonical" if source_sandbox_path else None,
                     metadata={"source_sandbox_paths": sandbox_paths} if source_sandbox_path is None else None,
+                    is_delivered=True,
                 )
 
         lines = ["Delivered artifact(s):"]
         lines.extend(f"- {path}" for path in delivered)
         if reused:
+            hook = context.metadata.get("hook")
+            if hook is not None and hasattr(hook, "reemit_artifact"):
+                for item in reused:
+                    try:
+                        await hook.reemit_artifact(
+                            item,
+                            reason=f"Delivered sandbox artifact: {_artifact_display_path(item)}",
+                            tool_use_id=_context_tool_use_id(context),
+                        )
+                    except Exception:
+                        pass
             lines.append("Reused existing artifact(s):")
             lines.extend(f"- {path}" for path in (_artifact_display_path(artifact) for artifact in reused) if path)
         if uses_e2b_task_workspace(context):
@@ -314,7 +337,8 @@ def _filter_already_published_paths(
             continue
         role = str(existing.get("sandbox_path_role") or "")
         state = str(existing.get("publish_state") or "")
-        if state == "published" or role in {"workspace_mirror", "input_mirror"}:
+        is_delivered = bool(existing.get("is_delivered"))
+        if (state == "published" and is_delivered) or role in {"workspace_mirror", "input_mirror"}:
             reused.append(existing)
         else:
             remaining.append(path)
@@ -386,6 +410,7 @@ async def _deliver_host_paths(
                 source_tool="deliver_artifact",
                 tool_use_id=_context_tool_use_id(context),
                 origin="host_generated",
+                is_delivered=True,
             )
 
     lines = ["Delivered artifact(s):"]
