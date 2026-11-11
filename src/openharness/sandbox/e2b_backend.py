@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import os
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -76,6 +78,25 @@ def get_e2b_availability(settings: Settings) -> SandboxAvailability:
         )
         
     return SandboxAvailability(enabled=True, available=True)
+
+
+def _is_private_or_loopback_proxy(proxy_url: str) -> bool:
+    if not proxy_url:
+        return True
+    try:
+        parsed = urlparse(proxy_url if "://" in proxy_url else f"http://{proxy_url}")
+        host = (parsed.hostname or "").strip().lower()
+        if not host or host == "localhost":
+            return True
+        try:
+            ip = ipaddress.ip_address(host)
+            return bool(ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_unspecified)
+        except ValueError:
+            if host.endswith(".local") or host.endswith(".internal") or host.endswith(".lan"):
+                return True
+            return False
+    except Exception:
+        return True
 
 
 @dataclass
@@ -280,7 +301,10 @@ class E2BSandboxSession:
             "PLAYWRIGHT_BROWSERS_PATH": "/opt/playwright-browsers",
         }
         if env:
-            envs.update(env)
+            for k, v in env.items():
+                if k.lower() in ("http_proxy", "https_proxy", "all_proxy") and _is_private_or_loopback_proxy(v):
+                    continue
+                envs[k] = v
         # envs["NODE_TLS_REJECT_UNAUTHORIZED"] = "0"
 
         sandbox_cwd = _normalize_e2b_cwd(cwd)

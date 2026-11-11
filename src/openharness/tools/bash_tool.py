@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import os
 import time
 from pathlib import Path
@@ -153,13 +154,16 @@ SANDBOX_ENV_KEYS = (
     "CLOAKBROWSER_CACHE_DIR",
     "CLOAKBROWSER_PROFILE_ROOT",
     "PLAYWRIGHT_BROWSERS_PATH",
-    "HTTPS_PROXY",
-    "HTTP_PROXY",
-    "NO_PROXY",
-    "https_proxy",
-    "http_proxy",
-    "no_proxy",
 )
+
+SANDBOX_SPECIFIC_PROXY_MAP = {
+    "SANDBOX_HTTP_PROXY": "HTTP_PROXY",
+    "SANDBOX_HTTPS_PROXY": "HTTPS_PROXY",
+    "SANDBOX_NO_PROXY": "NO_PROXY",
+    "sandbox_http_proxy": "http_proxy",
+    "sandbox_https_proxy": "https_proxy",
+    "sandbox_no_proxy": "no_proxy",
+}
 
 PROVIDER_TOOL_ENV_KEYS = (
     # Legacy provider env names are denied to avoid leaking stale host secrets.
@@ -191,13 +195,41 @@ SENSITIVE_ENV_NAME_PARTS = ("API_KEY", "TOKEN", "SECRET", "PASSWORD", "PRIVATE_K
 PROXY_ENV_KEYS = {"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"}
 
 
+def _is_private_or_loopback_proxy(proxy_url: str) -> bool:
+    if not proxy_url:
+        return True
+    try:
+        parsed = urlparse(proxy_url if "://" in proxy_url else f"http://{proxy_url}")
+        host = (parsed.hostname or "").strip().lower()
+        if not host or host == "localhost":
+            return True
+        try:
+            ip = ipaddress.ip_address(host)
+            return bool(ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_unspecified)
+        except ValueError:
+            if host.endswith(".local") or host.endswith(".internal") or host.endswith(".lan"):
+                return True
+            return False
+    except Exception:
+        return True
+
+
 def _build_forwarded_sandbox_env(context: ToolExecutionContext) -> dict[str, str] | None:
     """Forward non-secret host/project env vars needed by sandbox commands."""
-    return _collect_forwarded_env(
-        context,
-        SANDBOX_ENV_KEYS,
-        include_sensitive=False,
+    forwarded = dict(
+        _collect_forwarded_env(
+            context,
+            SANDBOX_ENV_KEYS,
+            include_sensitive=False,
+        )
+        or {}
     )
+    project_env = _load_nearest_dotenv(context.cwd)
+    for specific_key, target_key in SANDBOX_SPECIFIC_PROXY_MAP.items():
+        val = os.getenv(specific_key) or project_env.get(specific_key)
+        if val and not _is_private_or_loopback_proxy(val):
+            forwarded[target_key] = val
+    return forwarded or None
 
 
 def _build_provider_tool_env(context: ToolExecutionContext) -> dict[str, str] | None:

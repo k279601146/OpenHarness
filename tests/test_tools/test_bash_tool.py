@@ -262,6 +262,9 @@ def test_forwarded_sandbox_env_excludes_provider_config(monkeypatch, tmp_path: P
     monkeypatch.setenv("GPT_IMAGEGEN_BASE_URL", "https://images.example.test/v1")
     monkeypatch.setenv("SEEDANCE_VIDEO_BASE_URL", "https://videos.example.test/v1")
     monkeypatch.setenv("BILLING_CREDITS_PER_USD", "25")
+    monkeypatch.setenv("HTTP_PROXY", "http://172.18.0.1:1080")
+    monkeypatch.setenv("HTTPS_PROXY", "http://172.18.0.1:1080")
+    monkeypatch.setenv("NO_PROXY", "baidu.com,qq.com")
 
     env = _build_forwarded_sandbox_env(ToolExecutionContext(cwd=tmp_path)) or {}
 
@@ -270,6 +273,19 @@ def test_forwarded_sandbox_env_excludes_provider_config(monkeypatch, tmp_path: P
     assert "GPT_IMAGEGEN_BASE_URL" not in env
     assert "SEEDANCE_VIDEO_BASE_URL" not in env
     assert env["BILLING_CREDITS_PER_USD"] == "25"
+    assert "HTTP_PROXY" not in env
+    assert "HTTPS_PROXY" not in env
+    assert "NO_PROXY" not in env
+
+
+def test_forwarded_sandbox_env_rejects_private_custom_proxy(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("SANDBOX_HTTP_PROXY", "http://192.168.1.100:8080")
+    env = _build_forwarded_sandbox_env(ToolExecutionContext(cwd=tmp_path)) or {}
+    assert "HTTP_PROXY" not in env
+
+    monkeypatch.setenv("SANDBOX_HTTP_PROXY", "http://proxy.public.example.com:8080")
+    env2 = _build_forwarded_sandbox_env(ToolExecutionContext(cwd=tmp_path)) or {}
+    assert env2.get("HTTP_PROXY") == "http://proxy.public.example.com:8080"
 
 
 @pytest.mark.asyncio
