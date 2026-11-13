@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
@@ -188,6 +188,16 @@ class GenerateImageInput(BaseModel):
     """High-level image request extracted from the imagegen skill."""
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_defaults(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "edit_policy" not in data or data.get("edit_policy") is None:
+                data["edit_policy"] = {}
+            if "text_policy" not in data or data.get("text_policy") is None:
+                data["text_policy"] = {}
+        return data
 
     intent: Literal["generate", "edit", "restore", "variation"] = "generate"
     scenario: Literal[

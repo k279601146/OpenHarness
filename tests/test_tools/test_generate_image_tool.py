@@ -116,6 +116,17 @@ def test_generate_image_accepts_imagegen_skill_scenarios(scenario: str) -> None:
     assert value.scenario == scenario
 
 
+def test_generate_image_accepts_omitted_edit_policy() -> None:
+    value = GenerateImageInput(
+        prompt="Draw an image.",
+        brief={},
+        output={},
+        text_policy={},
+    )
+    assert value.edit_policy.preserve_identity is True
+    assert value.edit_policy.allow_crop is False
+
+
 def test_generate_image_rejects_json_string_brief() -> None:
     with pytest.raises(ValidationError):
         GenerateImageInput(

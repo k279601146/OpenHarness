@@ -1934,6 +1934,10 @@ def _media_subtask_input(
         else:
             brief.pop("variants", None)
         item["brief"] = brief
+        if "edit_policy" not in item or not isinstance(item.get("edit_policy"), dict):
+            item["edit_policy"] = {}
+        if "text_policy" not in item or not isinstance(item.get("text_policy"), dict):
+            item["text_policy"] = {}
     return item
 
 
