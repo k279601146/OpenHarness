@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import hashlib
 import logging
 import os
+from pathlib import Path
 from collections.abc import Sequence
 from typing import Any
+import uuid
 
 from openharness.services.token_estimation import (
     estimate_tool_result_tokens,
@@ -14,6 +18,65 @@ from openharness.services.token_estimation import (
 )
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SpillRef:
+    """Reference to an offloaded large text payload in the spill store."""
+
+    locator: str
+    bytes: int
+    retrieval_hint: str
+
+
+def save_spill_text(
+    cwd: str | Path,
+    text: str,
+    *,
+    prefix: str = "spill",
+    session_id: str | None = None,
+) -> SpillRef:
+    """Persist large text safely using exclusive file creation (`0600`) inside a `0700` directory."""
+    from openharness.config.paths import get_project_config_dir
+
+    base_dir = get_project_config_dir(cwd) / "spill"
+    if session_id:
+        session_bucket = hashlib.sha256(str(session_id).encode("utf-8")).hexdigest()[:16]
+        base_dir = base_dir / session_bucket
+    base_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(base_dir, 0o700)
+    except OSError:
+        pass
+
+    safe_prefix = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in (prefix or "spill"))[:48] or "spill"
+    encoded = strip_lone_surrogates(text or "").encode("utf-8", errors="replace")
+
+    for _ in range(8):
+        candidate = base_dir / f"{safe_prefix}-{uuid.uuid4().hex[:12]}.txt"
+        if candidate.is_symlink():
+            continue
+        try:
+            fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(encoded)
+        except Exception:
+            try:
+                candidate.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+        locator = str(candidate)
+        hint = (
+            f"Use `read_file` with `path=\"{locator}\"`, `offset`, and `limit` "
+            f"(or `grep` on `{locator}`) to inspect specific sections."
+        )
+        return SpillRef(locator=locator, bytes=len(encoded), retrieval_hint=hint)
+
+    raise RuntimeError("Failed to allocate unique spill file after multiple attempts")
 
 DEFAULT_TOOL_OUTPUT_INLINE_CHARS = 16_000
 DEFAULT_TOOL_OUTPUT_PREVIEW_CHARS = 3_000

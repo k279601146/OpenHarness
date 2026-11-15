@@ -4,11 +4,11 @@ OpenHarness automatically provisions both `.hypit/saas-runtime.profile.json` and
 
 ## Pre-Configured Endpoints
 
-- `saas.gateway` (`@openharness/provider-saas`): Handles image, video, speech synthesis, and live SaaS credit pricing queries using the scoped workspace credential file `.hypit/saas-gateway.json`.
+- `saas.gateway` (`@openharness/provider-saas`): Handles image, video, speech synthesis, voice cloning, hosted WhisperX speech alignment, and live SaaS credit pricing queries using the scoped workspace credential file `.hypit/saas-gateway.json`.
 - `media.local` (`@hypit/media-local`): Runs FFmpeg/FFprobe media inspection, audio mixing, normalization, trims, and video assembly locally.
 - `html.local` (`@hypit/provider-html-local`): Renders HTML/CSS motion graphics frames via headless Chromium.
 - `image.opencv.local` (`@hypit/provider-image-opencv-local`): Runs local image transforms and processing.
-- `whisperx.local` (`@hypit/provider-whisperx-local`): Optional local word-level speech alignment.
+- `@hypit/whisperx@1#whisperx-alignment`: Pre-bound in `bindings` to `saas.gateway` by default so `hypit transcribe` and `<whisperx:Alignment>` work immediately without downloading local WhisperX model weights; `whisperx.local` remains opt-in for local CPU/GPU runs.
 
 ## Operational Guidance
 

@@ -59,6 +59,14 @@ class ToolResult:
     is_error: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
     images: list[ImageBlock] = field(default_factory=list)
+    additional_contexts: list[str] = field(default_factory=list)
+    structured_output: Any = None
+
+
+ToolMiddlewareFn = Callable[
+    ["BaseTool", BaseModel, ToolExecutionContext, Callable[[BaseModel, ToolExecutionContext], Awaitable[ToolResult]]],
+    Awaitable[ToolResult],
+]
 
 
 class BaseTool(ABC):
@@ -67,10 +75,12 @@ class BaseTool(ABC):
     name: str
     description: str
     input_model: type[BaseModel]
+    output_model: type[BaseModel] | None = None
     display_name: str | None = None
     default_start_message: str | None = None
     parallel_safe: bool = True
     execution_group: str | None = None
+    timeout_ms: int | None = None
     
     # [Optimize] 显式标记工具是否必须在沙箱中运行
     # False: 默认在宿主机执行（节省资源）
@@ -80,6 +90,47 @@ class BaseTool(ABC):
     @abstractmethod
     async def execute(self, arguments: BaseModel, context: ToolExecutionContext) -> ToolResult:
         """Execute the tool."""
+
+    def when(self, selection_context: Any) -> bool | None:
+        """Optional step-level admission predicate (`ResolvedToolSet` contract).
+
+        Return `True` or `False` to explicitly admit or exclude this tool for the
+        current step, or `None` to defer to the default context rules.
+        """
+        del selection_context
+        return None
+
+    def project_content(self, result: ToolResult, context: ToolExecutionContext) -> ToolResult:
+        """First-stage output projection before post-execute hooks and spill pruning."""
+        del context
+        return result
+
+    def finalize_content(self, result: ToolResult, context: ToolExecutionContext) -> ToolResult:
+        """Second-stage output finalization after post-execute hooks and spill policy."""
+        del context
+        if self.output_model is not None and not result.is_error and result.structured_output is not None:
+            if isinstance(result.structured_output, BaseModel):
+                validated = result.structured_output.model_dump(mode="json")
+            else:
+                validated = self.output_model.model_validate(result.structured_output).model_dump(mode="json")
+            meta = dict(result.metadata or {})
+            meta.setdefault("structured_output", validated)
+            return ToolResult(
+                output=result.output,
+                is_error=result.is_error,
+                metadata=meta,
+                images=list(result.images),
+                additional_contexts=list(result.additional_contexts),
+                structured_output=validated,
+            )
+        return result
+
+    def output_schema(self) -> dict[str, Any] | None:
+        """Return sanitized JSON schema for the tool's structured output, if declared."""
+        if self.output_model is None:
+            return None
+        schema = _inline_local_json_schema_refs(self.output_model.model_json_schema())
+        return sanitize_tool_json_schema(schema)
 
     def is_read_only(self, arguments: BaseModel) -> bool:
         """Return whether the invocation is read-only."""
@@ -183,14 +234,25 @@ def _inline_local_json_schema_refs(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 class ToolRegistry:
-    """Map tool names to implementations."""
+    """Map tool names to implementations and execution middlewares."""
 
     def __init__(self) -> None:
         self._tools: dict[str, BaseTool] = {}
+        self._middlewares: list[ToolMiddlewareFn] = []
 
     def register(self, tool: BaseTool) -> None:
         """Register a tool instance."""
         self._tools[tool.name] = tool
+
+    def add_middleware(self, middleware: ToolMiddlewareFn) -> None:
+        """Register an around-execute tool middleware."""
+        if middleware not in self._middlewares:
+            self._middlewares.append(middleware)
+
+    @property
+    def middlewares(self) -> tuple[ToolMiddlewareFn, ...]:
+        """Return registered tool middlewares in execution order."""
+        return tuple(self._middlewares)
 
     def get(self, name: str) -> BaseTool | None:
         """Return a registered tool by name."""

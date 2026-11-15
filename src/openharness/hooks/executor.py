@@ -39,11 +39,18 @@ class HookExecutionContext:
 
 
 class HookExecutor:
-    """Execute hooks for lifecycle events."""
+    """Execute hooks for lifecycle events with monotonic deny guards."""
 
     def __init__(self, registry: HookRegistry, context: HookExecutionContext) -> None:
         self._registry = registry
         self._context = context
+        self._guards: dict[HookEvent, list[Any]] = {}
+
+    def register_guard(self, event: HookEvent, guard_fn: Any) -> None:
+        """Register an in-process async guard `(payload) -> HookResult | None`."""
+        bucket = self._guards.setdefault(event, [])
+        if guard_fn not in bucket:
+            bucket.append(guard_fn)
 
     def update_registry(self, registry: HookRegistry) -> None:
         """Replace the active hook registry."""
@@ -62,19 +69,42 @@ class HookExecutor:
             self._context.default_model = default_model
 
     async def execute(self, event: HookEvent, payload: dict[str, Any]) -> AggregatedHookResult:
-        """Execute all matching hooks for an event."""
+        """Execute all matching guards and hooks for an event with monotonic deny enforcement."""
         results: list[HookResult] = []
+        working_payload = dict(payload)
+
+        for guard in self._guards.get(event, ()):
+            res = guard(working_payload)
+            if asyncio.iscoroutine(res):
+                res = await res
+            if isinstance(res, HookResult):
+                results.append(res)
+                if res.blocked:
+                    # Monotonic guard: once denied, downstream hooks cannot override
+                    return AggregatedHookResult(results=results)
+                if res.modified_input is not None and "tool_input" in working_payload:
+                    working_payload["tool_input"] = dict(res.modified_input)
+
         for hook in self._registry.get(event):
-            if not _matches_hook(hook, payload):
+            if not _matches_hook(hook, working_payload):
                 continue
             if isinstance(hook, CommandHookDefinition):
-                results.append(await self._run_command_hook(hook, event, payload))
+                res = await self._run_command_hook(hook, event, working_payload)
             elif isinstance(hook, HttpHookDefinition):
-                results.append(await self._run_http_hook(hook, event, payload))
+                res = await self._run_http_hook(hook, event, working_payload)
             elif isinstance(hook, PromptHookDefinition):
-                results.append(await self._run_prompt_like_hook(hook, event, payload, agent_mode=False))
+                res = await self._run_prompt_like_hook(hook, event, working_payload, agent_mode=False)
             elif isinstance(hook, AgentHookDefinition):
-                results.append(await self._run_prompt_like_hook(hook, event, payload, agent_mode=True))
+                res = await self._run_prompt_like_hook(hook, event, working_payload, agent_mode=True)
+            else:
+                continue
+            results.append(res)
+            if res.blocked:
+                # Monotonic guard: stop waterfall on first block
+                return AggregatedHookResult(results=results)
+            if res.modified_input is not None and "tool_input" in working_payload:
+                working_payload["tool_input"] = dict(res.modified_input)
+
         return AggregatedHookResult(results=results)
 
     async def _run_command_hook(

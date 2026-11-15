@@ -12,6 +12,7 @@ import re
 import time
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
@@ -46,8 +47,25 @@ class RunCodeInput(BaseModel):
             "Restricted async Python script that orchestrates registered tools via "
             "`await tools.<tool_name>(**kwargs)` or `await call_tool(name, args_dict)` "
             "and `await gather(...)` / `await asyncio.gather(...)`. "
-            "Use `print(...)`, assign `result = ...`, or return from top-level / `main()`."
+            "Use `print(...)`, `inspect(path_or_value, label=...)`, assign `result = ...`, "
+            "or return from top-level / `main()`."
         ),
+    )
+    mode: str = Field(
+        default="script",
+        description="Execution mode: 'script' (stateless) or 'scoped_repl' (persists variables across calls for state_owner).",
+    )
+    state_owner: str | None = Field(
+        default=None,
+        description="Optional state owner key when mode='scoped_repl'. Defaults to session/cwd scope.",
+    )
+    reset_state: bool = Field(
+        default=False,
+        description="When True, clears any persisted scoped_repl state for state_owner before running.",
+    )
+    read_only_only: bool = Field(
+        default=False,
+        description="When True, restricts nested tool calls strictly to read-only tools.",
     )
     timeout_seconds: float = Field(
         default=60.0,
@@ -77,9 +95,27 @@ class PtcToolOutput:
     output: str
     is_error: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
+    structured_data: Any = None
+
+    @property
+    def data(self) -> Any:
+        """Return structured output if available, or parsed JSON when valid, else raw text."""
+        if self.structured_data is not None:
+            return self.structured_data
+        if isinstance(self.metadata, dict) and "structured_output" in self.metadata:
+            return self.metadata["structured_output"]
+        text = (self.output or "").strip()
+        if text.startswith(("{", "[")):
+            try:
+                return json.loads(text)
+            except Exception:
+                pass
+        return self.output
 
     def json(self) -> Any:
         """Parse ``output`` as JSON."""
+        if self.structured_data is not None:
+            return self.structured_data
         return json.loads(self.output)
 
     def lines(self) -> list[str]:
@@ -243,7 +279,7 @@ _SAFE_COLLECTION_METHODS: dict[type, frozenset[str]] = {
 
 _SAFE_REGEX_MATCH_ATTRS = frozenset({"group", "groups", "groupdict", "span", "start", "end"})
 _SAFE_REGEX_PATTERN_ATTRS = frozenset({"search", "match", "fullmatch", "findall", "finditer", "sub", "split", "pattern"})
-_SAFE_PTC_RESULT_ATTRS = frozenset({"tool_name", "output", "is_error", "metadata", "json", "lines"})
+_SAFE_PTC_RESULT_ATTRS = frozenset({"tool_name", "output", "is_error", "metadata", "structured_data", "data", "json", "lines"})
 
 _BIN_OPS: dict[type[ast.operator], Callable[[Any, Any], Any]] = {
     ast.Add: operator.add,
@@ -269,6 +305,40 @@ _UNARY_OPS: dict[type[ast.unaryop], Callable[[Any], Any]] = {
 
 _ALLOWED_IMPORTS = frozenset({"json", "re", "math", "asyncio"})
 
+_SCOPED_REPL_STATES: dict[str, dict[str, Any]] = {}
+
+
+def reset_ptc_state(state_owner: str | None = None) -> None:
+    """Reset persisted `scoped_repl` state for *state_owner* (or all owners if None)."""
+    if state_owner is None:
+        _SCOPED_REPL_STATES.clear()
+    else:
+        _SCOPED_REPL_STATES.pop(str(state_owner), None)
+
+
+def generate_tool_sdk_stubs(registry: Any) -> str:
+    """Generate concise typed Python stub signatures for registered tools usable in `run_code`."""
+    if registry is None or not hasattr(registry, "list_tools"):
+        return ""
+    lines = ["# Available `tools.<name>(**kwargs)` SDK Signatures:"]
+    for tool in registry.list_tools():
+        if tool.name in BLOCKED_NESTED_PTC_TOOLS:
+            continue
+        schema = tool.to_api_schema().get("input_schema", {})
+        props = schema.get("properties", {}) if isinstance(schema, dict) else {}
+        required = set(schema.get("required", ())) if isinstance(schema, dict) else set()
+        params: list[str] = []
+        for pname, pspec in props.items():
+            ptype = pspec.get("type", "Any") if isinstance(pspec, dict) else "Any"
+            if pname in required:
+                params.append(f"{pname}: {ptype}")
+            else:
+                params.append(f"{pname}: {ptype} = ...")
+        out_schema = tool.output_schema() if hasattr(tool, "output_schema") else None
+        ret_hint = "PtcToolOutput[Structured]" if out_schema else "PtcToolOutput"
+        lines.append(f"async def tools.{tool.name}({', '.join(params)}) -> {ret_hint}: ...")
+    return "\n".join(lines)
+
 
 def _safe_builtins(
     *,
@@ -278,6 +348,8 @@ def _safe_builtins(
     sleep_fn: Callable[[float], Coroutine[Any, Any, None]],
     print_buffer: list[str],
     print_size_state: list[int],
+    inspect_fn: Callable[..., Any] | None = None,
+    tools_help_fn: Callable[[], str] | None = None,
 ) -> dict[str, Any]:
     json_proxy = _SafeModuleProxy("json", {"loads": json.loads, "dumps": json.dumps})
     re_proxy = _SafeModuleProxy(
@@ -388,6 +460,8 @@ def _safe_builtins(
         "PermissionError": PermissionError,
         "ZeroDivisionError": ZeroDivisionError,
         "PtcToolOutput": PtcToolOutput,
+        "inspect": inspect_fn or (lambda x, label="": x),
+        "tools_help": tools_help_fn or (lambda: ""),
     }
 
 
@@ -1123,8 +1197,9 @@ class RunCodeTool(BaseTool):
     execution_group = "ptc"
 
     def is_read_only(self, arguments: RunCodeInput) -> bool:
-        # All side effects inside run_code go through individual nested tools,
-        # each checked by PermissionChecker with its own is_read_only / path / command rules.
+        # The AST interpreter itself is side-effect free; `parallel_safe = False`
+        # prevents concurrent batch execution, and every nested tool invocation
+        # is checked individually by `ptc_tool_runner` and `read_only_only`.
         del arguments
         return True
 
@@ -1136,10 +1211,13 @@ class RunCodeTool(BaseTool):
                 is_error=True,
             )
 
+        tool_registry = context.metadata.get("tool_registry")
         started = time.monotonic()
         semaphore = asyncio.Semaphore(arguments.max_concurrency)
         call_lock = asyncio.Lock()
         subcalls: list[dict[str, Any]] = []
+        inspected_images: list[Any] = []
+        inspected_contexts: list[str] = []
         parent_tool_use_id = str(context.metadata.get("tool_use_id") or "ptc")
 
         async def _invoke_nested_tool(tool_name: str, tool_args: dict[str, Any] | None = None) -> PtcToolOutput:
@@ -1148,6 +1226,18 @@ class RunCodeTool(BaseTool):
                 raise PermissionError(
                     f"Tool '{normalized}' cannot be called recursively or interactively from inside run_code."
                 )
+            if arguments.read_only_only and tool_registry is not None and hasattr(tool_registry, "get"):
+                target_tool = tool_registry.get(normalized)
+                if target_tool is not None:
+                    try:
+                        validated_args = target_tool.input_model.model_validate(dict(tool_args or {}))
+                        is_ro = target_tool.is_read_only(validated_args)
+                    except Exception:
+                        is_ro = False
+                    if not is_ro:
+                        raise PermissionError(
+                            f"Tool '{normalized}' is not read-only and is blocked because read_only_only=True."
+                        )
 
             async with call_lock:
                 if len(subcalls) >= arguments.max_tool_calls:
@@ -1173,12 +1263,39 @@ class RunCodeTool(BaseTool):
                 result_block = await runner(normalized, nested_id, dict(tool_args or {}))
 
             entry["is_error"] = bool(result_block.is_error)
+            meta = dict(result_block.result_metadata or {})
+            if getattr(result_block, "images", None):
+                inspected_images.extend(result_block.images)
             return PtcToolOutput(
                 tool_name=normalized,
                 output=result_block.content,
                 is_error=bool(result_block.is_error),
-                metadata=dict(result_block.result_metadata or {}),
+                metadata=meta,
+                structured_data=meta.get("structured_output"),
             )
+
+        def _safe_inspect(target: Any, label: str = "") -> Any:
+            tag = f" ({label})" if label else ""
+            if isinstance(target, str):
+                candidate = (context.cwd / target).resolve() if not Path(target).is_absolute() else Path(target).resolve()
+                if candidate.is_file():
+                    try:
+                        from openharness.engine.messages import ImageBlock
+
+                        img_block = ImageBlock.from_path(candidate)
+                        inspected_images.append(img_block)
+                        inspected_contexts.append(f"[PTC Inspect Image{tag}: {candidate}]")
+                        return target
+                    except Exception:
+                        pass
+            preview = _format_return_value(target)
+            if len(preview) > 2000:
+                preview = preview[:2000] + "... [truncated]"
+            inspected_contexts.append(f"[PTC Inspect{tag}]\n{preview}")
+            return target
+
+        def _tools_help() -> str:
+            return generate_tool_sdk_stubs(tool_registry)
 
         async def _safe_gather(*awaitables: Any, return_exceptions: bool = False) -> list[Any]:
             if not awaitables:
@@ -1202,7 +1319,18 @@ class RunCodeTool(BaseTool):
             sleep_fn=_safe_sleep,
             print_buffer=print_buffer,
             print_size_state=print_size_state,
+            inspect_fn=_safe_inspect,
+            tools_help_fn=_tools_help,
         )
+        builtin_keys = frozenset(builtins_ns.keys())
+        owner_key = str(arguments.state_owner or context.metadata.get("session_id") or context.cwd)
+        if arguments.reset_state:
+            reset_ptc_state(owner_key)
+        if arguments.mode == "scoped_repl" and owner_key in _SCOPED_REPL_STATES:
+            for k, v in _SCOPED_REPL_STATES[owner_key].items():
+                if k not in builtin_keys:
+                    builtins_ns[k] = v
+
         module_proxies = {
             name: builtins_ns[name]
             for name in ("json", "re", "math", "asyncio")
@@ -1258,6 +1386,14 @@ class RunCodeTool(BaseTool):
                 },
             )
 
+        if arguments.mode == "scoped_repl":
+            persisted = {
+                k: v
+                for k, v in interpreter.root_scope.values.items()
+                if k not in builtin_keys and not k.startswith("_") and not callable(v)
+            }
+            _SCOPED_REPL_STATES[owner_key] = persisted
+
         elapsed_ms = int((time.monotonic() - started) * 1000)
         stdout_text = "".join(print_buffer).strip()
         formatted_return = _format_return_value(return_value).strip()
@@ -1282,11 +1418,15 @@ class RunCodeTool(BaseTool):
         return ToolResult(
             output="\n\n".join(sections),
             is_error=False,
+            images=inspected_images,
+            additional_contexts=inspected_contexts,
             metadata={
                 "tool_calls_count": len(subcalls),
                 "tool_names_used": tool_names_used,
                 "error_count": error_count,
                 "duration_ms": elapsed_ms,
                 "ast_steps": interpreter.steps,
+                "mode": arguments.mode,
+                "inspected_count": len(inspected_contexts) + len(inspected_images),
             },
         )

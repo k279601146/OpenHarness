@@ -52,6 +52,10 @@ from openharness.tools.web_search_tool import WebSearchTool
 def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
     """Return the default built-in tool registry."""
     registry = ToolRegistry()
+    from openharness.coordinator.goal_service import GoalTool
+    from openharness.tools.ralph_tool import RalphTool
+    from openharness.tools.workflow_tool import WorkflowTool
+
     for tool in (
         BashTool(),
         AskUserQuestionTool(),
@@ -95,6 +99,9 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         ListAgentsTool(),
         InterruptAgentTool(),
         TaskBoardTool(),
+        GoalTool(),
+        WorkflowTool(),
+        RalphTool(),
         QueryMemoryTool(),
     ):
         registry.register(tool)
@@ -106,11 +113,30 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
     return registry
 
 
+def __getattr__(name: str):
+    if name == "GoalTool":
+        from openharness.coordinator.goal_service import GoalTool
+
+        return GoalTool
+    if name == "WorkflowTool":
+        from openharness.tools.workflow_tool import WorkflowTool
+
+        return WorkflowTool
+    if name == "RalphTool":
+        from openharness.tools.ralph_tool import RalphTool
+
+        return RalphTool
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
     "BaseTool",
     "GenerateAudioTool",
+    "GoalTool",
+    "RalphTool",
     "ToolExecutionContext",
     "ToolRegistry",
     "ToolResult",
+    "WorkflowTool",
     "create_default_tool_registry",
 ]

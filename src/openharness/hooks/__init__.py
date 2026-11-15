@@ -12,6 +12,8 @@ if TYPE_CHECKING:  # pragma: no cover
 
 __all__ = [
     "AggregatedHookResult",
+    "AutoReviewGuard",
+    "AutoReviewOutcome",
     "HookEvent",
     "HookExecutionContext",
     "HookExecutor",
@@ -22,6 +24,13 @@ __all__ = [
 
 
 def __getattr__(name: str):
+    if name in {"AutoReviewGuard", "AutoReviewOutcome"}:
+        from openharness.hooks.auto_review import AutoReviewGuard, AutoReviewOutcome
+
+        return {
+            "AutoReviewGuard": AutoReviewGuard,
+            "AutoReviewOutcome": AutoReviewOutcome,
+        }[name]
     if name == "HookEvent":
         from openharness.hooks.events import HookEvent
 

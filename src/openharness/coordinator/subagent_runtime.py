@@ -57,6 +57,43 @@ def _normalize_agent_name(raw_name: str | None, fallback_index: int) -> str:
     return text or f"agent-{fallback_index}"
 
 
+_SENSITIVE_KEY_PATTERN = re.compile(
+    r"(token|secret|password|passwd|api[_-]?key|authorization|cookie|jwt|credential|private[_-]?key)",
+    re.IGNORECASE,
+)
+
+
+def _truncate_preview(text: str | None, limit: int = 1200) -> str:
+    cleaned = (text or "").strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _summarize_tool_input(tool_input: dict[str, Any] | None) -> str:
+    if not isinstance(tool_input, dict) or not tool_input:
+        return ""
+    safe: dict[str, Any] = {}
+    for key, value in list(tool_input.items())[:8]:
+        key_str = str(key)
+        if _SENSITIVE_KEY_PATTERN.search(key_str):
+            safe[key_str] = "***"
+        elif isinstance(value, str):
+            safe[key_str] = _truncate_preview(value, 240)
+        elif isinstance(value, (int, float, bool)) or value is None:
+            safe[key_str] = value
+        elif isinstance(value, (list, dict)):
+            safe[key_str] = _truncate_preview(str(value), 240)
+        else:
+            safe[key_str] = _truncate_preview(str(value), 120)
+    try:
+        import json
+
+        return json.dumps(safe, ensure_ascii=False)
+    except Exception:
+        return _truncate_preview(str(safe), 480)
+
+
 @dataclass
 class SubagentRecord:
     """Tracked state for one in-process async subagent."""
@@ -77,6 +114,10 @@ class SubagentRecord:
     tool_registry: ToolRegistry | None = None
     status: SubagentStatus = "running"
     output: str = ""
+    structured_output: Any = None
+    output_schema: dict[str, Any] | None = None
+    preset: str | None = None
+    external_cli: str | None = None
     error: str | None = None
     input_tokens: int = 0
     output_tokens: int = 0
@@ -116,6 +157,9 @@ class SubagentRecord:
             "output_tokens": self.output_tokens,
             "elapsed_seconds": round(max(0.0, end - start), 2),
             "output_preview": preview,
+            "structured_output": self.structured_output,
+            "preset": self.preset,
+            "external_cli": self.external_cli,
             "error": self.error,
         }
 
@@ -368,6 +412,9 @@ class SubagentRuntime:
         parent_cancellation_token: CancellationToken | None = None,
         inherit_context: bool = False,
         inherited_history: list[ConversationMessage] | None = None,
+        output_schema: dict[str, Any] | None = None,
+        preset: str | None = None,
+        external_cli: str | None = None,
     ) -> SubagentRecord:
         """Spawn a new asynchronous in-process subagent and return immediately."""
         next_depth = parent_depth + 1
@@ -394,8 +441,15 @@ class SubagentRuntime:
             base_name = f"{base_name}-{suffix}"
             candidate_id = f"{prefix}{base_name}"
 
+        resolved_preset = None
+        if preset or subagent_type:
+            from openharness.coordinator.agent_preset import DEFAULT_PRESET_REGISTRY
+
+            resolved_preset = DEFAULT_PRESET_REGISTRY.get(preset or subagent_type)
+
         resolved_model = (
             model
+            or (resolved_preset.model if resolved_preset and resolved_preset.model else None)
             or (definition.model if definition and definition.model else None)
             or self._default_model
         )
@@ -403,10 +457,20 @@ class SubagentRuntime:
             1,
             int(
                 max_turns
+                or (resolved_preset.max_turns if resolved_preset and resolved_preset.max_turns else None)
                 or (definition.max_turns if definition and definition.max_turns else None)
                 or self._default_max_turns
             ),
         )
+        effective_prompt = prompt
+        if output_schema:
+            schema_json = json.dumps(output_schema, ensure_ascii=False, indent=2)
+            effective_prompt = (
+                f"{prompt}\n\n"
+                "## Required Structured Output Contract\n"
+                "Your final response MUST include a valid JSON block matching the following JSON Schema:\n"
+                f"```json\n{schema_json}\n```"
+            )
         initial_history: list[ConversationMessage] = []
         if inherit_context and inherited_history:
             for msg in inherited_history:
@@ -416,10 +480,10 @@ class SubagentRuntime:
         has_inherited_turns = bool(initial_history)
         if initial_history and initial_history[-1].role == "user":
             merged_blocks = list(initial_history[-1].content)
-            merged_blocks.append(TextBlock(text=f"\n\n[Forked Subtask Assignment]\n{prompt}"))
+            merged_blocks.append(TextBlock(text=f"\n\n[Forked Subtask Assignment]\n{effective_prompt}"))
             initial_history[-1] = ConversationMessage(role="user", content=merged_blocks)
         else:
-            initial_history.append(ConversationMessage.from_user_text(prompt))
+            initial_history.append(ConversationMessage.from_user_text(effective_prompt))
 
         child_registry = self._build_child_registry(definition, next_depth=next_depth)
         child_prompt = self._build_child_system_prompt(
@@ -430,6 +494,17 @@ class SubagentRuntime:
             subagent_type=resolved_type,
             inherit_context=has_inherited_turns,
         )
+        if resolved_preset and resolved_preset.system_prompt_sections:
+            child_prompt = child_prompt + "\n\n" + "\n\n".join(resolved_preset.system_prompt_sections)
+
+        resolved_external_cli = external_cli or (resolved_preset.external_cli if resolved_preset else None)
+        record_metadata: dict[str, Any] = {
+            "parent_cancellation_token": parent_cancellation_token,
+            "inherit_context": has_inherited_turns,
+            "raw_prompt": prompt,
+        }
+        if resolved_preset is not None:
+            record_metadata = resolved_preset.apply_to_metadata(record_metadata)
 
         record = SubagentRecord(
             agent_id=candidate_id,
@@ -445,10 +520,10 @@ class SubagentRuntime:
             tool_registry=child_registry,
             history=initial_history,
             started_at=time.time(),
-            metadata={
-                "parent_cancellation_token": parent_cancellation_token,
-                "inherit_context": has_inherited_turns,
-            },
+            output_schema=output_schema,
+            preset=resolved_preset.name if resolved_preset else preset,
+            external_cli=resolved_external_cli,
+            metadata=record_metadata,
         )
         self._records[candidate_id] = record
         self._order.append(candidate_id)
@@ -466,6 +541,8 @@ class SubagentRuntime:
                 "subagent_type": record.subagent_type,
                 "model": record.model,
                 "inherit_context": has_inherited_turns,
+                "description": record.description,
+                "prompt_preview": _truncate_preview(prompt, 2000),
             },
         )
         record.task = asyncio.create_task(
@@ -512,7 +589,12 @@ class SubagentRuntime:
                 message=f"向运行中子智能体 {record.agent_id} 发送实时转向指令",
                 status="running",
                 agent=record.agent_id,
-                metadata={"agent_id": record.agent_id, "message_id": inbox_msg.id},
+                metadata={
+                    "agent_id": record.agent_id,
+                    "message_id": inbox_msg.id,
+                    "source": source,
+                    "steer_message": _truncate_preview(message, 1000),
+                },
             )
             return {
                 "delivery": "steered",
@@ -533,7 +615,11 @@ class SubagentRuntime:
             message=f"唤醒子智能体 {record.agent_id} 继续执行任务",
             status="running",
             agent=record.agent_id,
-            metadata={"agent_id": record.agent_id, "source": source},
+            metadata={
+                "agent_id": record.agent_id,
+                "source": source,
+                "steer_message": _truncate_preview(message, 1000),
+            },
         )
         record.task = asyncio.create_task(
             self._execute_record(record, is_resume=True),
@@ -654,6 +740,7 @@ class SubagentRuntime:
             {
                 **rec.to_summary(),
                 "output": rec.output,
+                "structured_output": rec.structured_output,
             }
             for rec in target_records
             if not rec.is_running
@@ -725,6 +812,9 @@ class SubagentRuntime:
         child_metadata: dict[str, Any] = {
             k: v for k, v in self._base_tool_metadata.items() if k not in _TRANSIENT_METADATA_KEYS
         }
+        for preset_key in ("active_agent_preset", "preset_allowed_tools", "preset_disallowed_tools", "allowed_user_skill_ids", "preset_read_only"):
+            if preset_key in record.metadata:
+                child_metadata[preset_key] = record.metadata[preset_key]
         child_metadata.update(
             {
                 "subagent_runtime": self,
@@ -757,37 +847,90 @@ class SubagentRuntime:
         last_assistant_text = ""
         last_error: str | None = None
         terminal_status: SubagentStatus = "completed"
+        tool_started_at: dict[str, float] = {}
         try:
-            while True:
-                async for event, _usage in run_query(context, record.history):
-                    if isinstance(event, AssistantTurnComplete):
-                        record.turns_used += 1
-                        if event.usage is not None:
-                            record.input_tokens += int(event.usage.input_tokens or 0)
-                            record.output_tokens += int(event.usage.output_tokens or 0)
-                        text = event.message.text.strip()
-                        if text:
-                            last_assistant_text = text
-                    elif isinstance(event, ToolExecutionStarted):
-                        record.tool_calls_count += 1
-                        self._emit_event(
-                            category="subagent_tool",
-                            message=f"[{record.agent_id}] 调用工具 {event.tool_name}",
-                            status="running",
-                            agent=record.agent_id,
-                            tool_name=event.tool_name,
-                            tool_use_id=event.tool_use_id,
-                            metadata={
-                                "agent_id": record.agent_id,
-                                "tool_name": event.tool_name,
-                                "tool_use_id": event.tool_use_id,
-                            },
-                        )
-                    elif isinstance(event, ToolExecutionCompleted):
-                        if event.is_error:
+            if record.external_cli:
+                # External CLI coding-agent adapter (`subagent-oar` pattern)
+                import shlex
+                from openharness.utils.shell import create_shell_subprocess
+
+                raw_prompt = str(record.metadata.get("raw_prompt") or "")
+                cli_spec = record.external_cli.strip()
+                if "{prompt}" in cli_spec:
+                    cmd_str = cli_spec.replace("{prompt}", shlex.quote(raw_prompt))
+                else:
+                    cmd_str = f"{cli_spec} {shlex.quote(raw_prompt)}"
+                proc = await create_shell_subprocess(
+                    cmd_str,
+                    cwd=self._cwd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout_b, stderr_b = await proc.communicate()
+                record.turns_used += 1
+                out_str = stdout_b.decode("utf-8", errors="replace").strip()
+                err_str = stderr_b.decode("utf-8", errors="replace").strip()
+                last_assistant_text = out_str or err_str
+                if proc.returncode != 0:
+                    last_error = err_str or f"External CLI exited with code {proc.returncode}"
+            else:
+                while True:
+                    async for event, _usage in run_query(context, record.history):
+                        if isinstance(event, AssistantTurnComplete):
+                            record.turns_used += 1
+                            turn_in = int(event.usage.input_tokens or 0) if event.usage is not None else 0
+                            turn_out = int(event.usage.output_tokens or 0) if event.usage is not None else 0
+                            record.input_tokens += turn_in
+                            record.output_tokens += turn_out
+                            text = event.message.text.strip()
+                            if text:
+                                last_assistant_text = text
+                            tool_names_in_turn = [tu.name for tu in getattr(event.message, "tool_uses", ())]
+                            if text or tool_names_in_turn:
+                                self._emit_event(
+                                    category="subagent_turn",
+                                    message=f"[{record.agent_id}] 第 {record.turns_used} 轮模型响应",
+                                    status="running",
+                                    agent=record.agent_id,
+                                    metadata={
+                                        "agent_id": record.agent_id,
+                                        "turn_index": record.turns_used,
+                                        "text_preview": _truncate_preview(text, 3000),
+                                        "tool_calls_in_turn": len(tool_names_in_turn),
+                                        "tool_names": tool_names_in_turn[:8],
+                                        "input_tokens": turn_in,
+                                        "output_tokens": turn_out,
+                                    },
+                                )
+                        elif isinstance(event, ToolExecutionStarted):
+                            record.tool_calls_count += 1
+                            if event.tool_use_id:
+                                tool_started_at[event.tool_use_id] = time.monotonic()
                             self._emit_event(
-                                category="subagent_tool_error",
-                                message=f"[{record.agent_id}] 工具 {event.tool_name} 返回错误",
+                                category="subagent_tool",
+                                message=f"[{record.agent_id}] 调用工具 {event.tool_name}",
+                                status="running",
+                                agent=record.agent_id,
+                                tool_name=event.tool_name,
+                                tool_use_id=event.tool_use_id,
+                                metadata={
+                                    "agent_id": record.agent_id,
+                                    "tool_name": event.tool_name,
+                                    "tool_use_id": event.tool_use_id,
+                                    "tool_input_preview": _summarize_tool_input(event.tool_input),
+                                    "rationale": _truncate_preview(event.rationale, 400) if event.rationale else "",
+                                },
+                            )
+                        elif isinstance(event, ToolExecutionCompleted):
+                            started_t = tool_started_at.pop(event.tool_use_id, None) if event.tool_use_id else None
+                            duration_ms = int(max(0.0, (time.monotonic() - started_t) * 1000)) if started_t is not None else None
+                            self._emit_event(
+                                category="subagent_tool_error" if event.is_error else "subagent_tool_result",
+                                message=(
+                                    f"[{record.agent_id}] 工具 {event.tool_name} 返回错误"
+                                    if event.is_error
+                                    else f"[{record.agent_id}] 工具 {event.tool_name} 执行完成"
+                                ),
                                 status="info",
                                 agent=record.agent_id,
                                 tool_name=event.tool_name,
@@ -796,18 +939,21 @@ class SubagentRuntime:
                                     "agent_id": record.agent_id,
                                     "tool_name": event.tool_name,
                                     "tool_use_id": event.tool_use_id,
+                                    "is_error": bool(event.is_error),
+                                    "output_preview": _truncate_preview(event.output, 2000),
+                                    **({"duration_ms": duration_ms} if duration_ms is not None else {}),
                                 },
                             )
-                    elif isinstance(event, ErrorEvent):
-                        last_error = event.message
+                        elif isinstance(event, ErrorEvent):
+                            last_error = event.message
 
-                if record.cancellation_token.is_cancelled():
-                    break
-                queued_turn = record.inbox.claim_next_turn()
-                if queued_turn is None:
-                    break
-                follow_text = queued_turn.content if isinstance(queued_turn.content, str) else str(queued_turn.content)
-                record.history.append(ConversationMessage.from_user_text(follow_text))
+                    if record.cancellation_token.is_cancelled():
+                        break
+                    queued_turn = record.inbox.claim_next_turn()
+                    if queued_turn is None:
+                        break
+                    follow_text = queued_turn.content if isinstance(queued_turn.content, str) else str(queued_turn.content)
+                    record.history.append(ConversationMessage.from_user_text(follow_text))
 
             if record.cancellation_token.is_cancelled():
                 terminal_status = "interrupted"
@@ -819,6 +965,17 @@ class SubagentRuntime:
             else:
                 terminal_status = "completed"
                 record.output = last_assistant_text or "(no output)"
+                if record.output_schema:
+                    from openharness.coordinator.agent_preset import extract_and_validate_structured_output
+
+                    parsed_out, schema_err = extract_and_validate_structured_output(
+                        record.output,
+                        record.output_schema,
+                    )
+                    if schema_err is None:
+                        record.structured_output = parsed_out
+                    else:
+                        record.metadata["output_schema_validation_error"] = schema_err
         except asyncio.CancelledError:
             terminal_status = "interrupted"
             record.output = last_assistant_text or "Subagent cancelled."
@@ -885,6 +1042,7 @@ class SubagentRuntime:
                 agent=record.agent_id,
                 metadata={
                     **record.to_summary(),
+                    "output_detail": _truncate_preview(record.output, 8000),
                     "is_resume": is_resume,
                 },
             )

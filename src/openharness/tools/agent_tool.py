@@ -43,6 +43,18 @@ class AgentToolInput(BaseModel):
             "context isolation."
         ),
     )
+    output_schema: dict[str, object] | None = Field(
+        default=None,
+        description="Optional JSON Schema dict that the subagent's final output must conform to.",
+    )
+    preset: str | None = Field(
+        default=None,
+        description="Optional AgentPreset name (e.g. 'researcher', 'coder', 'short_drama', 'voice').",
+    )
+    external_cli: str | None = Field(
+        default=None,
+        description="Optional external CLI coding-agent command (subagent-oar adapter).",
+    )
     command: str | None = Field(default=None, description="Override spawn command")
     team: str | None = Field(default=None, description="Optional team to attach the agent to")
     mode: str = Field(
@@ -95,6 +107,9 @@ class AgentTool(BaseTool):
                         parent_cancellation_token=context.cancellation_token,
                         inherit_context=arguments.inherit_context,
                         inherited_history=context.metadata.get("parent_completed_messages"),
+                        output_schema=arguments.output_schema,
+                        preset=arguments.preset,
+                        external_cli=arguments.external_cli,
                     )
                 except ValueError as exc:
                     return ToolResult(output=str(exc), is_error=True)

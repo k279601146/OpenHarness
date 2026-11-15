@@ -407,6 +407,20 @@ def _has_mcp_context(context: QueryContext) -> bool:
 
 def _tool_schema_selected_for_context(tool_name: str, context: QueryContext) -> bool:
     metadata = context.tool_metadata
+    if isinstance(metadata, dict):
+        disallowed = {str(x).strip().lower() for x in (metadata.get("preset_disallowed_tools") or ()) if str(x).strip()}
+        if tool_name.lower() in disallowed:
+            return False
+        allowed = {str(x).strip().lower() for x in (metadata.get("preset_allowed_tools") or ()) if str(x).strip()}
+        if allowed and tool_name.lower() not in allowed:
+            return False
+
+    tool = context.tool_registry.get(tool_name)
+    if tool is not None:
+        predicate_result = tool.when(context)
+        if predicate_result is not None:
+            return bool(predicate_result)
+
     if tool_name in CORE_TOOL_SCHEMA_NAMES:
         return True
     if tool_name.startswith("connector__"):
@@ -894,6 +908,14 @@ def _update_plan_mode(tool_metadata: dict[str, object] | None, mode: str) -> Non
     tool_metadata["permission_mode"] = mode
 
 
+_TOOL_CARRYOVER_HANDLERS: dict[str, Callable[..., None]] = {}
+
+
+def register_tool_carryover_handler(tool_name: str, handler: Callable[..., None]) -> None:
+    """Register a custom post-execute carryover handler for *tool_name*."""
+    _TOOL_CARRYOVER_HANDLERS[tool_name.strip().lower()] = handler
+
+
 def _record_tool_carryover(
     context: QueryContext,
     *,
@@ -906,8 +928,27 @@ def _record_tool_carryover(
 ) -> None:
     if is_error:
         return
+    custom_handler = _TOOL_CARRYOVER_HANDLERS.get(tool_name.strip().lower())
+    if custom_handler is not None:
+        custom_handler(
+            context,
+            tool_name=tool_name,
+            tool_input=tool_input,
+            tool_output=tool_output,
+            tool_result_metadata=tool_result_metadata,
+            resolved_file_path=resolved_file_path,
+        )
     if resolved_file_path is not None:
         _remember_active_artifact(context.tool_metadata, resolved_file_path)
+        if tool_name in {"write_file", "edit_file", "apply_patch"} and (
+            "SKILL.md" in resolved_file_path or "/skills/" in resolved_file_path.replace("\\", "/")
+        ):
+            try:
+                from openharness.skills.loader import invalidate_skill_cache
+
+                invalidate_skill_cache()
+            except Exception:
+                pass
     if tool_name == "read_file" and resolved_file_path is not None:
         offset = int(tool_input.get("offset") or 0)
         limit = int(tool_input.get("limit") or 200)
@@ -1094,11 +1135,28 @@ _REPEAT_TOOL_PREVIEW_LIMIT = 500
 _REPEAT_TOOL_THRESHOLDS = (3, 5, 8)
 
 
+DEFAULT_EXCLUDED_REPEAT_TOOLS: frozenset[str] = frozenset(
+    {"todo_write", "task_board", "plan_enter", "plan_exit", "ask_user_question", "goal"}
+)
+
+
 class RepeatToolTracker:
     """Detect consecutive identical tool invocations and emit escalation reminders."""
 
-    def __init__(self, *, thresholds: tuple[int, ...] = _REPEAT_TOOL_THRESHOLDS) -> None:
+    def __init__(
+        self,
+        *,
+        thresholds: tuple[int, ...] = _REPEAT_TOOL_THRESHOLDS,
+        exclude: set[str] | frozenset[str] | None = None,
+        include: set[str] | frozenset[str] | None = None,
+    ) -> None:
         self._thresholds = thresholds
+        self._exclude = (
+            {item.strip().lower() for item in exclude}
+            if exclude is not None
+            else set(DEFAULT_EXCLUDED_REPEAT_TOOLS)
+        )
+        self._include = {item.strip().lower() for item in include} if include is not None else None
         self._last_key: tuple[str, str] | None = None
         self._streak = 0
 
@@ -1106,7 +1164,18 @@ class RepeatToolTracker:
     def streak(self) -> int:
         return self._streak
 
+    def reset(self) -> None:
+        """Reset repeat tracking (e.g., when a new user steer/prompt arrives)."""
+        self._last_key = None
+        self._streak = 0
+
     def record_call(self, tool_name: str, tool_input: dict[str, Any] | Any) -> str | None:
+        normalized_name = (tool_name or "").strip().lower()
+        if normalized_name in self._exclude:
+            # Transparent bookkeeping call: neither increments nor resets the active streak
+            return None
+        if self._include is not None and normalized_name not in self._include:
+            return None
         try:
             canonical_args = json.dumps(
                 tool_input if tool_input is not None else {},
@@ -1324,6 +1393,7 @@ async def run_query(
             yield sub_evt, None
         claimed_steers = inbox.claim_next_step()
         if claimed_steers:
+            repeat_tracker.reset()
             _append_inbox_to_messages(messages, claimed_steers)
             for steered_msg in claimed_steers:
                 if steered_msg.source == "user":
@@ -1355,6 +1425,30 @@ async def run_query(
         compacted_messages, was_compacted = last_compaction_result
         if compacted_messages is not messages:
             messages[:] = compacted_messages
+        if was_compacted and isinstance(context.tool_metadata, dict):
+            tracker = context.tool_metadata.get("prompt_context_tracker")
+            if tracker is not None and hasattr(tracker, "notify_compacted"):
+                tracker.notify_compacted()
+        if isinstance(context.tool_metadata, dict):
+            tracker = context.tool_metadata.get("prompt_context_tracker")
+            dyn_snapshot = context.tool_metadata.get("dynamic_prompt_context_snapshot")
+            if tracker is not None and dyn_snapshot is not None and hasattr(tracker, "consume_if_changed"):
+                incremental_ctx = tracker.consume_if_changed(dyn_snapshot)
+                if incremental_ctx:
+                    messages.append(ConversationMessage.from_user_text(incremental_ctx))
+        if context.hook_executor is not None:
+            pre_step = await context.hook_executor.execute(
+                HookEvent.PRE_STEP,
+                {
+                    "event": HookEvent.PRE_STEP.value,
+                    "turn_index": turn_count,
+                    "model": context.model,
+                    "message_count": len(messages),
+                },
+            )
+            if pre_step.blocked:
+                yield ErrorEvent(message=pre_step.reason or "pre_step hook blocked turn"), None
+                return
         # ---------------------------------------------------------------
 
         is_e2b_ws = str((context.tool_metadata or {}).get("workspace_backend") or "").lower() == "e2b"
@@ -1397,6 +1491,16 @@ async def run_query(
         except Exception as exc:
             error_msg = str(exc)
             failure_detail = _safe_request_failure_detail(exc)
+            if context.hook_executor is not None:
+                await context.hook_executor.execute(
+                    HookEvent.REQUEST_ERROR,
+                    {
+                        "event": HookEvent.REQUEST_ERROR.value,
+                        "turn_index": turn_count,
+                        "model": context.model,
+                        "error": error_msg,
+                    },
+                )
             if _is_completion_token_limit_error(exc):
                 supported_limit = _extract_completion_token_limit(exc)
                 if supported_limit is not None and effective_max_tokens > supported_limit:
@@ -1588,6 +1692,14 @@ async def run_query(
                     return
                 if inbox.has_next_step():
                     continue
+
+            if isinstance(context.tool_metadata, dict):
+                goal_service = context.tool_metadata.get("goal_service")
+                if goal_service is not None and hasattr(goal_service, "claim_continuation_prompt"):
+                    continuation_prompt = goal_service.claim_continuation_prompt()
+                    if continuation_prompt:
+                        messages.append(ConversationMessage.from_user_text(continuation_prompt))
+                        continue
 
             if context.hook_executor is not None:
                 await context.hook_executor.execute(
@@ -1998,9 +2110,16 @@ async def run_query(
         if repeat_reminder and tool_results:
             last_result_block = tool_results[-1]
             tool_results[-1] = last_result_block.model_copy(
-                update={"content": f"{last_result_block.content}\n\n{repeat_reminder}"}
+                update={
+                    "additional_contexts": [*last_result_block.additional_contexts, repeat_reminder],
+                }
             )
-        messages.append(ConversationMessage(role="user", content=tool_results))
+        turn_content_blocks: list[Any] = list(tool_results)
+        for tr_block in tool_results:
+            for extra_ctx in getattr(tr_block, "additional_contexts", ()) or ():
+                if extra_ctx and str(extra_ctx).strip():
+                    turn_content_blocks.append(TextBlock(text=str(extra_ctx)))
+        messages.append(ConversationMessage(role="user", content=turn_content_blocks))
         if isinstance(context.tool_metadata, dict):
             context.tool_metadata.pop("parent_completed_messages", None)
 
@@ -2032,6 +2151,7 @@ async def _execute_tool_call(
                 progress_callback=progress_callback,
             )
 
+    pre_additional_contexts: list[str] = []
     if context.hook_executor is not None:
         pre_hooks = await context.hook_executor.execute(
             HookEvent.PRE_TOOL_USE,
@@ -2042,7 +2162,11 @@ async def _execute_tool_call(
                 tool_use_id=tool_use_id,
                 content=pre_hooks.reason or f"pre_tool_use hook blocked {tool_name}",
                 is_error=True,
+                additional_contexts=list(pre_hooks.additional_contexts),
             )
+        if pre_hooks.modified_input is not None:
+            tool_input = _clean_tool_input_for_execution(context, tool_name, pre_hooks.modified_input)
+        pre_additional_contexts.extend(pre_hooks.additional_contexts)
 
     log.debug("tool_call start: %s id=%s", tool_name, tool_use_id)
 
@@ -2211,24 +2335,74 @@ async def _execute_tool_call(
                 )
 
             ptc_runner = _run_ptc_nested_tool
-        result = await tool.execute(
-            parsed_input,
-            ToolExecutionContext(
-                cwd=_concrete_path(context.cwd),
-                metadata={
-                    "tool_registry": context.tool_registry,
-                    "ask_user_prompt": context.ask_user_prompt,
-                    "tool_name": tool_name,
-                    "tool_use_id": tool_use_id,
-                    **tool_metadata,
-                    "media_billing_reservation": media_reservation,
-                    **({"ptc_tool_runner": ptc_runner} if ptc_runner is not None else {}),
-                },
-                hook_executor=context.hook_executor,
-                progress_callback=progress_callback,
-                cancellation_token=context.cancellation_token,
-            ),
+        exec_context = ToolExecutionContext(
+            cwd=_concrete_path(context.cwd),
+            metadata={
+                "tool_registry": context.tool_registry,
+                "ask_user_prompt": context.ask_user_prompt,
+                "tool_name": tool_name,
+                "tool_use_id": tool_use_id,
+                **tool_metadata,
+                "media_billing_reservation": media_reservation,
+                **({"ptc_tool_runner": ptc_runner} if ptc_runner is not None else {}),
+            },
+            hook_executor=context.hook_executor,
+            progress_callback=progress_callback,
+            cancellation_token=context.cancellation_token,
         )
+        if context.hook_executor is not None:
+            around_hooks = await context.hook_executor.execute(
+                HookEvent.AROUND_TOOL_EXECUTE,
+                {"tool_name": tool_name, "tool_input": tool_input, "event": HookEvent.AROUND_TOOL_EXECUTE.value},
+            )
+            if around_hooks.blocked:
+                return ToolResultBlock(
+                    tool_use_id=tool_use_id,
+                    content=around_hooks.reason or f"around_tool_execute hook blocked {tool_name}",
+                    is_error=True,
+                    additional_contexts=[*pre_additional_contexts, *around_hooks.additional_contexts],
+                )
+            pre_additional_contexts.extend(around_hooks.additional_contexts)
+
+        async def _invoke_tool(args: Any, ctx: ToolExecutionContext) -> ToolResult:
+            return await tool.execute(args, ctx)
+
+        call_chain = _invoke_tool
+        for mw in reversed(getattr(context.tool_registry, "middlewares", ())):
+            prev_fn = call_chain
+
+            async def _wrapped(
+                args: Any,
+                ctx: ToolExecutionContext,
+                _mw: Any = mw,
+                _next: Any = prev_fn,
+            ) -> ToolResult:
+                return await _mw(tool, args, ctx, _next)
+
+            call_chain = _wrapped
+
+        effective_timeout_ms = getattr(tool, "timeout_ms", None)
+        if effective_timeout_ms is None and isinstance(tool_metadata, dict):
+            raw_default_timeout = tool_metadata.get("default_tool_timeout_ms")
+            if isinstance(raw_default_timeout, (int, float)) and raw_default_timeout > 0:
+                effective_timeout_ms = int(raw_default_timeout)
+
+        if effective_timeout_ms is not None and effective_timeout_ms > 0:
+            try:
+                result = await asyncio.wait_for(
+                    call_chain(parsed_input, exec_context),
+                    timeout=effective_timeout_ms / 1000.0,
+                )
+            except asyncio.TimeoutError:
+                result = ToolResult(
+                    output=f"[TOOL_TIMEOUT] Tool '{tool_name}' timed out after {effective_timeout_ms}ms",
+                    is_error=True,
+                    metadata={"error_code": "TOOL_TIMEOUT", "timeout_ms": effective_timeout_ms},
+                )
+        else:
+            result = await call_chain(parsed_input, exec_context)
+
+        result = tool.project_content(result, exec_context)
     except (QueryCancelled, asyncio.CancelledError):
         if media_reservation and hook is not None and hasattr(hook, "release_media_tool_usage"):
             try:
@@ -2285,6 +2459,8 @@ async def _execute_tool_call(
         if is_e2b_workspace
         else None
     )
+    result = tool.finalize_content(result, exec_context)
+    result_metadata = dict(result.metadata or {})
     if skip_inline_offload:
         inline_output, artifact_path = result.output, None
     else:
@@ -2304,24 +2480,29 @@ async def _execute_tool_call(
             if is_e2b_workspace and sandbox_ws_dir
             else str(artifact_path),
         )
+    post_additional_contexts: list[str] = [
+        *pre_additional_contexts,
+        *list(getattr(result, "additional_contexts", ()) or ()),
+    ]
     tool_result = ToolResultBlock(
         tool_use_id=tool_use_id,
         content=inline_output,
         is_error=result.is_error,
         images=list(result.images or ()),
         result_metadata=result_metadata,
+        additional_contexts=post_additional_contexts,
     )
     _record_tool_carryover(
         context,
         tool_name=tool_name,
         tool_input=tool_input,
         tool_output=tool_result.content,
-        tool_result_metadata=result.metadata,
+        tool_result_metadata=result_metadata,
         is_error=tool_result.is_error,
         resolved_file_path=_file_path,
     )
     if context.hook_executor is not None:
-        await context.hook_executor.execute(
+        post_hooks = await context.hook_executor.execute(
             HookEvent.POST_TOOL_USE,
             {
                 "tool_name": tool_name,
@@ -2331,6 +2512,15 @@ async def _execute_tool_call(
                 "event": HookEvent.POST_TOOL_USE.value,
             },
         )
+        if post_hooks.additional_contexts:
+            tool_result = tool_result.model_copy(
+                update={
+                    "additional_contexts": [
+                        *tool_result.additional_contexts,
+                        *post_hooks.additional_contexts,
+                    ]
+                }
+            )
     return tool_result
 
 

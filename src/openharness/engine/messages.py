@@ -245,6 +245,7 @@ class ToolResultBlock(BaseModel):
     is_error: bool = False
     images: list[ImageBlock] = Field(default_factory=list)
     result_metadata: dict[str, Any] = Field(default_factory=dict)
+    additional_contexts: list[str] = Field(default_factory=list)
     cache_control: dict[str, Any] | None = None
 
 

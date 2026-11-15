@@ -10,9 +10,12 @@ class HookEvent(str, Enum):
 
     SESSION_START = "session_start"
     SESSION_END = "session_end"
+    PRE_STEP = "pre_step"
+    REQUEST_ERROR = "request_error"
     PRE_COMPACT = "pre_compact"
     POST_COMPACT = "post_compact"
     PRE_TOOL_USE = "pre_tool_use"
+    AROUND_TOOL_EXECUTE = "around_tool_execute"
     POST_TOOL_USE = "post_tool_use"
     USER_PROMPT_SUBMIT = "user_prompt_submit"
     NOTIFICATION = "notification"

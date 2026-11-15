@@ -15,10 +15,32 @@ from openharness.skills._frontmatter import (
     parse_skill_metadata,
 )
 from openharness.skills.bundled import get_bundled_skills
-from openharness.skills.registry import SkillRegistry
+from openharness.skills.registry import SkillProviderObservation, SkillRegistry
 from openharness.skills.types import SkillDefinition
 
 logger = logging.getLogger(__name__)
+
+_SKILL_REGISTRY_CACHE: dict[tuple[object, ...], tuple[float, SkillRegistry]] = {}
+_SKILL_CACHE_EPOCH = 0
+
+
+def invalidate_skill_cache() -> None:
+    """Synchronously invalidate cached skill registries (e.g. after SKILL.md write/edit)."""
+    global _SKILL_CACHE_EPOCH
+    _SKILL_CACHE_EPOCH += 1
+    _SKILL_REGISTRY_CACHE.clear()
+
+
+def _dir_mtime_fingerprint(paths: Iterable[str | Path]) -> float:
+    latest = 0.0
+    for p in paths:
+        try:
+            resolved = Path(p)
+            if resolved.exists():
+                latest = max(latest, resolved.stat().st_mtime)
+        except OSError:
+            continue
+    return latest
 
 _USER_COMPAT_SKILL_DIRS = (
     (".claude", "skills"),
@@ -107,6 +129,54 @@ def load_skill_registry(
                 continue
             for skill in plugin.skills:
                 registry.register(skill)
+    return registry
+
+
+def get_cached_skill_registry(
+    cwd: str | Path | None = None,
+    *,
+    extra_skill_dirs: Iterable[str | Path] | None = None,
+    extra_plugin_roots: Iterable[str | Path] | None = None,
+    allowed_user_skill_ids: Iterable[str] | None = None,
+    settings=None,
+    include_default_user_skills: bool = True,
+    include_default_plugin_roots: bool = True,
+) -> SkillRegistry:
+    """Return a cached `SkillRegistry` that automatically invalidates on directory mtime or write hooks."""
+    extra_dirs_tuple = tuple(str(p) for p in (extra_skill_dirs or ()))
+    extra_plugins_tuple = tuple(str(p) for p in (extra_plugin_roots or ()))
+    allowed_tuple = tuple(sorted(str(x) for x in allowed_user_skill_ids)) if allowed_user_skill_ids is not None else None
+    cwd_str = str(Path(cwd).resolve()) if cwd is not None else ""
+    key = (
+        _SKILL_CACHE_EPOCH,
+        cwd_str,
+        extra_dirs_tuple,
+        extra_plugins_tuple,
+        allowed_tuple,
+        bool(include_default_user_skills),
+        bool(include_default_plugin_roots),
+    )
+    watched_dirs: list[str | Path] = list(extra_dirs_tuple)
+    if cwd_str:
+        for rel in _DEFAULT_PROJECT_SKILL_DIRS:
+            watched_dirs.append(Path(cwd_str) / rel)
+    if include_default_user_skills:
+        watched_dirs.extend(get_user_skill_dirs())
+    current_mtime = _dir_mtime_fingerprint(watched_dirs)
+    cached = _SKILL_REGISTRY_CACHE.get(key)
+    if cached is not None and cached[0] >= current_mtime:
+        return cached[1]
+
+    registry = load_skill_registry(
+        cwd,
+        extra_skill_dirs=extra_skill_dirs,
+        extra_plugin_roots=extra_plugin_roots,
+        allowed_user_skill_ids=allowed_user_skill_ids,
+        settings=settings,
+        include_default_user_skills=include_default_user_skills,
+        include_default_plugin_roots=include_default_plugin_roots,
+    )
+    _SKILL_REGISTRY_CACHE[key] = (current_mtime, registry)
     return registry
 
 

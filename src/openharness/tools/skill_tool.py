@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from openharness.skills import load_skill_registry
+from openharness.skills import get_cached_skill_registry, load_skill_registry
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.tools.sandbox_workspace import (
     ensure_skill_installed_in_sandbox,
@@ -73,7 +73,7 @@ class SkillTool(BaseTool):
                     "metadata": {"skill": arguments.name},
                 }
             )
-        registry = load_skill_registry(
+        registry = get_cached_skill_registry(
             context.cwd,
             extra_skill_dirs=context.metadata.get("extra_skill_dirs"),
             extra_plugin_roots=context.metadata.get("extra_plugin_roots"),

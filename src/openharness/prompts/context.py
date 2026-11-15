@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 import functools
+import hashlib
 import logging
 from pathlib import Path
 from typing import Iterable
@@ -23,6 +25,93 @@ from openharness.prompts.system_prompt import build_system_prompt
 from openharness.skills.loader import load_skill_registry
 
 logger = logging.getLogger("PromptContext")
+
+
+@dataclasses.dataclass(frozen=True)
+class PromptSection:
+    """Ordered static section of a system prompt (KV-cache friendly)."""
+
+    id: str
+    content: str
+    order: int = 100
+
+
+@dataclasses.dataclass(frozen=True)
+class PromptContextSnapshot:
+    """Dynamic context snapshot separated from the static system prompt."""
+
+    content: str
+    digest: str
+
+    @classmethod
+    def from_sections(cls, sections: Iterable[str]) -> "PromptContextSnapshot":
+        text = "\n\n".join(s.strip() for s in sections if s and s.strip())
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16] if text else ""
+        return cls(content=text, digest=digest)
+
+
+class PromptContextTracker:
+    """Tracks emitted dynamic PromptContext snapshots to preserve prefix KV cache.
+
+    Following DeepSeek Harness `PromptContext` semantics, dynamic context is only
+    emitted after retained history when its snapshot changes or after compaction.
+    """
+
+    def __init__(self) -> None:
+        self._last_digest: str = ""
+        self._compaction_epoch: int = 0
+        self._last_emitted_epoch: int = -1
+
+    def notify_compacted(self) -> None:
+        """Mark that history was compacted so the next step re-anchors context."""
+        self._compaction_epoch += 1
+
+    def consume_if_changed(self, snapshot: PromptContextSnapshot) -> str | None:
+        """Return formatted incremental context message only when changed or post-compaction."""
+        if not snapshot.content:
+            return None
+        if snapshot.digest == self._last_digest and self._last_emitted_epoch == self._compaction_epoch:
+            return None
+        self._last_digest = snapshot.digest
+        self._last_emitted_epoch = self._compaction_epoch
+        return f"<prompt-context digest=\"{snapshot.digest}\">\n{snapshot.content}\n</prompt-context>"
+
+
+def format_untrusted_session_reference(
+    label: str,
+    content: str,
+    *,
+    cwd: str | Path | None = None,
+    session_id: str | None = None,
+    max_chars: int = 8_000,
+) -> str:
+    """Format a cross-session reference as an immutable, injection-escaped snapshot.
+
+    Escapes `<` as `\\u003c` so embedded tags cannot break out of the untrusted
+    boundary, and spills oversized content to disk when `cwd` is provided.
+    """
+    safe_label = "".join(ch for ch in (label or "session") if ch.isalnum() or ch in ("-", "_", ".", ":"))[:80] or "session"
+    raw_text = content or ""
+    spill_hint = ""
+    if len(raw_text) > max_chars:
+        if cwd is not None:
+            from openharness.services.tool_outputs import save_spill_text
+
+            ref = save_spill_text(
+                Path(cwd),
+                raw_text,
+                prefix=f"session_ref_{safe_label}",
+                session_id=session_id,
+            )
+            spill_hint = f"\n[Full reference spilled to {ref.locator} ({ref.bytes} bytes). {ref.retrieval_hint}]"
+        raw_text = raw_text[:max_chars] + "\n... [truncated]"
+
+    escaped = raw_text.replace("<", "\\u003c")
+    return (
+        f"<session-reference label=\"{safe_label}\" trust=\"untrusted\" mode=\"readonly\">\n"
+        f"{escaped}{spill_hint}\n"
+        f"</session-reference>"
+    )
 
 def _build_delegation_section() -> str:
     """Build a concise section describing when and how to delegate work to subagents."""
@@ -213,7 +302,7 @@ def _build_static_prompt_skeleton(
     return sections
 
 
-def build_runtime_system_prompt(
+def build_dynamic_prompt_context(
     settings: Settings,
     *,
     cwd: str | Path,
@@ -224,31 +313,9 @@ def build_runtime_system_prompt(
     include_default_user_skills: bool = True,
     include_default_plugin_roots: bool = True,
     include_project_memory: bool = True,
-) -> str:
-    """Build the runtime system prompt with project instructions and memory."""
-    if is_coordinator_mode():
-        sections = [get_coordinator_system_prompt()]
-    else:
-        cwd_path = Path(cwd).resolve()
-        cache_key = str(cwd_path)
-
-        parts = cwd_path.parts
-        if "sandbox-data" in parts:
-            idx = parts.index("sandbox-data")
-            if len(parts) > idx + 1:
-                cache_key = str(Path(*parts[: idx + 2]))
-        elif "temp_workspaces" in parts:
-            idx = parts.index("temp_workspaces")
-            cache_key = str(Path(*parts[: idx + 1]))
-
-        sections = list(
-            _build_static_prompt_skeleton(
-                cache_key,
-                include_default_user_skills,
-                include_default_plugin_roots,
-            )
-        )
-        logger.info("--- [Prompt Skeleton] Using skeleton for key: %s ---", cache_key)
+) -> PromptContextSnapshot:
+    """Build dynamic prompt context sections separated from the static prompt skeleton."""
+    sections: list[str] = []
 
     extra_skills_section = _build_extra_skills_section(
         cwd,
@@ -279,8 +346,6 @@ def build_runtime_system_prompt(
         sections.append(
             "# Session Mode\nFast mode is enabled. Prefer concise replies, minimal tool use, and quicker progress over exhaustive exploration."
         )
-
- 
 
     claude_md = load_claude_md_prompt(cwd)
     if claude_md:
@@ -319,4 +384,86 @@ def build_runtime_system_prompt(
                     pass
                 sections.append(format_relevant_memories(relevant))
 
-    return "\n\n".join(section for section in sections if section.strip())
+    return PromptContextSnapshot.from_sections(sections)
+
+
+def split_runtime_system_prompt(
+    settings: Settings,
+    *,
+    cwd: str | Path,
+    latest_user_prompt: str | None = None,
+    extra_skill_dirs: Iterable[str | Path] | None = None,
+    extra_plugin_roots: Iterable[str | Path] | None = None,
+    allowed_user_skill_ids: Iterable[str] | None = None,
+    include_default_user_skills: bool = True,
+    include_default_plugin_roots: bool = True,
+    include_project_memory: bool = True,
+) -> tuple[str, PromptContextSnapshot]:
+    """Return `(static_system_prompt, dynamic_prompt_context_snapshot)` for KV-cache stability."""
+    if is_coordinator_mode():
+        static_sections = [get_coordinator_system_prompt()]
+    else:
+        cwd_path = Path(cwd).resolve()
+        cache_key = str(cwd_path)
+
+        parts = cwd_path.parts
+        if "sandbox-data" in parts:
+            idx = parts.index("sandbox-data")
+            if len(parts) > idx + 1:
+                cache_key = str(Path(*parts[: idx + 2]))
+        elif "temp_workspaces" in parts:
+            idx = parts.index("temp_workspaces")
+            cache_key = str(Path(*parts[: idx + 1]))
+
+        static_sections = list(
+            _build_static_prompt_skeleton(
+                cache_key,
+                include_default_user_skills,
+                include_default_plugin_roots,
+            )
+        )
+        logger.info("--- [Prompt Skeleton] Using skeleton for key: %s ---", cache_key)
+
+    static_prompt = "\n\n".join(s for s in static_sections if s.strip())
+    dynamic_snapshot = build_dynamic_prompt_context(
+        settings,
+        cwd=cwd,
+        latest_user_prompt=latest_user_prompt,
+        extra_skill_dirs=extra_skill_dirs,
+        extra_plugin_roots=extra_plugin_roots,
+        allowed_user_skill_ids=allowed_user_skill_ids,
+        include_default_user_skills=include_default_user_skills,
+        include_default_plugin_roots=include_default_plugin_roots,
+        include_project_memory=include_project_memory,
+    )
+    return static_prompt, dynamic_snapshot
+
+
+def build_runtime_system_prompt(
+    settings: Settings,
+    *,
+    cwd: str | Path,
+    latest_user_prompt: str | None = None,
+    extra_skill_dirs: Iterable[str | Path] | None = None,
+    extra_plugin_roots: Iterable[str | Path] | None = None,
+    allowed_user_skill_ids: Iterable[str] | None = None,
+    include_default_user_skills: bool = True,
+    include_default_plugin_roots: bool = True,
+    include_project_memory: bool = True,
+    include_dynamic_context: bool = True,
+) -> str:
+    """Build the runtime system prompt with project instructions and memory."""
+    static_prompt, dynamic_snapshot = split_runtime_system_prompt(
+        settings,
+        cwd=cwd,
+        latest_user_prompt=latest_user_prompt,
+        extra_skill_dirs=extra_skill_dirs,
+        extra_plugin_roots=extra_plugin_roots,
+        allowed_user_skill_ids=allowed_user_skill_ids,
+        include_default_user_skills=include_default_user_skills,
+        include_default_plugin_roots=include_default_plugin_roots,
+        include_project_memory=include_project_memory,
+    )
+    if not include_dynamic_context or not dynamic_snapshot.content:
+        return static_prompt
+    return "\n\n".join(part for part in (static_prompt, dynamic_snapshot.content) if part.strip())
