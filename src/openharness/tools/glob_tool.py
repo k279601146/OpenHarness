@@ -59,10 +59,19 @@ class GlobTool(BaseTool):
             return ToolResult(output="\n".join(matches), metadata={"root": root, "workspace": "e2b"})
 
         root, pattern = _resolve_glob_request(context.cwd, arguments.root, arguments.pattern)
-        matches = await _glob(root, pattern, limit=arguments.limit)
+        matches, truncated = await _glob_with_truncation(root, pattern, limit=arguments.limit)
         if not matches:
             return ToolResult(output="(no matches)")
-        return ToolResult(output="\n".join(matches))
+        output = "\n".join(matches)
+        if truncated:
+            output += (
+                f"\n\n[Results truncated to {len(matches)} matches across directories. "
+                "Narrow your glob pattern or root directory.]"
+            )
+        return ToolResult(
+            output=output,
+            metadata={"count": len(matches), "truncated": truncated},
+        )
 
 
 def _resolve_path(base: Path, candidate: str | None) -> Path:
@@ -117,23 +126,35 @@ _GLOB_RG_TIMEOUT_SECONDS = 30.0
 
 
 async def _glob(root: Path, pattern: str, *, limit: int) -> list[str]:
-    """Fast glob implementation.
+    matches, _ = await _glob_with_truncation(root, pattern, limit=limit)
+    return matches
 
-    Uses ripgrep's file walker when available (respects .gitignore and can skip
-    heavy directories like `.venv/`), with a Python fallback.
-    """
+
+async def _glob_with_truncation(
+    root: Path,
+    pattern: str,
+    *,
+    limit: int,
+) -> tuple[list[str], bool]:
+    """Fast glob implementation using ripgrep (--no-config + VCS excludes) with fair sampling."""
+    from openharness.tools.file_state import (
+        is_ignored_search_relpath,
+        rg_vcs_exclude_args,
+        sample_across_top_level,
+    )
+
     if not root.exists() or not root.is_dir():
-        return []
+        return [], False
 
     rg = shutil.which("rg")
-    # `Path.glob("**/*")` will traverse hidden and ignored paths (like `.venv/`)
-    # and can be very slow on real workspaces. Prefer `rg --files`.
     if rg and ("**" in pattern or "/" in pattern):
         include_hidden = _looks_like_git_repo(root)
-        cmd = [rg, "--files"]
+        cmd = [rg, "--no-config", "--files", "--sort=modified"]
         if include_hidden:
             cmd.append("--hidden")
-        cmd.extend(["--glob", pattern, "."])
+        cmd.extend(["--glob", pattern])
+        cmd.extend(rg_vcs_exclude_args())
+        cmd.append(".")
 
         process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -143,10 +164,11 @@ async def _glob(root: Path, pattern: str, *, limit: int) -> list[str]:
         )
 
         lines: list[str] = []
+        scan_cap = max(limit * 4, limit + 1)
 
         async def _read_stdout() -> None:
             assert process.stdout is not None
-            while len(lines) < limit:
+            while len(lines) < scan_cap:
                 raw = await process.stdout.readline()
                 if not raw:
                     break
@@ -174,12 +196,21 @@ async def _glob(root: Path, pattern: str, *, limit: int) -> list[str]:
                         pass
                     await process.wait()
 
-        # Sorting keeps unit tests and user output deterministic for small results.
+        if len(lines) > limit:
+            return sample_across_top_level(lines, limit), True
         lines.sort()
-        return lines
+        return lines, False
 
-    # Fallback: non-recursive patterns are usually cheap; keep Python semantics.
-    return sorted(
-        str(path.relative_to(root))
-        for path in root.glob(pattern)
-    )[:limit]
+    candidates: list[str] = []
+    scan_cap = max(limit * 4, limit + 1)
+    for path in root.glob(pattern):
+        rel_path = path.relative_to(root)
+        if is_ignored_search_relpath(rel_path, pattern=pattern):
+            continue
+        candidates.append(str(rel_path))
+        if len(candidates) >= scan_cap:
+            break
+
+    if len(candidates) > limit:
+        return sample_across_top_level(candidates, limit), True
+    return sorted(candidates), False

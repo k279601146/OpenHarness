@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 from pydantic import BaseModel, Field
@@ -20,13 +21,28 @@ logger = logging.getLogger(__name__)
 class AgentToolInput(BaseModel):
     """Arguments for local agent spawning."""
 
-    description: str = Field(description="Short description of the delegated work")
-    prompt: str = Field(description="Full prompt for the local agent")
+    description: str = Field(description="Short 3-5 word summary of the delegated subtask")
+    prompt: str = Field(
+        description=(
+            "Complete, self-contained task specification for the subagent: objective, scope/files, "
+            "constraints, and expected output format (avoid vague one-liners unless inherit_context=True)."
+        )
+    )
     subagent_type: str | None = Field(
         default=None,
         description="Agent type for definition lookup (e.g. 'general-purpose', 'Explore', 'worker')",
     )
     model: str | None = Field(default=None)
+    name: str | None = Field(default=None, description="Optional short readable name for the subagent")
+    max_turns: int | None = Field(default=None, ge=1, description="Optional maximum turns for this subagent")
+    inherit_context: bool = Field(
+        default=False,
+        description=(
+            "When true, fork completed conversation turns so far into the child's history (excluding the "
+            "in-flight tool call) for continuation, review, or verification. Keep false by default for fresh "
+            "context isolation."
+        ),
+    )
     command: str | None = Field(default=None, description="Override spawn command")
     team: str | None = Field(default=None, description="Optional team to attach the agent to")
     mode: str = Field(
@@ -36,18 +52,70 @@ class AgentToolInput(BaseModel):
 
 
 class AgentTool(BaseTool):
-    """Spawn a local agent subprocess."""
+    """Spawn a local asynchronous subagent."""
 
     name = "agent"
-    description = "Spawn a local background agent task."
+    description = (
+        "Spawn a non-blocking asynchronous subagent and return its `agent_id` immediately. "
+        "Use for parallel independent workstreams, noisy exploration/verification isolation "
+        "(`inherit_context=False`), or context-inherited continuation/review (`inherit_context=True`). "
+        "Prefer answering simple direct tasks or 1-2 tool lookups without delegating."
+    )
     input_model = AgentToolInput
 
+    def is_concurrency_safe(self, arguments: AgentToolInput) -> bool:
+        """Spawning independent subagents can run concurrently when no custom CLI command is set."""
+        return arguments.command is None
+
     async def execute(self, arguments: AgentToolInput, context: ToolExecutionContext) -> ToolResult:
-        if arguments.mode not in {"local_agent", "remote_agent", "in_process_teammate"}:
+        if arguments.mode not in {"local_agent", "remote_agent", "in_process_teammate", "in_process"}:
             return ToolResult(
                 output="Invalid mode. Use local_agent, remote_agent, or in_process_teammate.",
                 is_error=True,
             )
+
+        if arguments.command is None and arguments.mode in {
+            "local_agent",
+            "in_process_teammate",
+            "in_process",
+        }:
+            runtime = context.metadata.get("subagent_runtime")
+            if runtime is not None and hasattr(runtime, "spawn"):
+                try:
+                    record = await runtime.spawn(
+                        description=arguments.description,
+                        prompt=arguments.prompt,
+                        subagent_type=arguments.subagent_type,
+                        name=arguments.name,
+                        model=arguments.model,
+                        max_turns=arguments.max_turns,
+                        parent_id=str(context.metadata.get("subagent_id") or "lead"),
+                        parent_depth=int(context.metadata.get("subagent_depth") or 0),
+                        parent_inbox=context.metadata.get("subagent_inbox"),
+                        parent_cancellation_token=context.cancellation_token,
+                        inherit_context=arguments.inherit_context,
+                        inherited_history=context.metadata.get("parent_completed_messages"),
+                    )
+                except ValueError as exc:
+                    return ToolResult(output=str(exc), is_error=True)
+                return ToolResult(
+                    output=json.dumps(
+                        {
+                            "agent_id": record.agent_id,
+                            "name": record.name,
+                            "status": record.status,
+                            "parent_id": record.parent_id,
+                            "depth": record.depth,
+                            "model": record.model,
+                            "inherit_context": bool(record.metadata.get("inherit_context")),
+                            "message": (
+                                f"Spawned async subagent {record.agent_id}. "
+                                "Use wait_agent to collect results or send_message to steer it."
+                            ),
+                        },
+                        ensure_ascii=False,
+                    )
+                )
 
         # Look up agent definition if subagent_type is specified
         agent_def = None

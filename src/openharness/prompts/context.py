@@ -25,23 +25,30 @@ from openharness.skills.loader import load_skill_registry
 logger = logging.getLogger("PromptContext")
 
 def _build_delegation_section() -> str:
-    """Build a concise section describing delegation and worker usage."""
+    """Build a concise section describing when and how to delegate work to subagents."""
     return "\n".join(
         [
             "# Delegation And Subagents",
             "",
-            "Bahew can delegate background work with the `agent` tool.",
-            "Use it when the user explicitly asks for a subagent, background worker, or parallel investigation, "
-            "or when the task clearly benefits from splitting off a focused worker.",
+            "OpenHarness supports non-blocking subagents via `agent` plus structured tracking via `task_board`.",
+            "Every `agent(...)` call returns immediately after spawning; completion and failure notifications arrive in your inbox automatically.",
             "",
-            "Default pattern:",
-            '- Spawn an agent with `agent(description=..., prompt=..., subagent_type="worker")`.',
-            "- Inspect running or recorded workers with `/agents`.",
-            "- Inspect one worker in detail with `/agents show TASK_ID`.",
-            "- Send follow-up instructions with `send_message(task_id=..., message=...)`.",
-            "- Read worker output with `task_output(task_id=...)`.",
+            "When to delegate:",
+            "- Parallel independent workstreams: spawn multiple `agent` calls in the same turn when files, research tracks, or verification checks can run concurrently, then end your turn without polling.",
+            "- Context isolation (`inherit_context=False`, default): keep noisy search output, broad repository exploration, or verbose test logs out of your main context window.",
+            "- Context-inherited follow-up (`inherit_context=True`): spawn a forked child that sees completed turns so far for independent verification, code review, or continuing a multi-step investigation with fresh focus.",
+            "- Explicit multi-agent workflows: when the user asks for parallel investigation, background execution, or task decomposition.",
             "",
-            "Prefer a normal direct answer for simple tasks. Use subagents only when they materially help.",
+            "When NOT to delegate:",
+            "- Do not spawn a subagent for simple direct answers, single-file reads, or quick 1–2 tool lookups that take less effort than delegating.",
+            "- Do not spawn duplicate subagents for the same slice, and do not poll `wait_agent` in a loop after spawning background workers unless you genuinely need results before continuing.",
+            "",
+            "Lifecycle tools:",
+            "- `agent(description=..., prompt=..., subagent_type=..., inherit_context=False)`: spawn an async child agent.",
+            "- `run_code(code=...)`: run a bounded Python script that batches multiple `await tools.<name>(**kwargs)` / `await gather(...)` calls in a single turn, filtering or aggregating intermediate outputs before returning only the distilled summary.",
+            "- `task_board(...)`: break multi-step work into dependency-aware DAG tasks (`batch_create`, `create`, `claim`, `update`, `list`).",
+            "- `send_message(agent_id=..., message=...)`: steer or send follow-up instructions to a child agent.",
+            "- `list_agents()` / `wait_agent(agent_id=..., timeout=...)` / `interrupt_agent(agent_id=...)`: inspect, explicitly await if needed, or stop running workers.",
         ]
     )
 

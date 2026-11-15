@@ -4,11 +4,8 @@ from __future__ import annotations
 
 import difflib
 import os
-import posixpath
-import shlex
 import stat
 import tempfile
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -69,36 +66,71 @@ class FileEditTool(BaseTool):
             if not allowed:
                 return ToolResult(output=f"Sandbox: {reason}", is_error=True)
 
+        from openharness.tools.file_state import (
+            check_mutation_guard,
+            file_lock,
+            host_file_version,
+            host_observation_key,
+            observe_file,
+        )
+
         safety_error = _validate_host_edit_path(path, workspace)
         if safety_error:
             return ToolResult(output=safety_error, is_error=True)
 
-        try:
-            original = _read_host_text(path)
-            plan = _build_replacement_plan(arguments, original, location_label="file")
-        except ValueError as exc:
-            return ToolResult(output=str(exc), is_error=True)
-        except OSError as exc:
-            return ToolResult(output=f"Failed to read file {path}: {exc}", is_error=True)
+        obs_key = host_observation_key(path)
+        async with file_lock(obs_key):
+            current_version = host_file_version(path)
+            guard_error = check_mutation_guard(
+                context,
+                obs_key,
+                current_version=current_version,
+                operation="update",
+                display_path=str(path),
+            )
+            if guard_error is not None:
+                return ToolResult(output=guard_error, is_error=True)
 
-        approval_prompt = context.metadata.get("edit_approval_prompt") if context.metadata else None
-        metadata = _result_metadata(str(path), "host", plan)
-        if approval_prompt is not None:
-            diff_text, added, removed = _compute_diff(str(path), original, plan.updated)
-            reply = await approval_prompt(str(path), diff_text, added, removed)
-            if reply == "reject":
-                return ToolResult(output=f"Edit rejected by user: {path}", is_error=True)
             try:
-                latest = _read_host_text(path)
+                original = _read_host_text(path)
+                plan = _build_replacement_plan(arguments, original, location_label="file")
             except ValueError as exc:
                 return ToolResult(output=str(exc), is_error=True)
             except OSError as exc:
                 return ToolResult(output=f"Failed to read file {path}: {exc}", is_error=True)
-            if latest != original:
-                return ToolResult(
-                    output=f"File changed while edit approval was pending; please retry: {path}",
-                    is_error=True,
-                )
+
+            metadata_map = getattr(context, "metadata", None) or {}
+            approval_prompt = metadata_map.get("edit_approval_prompt")
+            metadata = _result_metadata(str(path), "host", plan)
+            if approval_prompt is not None:
+                diff_text, added, removed = _compute_diff(str(path), original, plan.updated)
+                reply = await approval_prompt(str(path), diff_text, added, removed)
+                if reply == "reject":
+                    return ToolResult(output=f"Edit rejected by user: {path}", is_error=True)
+                try:
+                    latest = _read_host_text(path)
+                except ValueError as exc:
+                    return ToolResult(output=str(exc), is_error=True)
+                except OSError as exc:
+                    return ToolResult(output=f"Failed to read file {path}: {exc}", is_error=True)
+                if latest != original:
+                    return ToolResult(
+                        output=f"File changed while edit approval was pending; please retry: {path}",
+                        is_error=True,
+                    )
+                try:
+                    _atomic_write_host_text(path, plan.updated)
+                except OSError as exc:
+                    return ToolResult(
+                        output=f"Failed to write file atomically: {path}: {exc}",
+                        is_error=True,
+                    )
+                new_version = host_file_version(path)
+                if new_version is not None:
+                    observe_file(context, obs_key, new_version)
+                stats = f"  ({_ANSI_GREEN}+{added}{_ANSI_RESET} {_ANSI_RED}-{removed}{_ANSI_RESET})"
+                return ToolResult(output=f"Updated {path}{stats}", metadata=metadata)
+
             try:
                 _atomic_write_host_text(path, plan.updated)
             except OSError as exc:
@@ -106,17 +138,10 @@ class FileEditTool(BaseTool):
                     output=f"Failed to write file atomically: {path}: {exc}",
                     is_error=True,
                 )
-            stats = f"  ({_ANSI_GREEN}+{added}{_ANSI_RESET} {_ANSI_RED}-{removed}{_ANSI_RESET})"
-            return ToolResult(output=f"Updated {path}{stats}", metadata=metadata)
-
-        try:
-            _atomic_write_host_text(path, plan.updated)
-        except OSError as exc:
-            return ToolResult(
-                output=f"Failed to write file atomically: {path}: {exc}",
-                is_error=True,
-            )
-        return ToolResult(output=f"Updated {path}", metadata=metadata)
+            new_version = host_file_version(path)
+            if new_version is not None:
+                observe_file(context, obs_key, new_version)
+            return ToolResult(output=f"Updated {path}", metadata=metadata)
 
 
 def _resolve_path(base: Path, candidate: str) -> Path:
@@ -201,10 +226,23 @@ def _build_replacement_plan(
     *,
     location_label: str,
 ) -> _ReplacementPlan:
+    from openharness.tools.file_state import (
+        detect_line_endings,
+        normalize_line_endings,
+        restore_line_endings,
+    )
+
     if arguments.old_str == "":
         raise ValueError("old_str must not be empty")
+    if arguments.old_str == arguments.new_str:
+        raise ValueError("old_str and new_str are identical; no edit was applied")
 
-    match_count = original.count(arguments.old_str)
+    eol = detect_line_endings(original)
+    norm_original = normalize_line_endings(original)
+    norm_old = normalize_line_endings(arguments.old_str)
+    norm_new = normalize_line_endings(arguments.new_str)
+
+    match_count = norm_original.count(norm_old)
     if match_count == 0:
         raise ValueError(f"old_str was not found in the {location_label}")
     if not arguments.replace_all and match_count > 1:
@@ -214,7 +252,8 @@ def _build_replacement_plan(
         )
 
     replacements = match_count if arguments.replace_all else 1
-    updated = original.replace(arguments.old_str, arguments.new_str, replacements)
+    updated_norm = norm_original.replace(norm_old, norm_new, replacements)
+    updated = restore_line_endings(updated_norm, eol)
     return _ReplacementPlan(
         updated=updated,
         match_count=match_count,
@@ -279,41 +318,44 @@ async def _edit_sandbox_file(
     arguments: FileEditToolInput,
     context: ToolExecutionContext,
 ) -> ToolResult:
+    from openharness.tools.file_state import (
+        bytes_version,
+        check_mutation_guard,
+        file_lock,
+        observe_file,
+        sandbox_observation_key,
+    )
+
     try:
         session = await get_e2b_task_session(context)
         sandbox_path = to_sandbox_path(context, arguments.path, for_write=True)
     except Exception as exc:
         return ToolResult(output=f"Sandbox workspace error: {exc}", is_error=True)
 
-    status = await sandbox_path_status(session, sandbox_path)
-    if status == "missing":
-        return ToolResult(output=f"File not found in sandbox: {sandbox_path}", is_error=True)
-    if status != "file":
-        return ToolResult(
-            output=f"Cannot edit non-file sandbox path: {sandbox_path}",
-            is_error=True,
-        )
+    obs_key = sandbox_observation_key(sandbox_path)
+    async with file_lock(obs_key):
+        status = await sandbox_path_status(session, sandbox_path)
+        if status == "missing":
+            return ToolResult(output=f"File not found in sandbox: {sandbox_path}", is_error=True)
+        if status != "file":
+            return ToolResult(
+                output=f"Cannot edit non-file sandbox path: {sandbox_path}",
+                is_error=True,
+            )
 
-    try:
-        original = await _read_sandbox_text(session, sandbox_path)
-        plan = _build_replacement_plan(arguments, original, location_label="sandbox file")
-    except ValueError as exc:
-        return ToolResult(output=str(exc), is_error=True)
-    except Exception as exc:
-        return ToolResult(
-            output=f"Failed to read sandbox file {sandbox_path}: {exc}",
-            is_error=True,
-        )
-
-    approval_prompt = context.metadata.get("edit_approval_prompt") if context.metadata else None
-    metadata = _result_metadata(sandbox_path, "e2b", plan)
-    if approval_prompt is not None:
-        diff_text, added, removed = _compute_diff(sandbox_path, original, plan.updated)
-        reply = await approval_prompt(sandbox_path, diff_text, added, removed)
-        if reply == "reject":
-            return ToolResult(output=f"Edit rejected by user: {sandbox_path}", is_error=True)
         try:
-            latest = await _read_sandbox_text(session, sandbox_path)
+            raw_bytes = await session.read_file_binary(sandbox_path)
+            guard_error = check_mutation_guard(
+                context,
+                obs_key,
+                current_version=bytes_version(raw_bytes),
+                operation="update",
+                display_path=sandbox_path,
+            )
+            if guard_error is not None:
+                return ToolResult(output=guard_error, is_error=True)
+            original = _decode_utf8_text(raw_bytes, path_label=sandbox_path)
+            plan = _build_replacement_plan(arguments, original, location_label="sandbox file")
         except ValueError as exc:
             return ToolResult(output=str(exc), is_error=True)
         except Exception as exc:
@@ -321,14 +363,43 @@ async def _edit_sandbox_file(
                 output=f"Failed to read sandbox file {sandbox_path}: {exc}",
                 is_error=True,
             )
-        if latest != original:
-            return ToolResult(
-                output=(
-                    "Sandbox file changed while edit approval was pending; "
-                    f"please retry: {sandbox_path}"
-                ),
-                is_error=True,
-            )
+
+        metadata_map = getattr(context, "metadata", None) or {}
+        approval_prompt = metadata_map.get("edit_approval_prompt")
+        metadata = _result_metadata(sandbox_path, "e2b", plan)
+        if approval_prompt is not None:
+            diff_text, added, removed = _compute_diff(sandbox_path, original, plan.updated)
+            reply = await approval_prompt(sandbox_path, diff_text, added, removed)
+            if reply == "reject":
+                return ToolResult(output=f"Edit rejected by user: {sandbox_path}", is_error=True)
+            try:
+                latest = await _read_sandbox_text(session, sandbox_path)
+            except ValueError as exc:
+                return ToolResult(output=str(exc), is_error=True)
+            except Exception as exc:
+                return ToolResult(
+                    output=f"Failed to read sandbox file {sandbox_path}: {exc}",
+                    is_error=True,
+                )
+            if latest != original:
+                return ToolResult(
+                    output=(
+                        "Sandbox file changed while edit approval was pending; "
+                        f"please retry: {sandbox_path}"
+                    ),
+                    is_error=True,
+                )
+            try:
+                await _atomic_write_sandbox_text(session, sandbox_path, plan.updated)
+            except Exception as exc:
+                return ToolResult(
+                    output=f"Failed to write sandbox file atomically: {sandbox_path}: {exc}",
+                    is_error=True,
+                )
+            observe_file(context, obs_key, bytes_version(plan.updated.encode("utf-8")))
+            stats = f"  ({_ANSI_GREEN}+{added}{_ANSI_RESET} {_ANSI_RED}-{removed}{_ANSI_RESET})"
+            return ToolResult(output=f"Updated sandbox file: {sandbox_path}{stats}", metadata=metadata)
+
         try:
             await _atomic_write_sandbox_text(session, sandbox_path, plan.updated)
         except Exception as exc:
@@ -336,17 +407,8 @@ async def _edit_sandbox_file(
                 output=f"Failed to write sandbox file atomically: {sandbox_path}: {exc}",
                 is_error=True,
             )
-        stats = f"  ({_ANSI_GREEN}+{added}{_ANSI_RESET} {_ANSI_RED}-{removed}{_ANSI_RESET})"
-        return ToolResult(output=f"Updated sandbox file: {sandbox_path}{stats}", metadata=metadata)
-
-    try:
-        await _atomic_write_sandbox_text(session, sandbox_path, plan.updated)
-    except Exception as exc:
-        return ToolResult(
-            output=f"Failed to write sandbox file atomically: {sandbox_path}: {exc}",
-            is_error=True,
-        )
-    return ToolResult(output=f"Updated sandbox file: {sandbox_path}", metadata=metadata)
+        observe_file(context, obs_key, bytes_version(plan.updated.encode("utf-8")))
+        return ToolResult(output=f"Updated sandbox file: {sandbox_path}", metadata=metadata)
 
 
 async def _read_sandbox_text(session, sandbox_path: str) -> str:
@@ -355,26 +417,6 @@ async def _read_sandbox_text(session, sandbox_path: str) -> str:
 
 
 async def _atomic_write_sandbox_text(session, sandbox_path: str, content: str) -> None:
-    directory = posixpath.dirname(sandbox_path) or "/home/user"
-    filename = posixpath.basename(sandbox_path) or "file"
-    temp_path = posixpath.join(directory, f".{filename}.openharness-edit-{uuid.uuid4().hex}.tmp")
-    try:
-        await session.write_file(temp_path, content)
-        process = await session.exec_command(
-            "set -e; "
-            f"chmod --reference={shlex.quote(sandbox_path)} "
-            f"{shlex.quote(temp_path)} 2>/dev/null || true; "
-            f"mv -f {shlex.quote(temp_path)} {shlex.quote(sandbox_path)}"
-        )
-        stdout, stderr = await process.communicate()
-        returncode = getattr(process, "returncode", 0)
-        if returncode not in (0, None):
-            details = (stderr or stdout or b"").decode("utf-8", errors="replace").strip()
-            raise RuntimeError(details or f"mv failed with exit code {returncode}")
-    except Exception:
-        try:
-            cleanup = await session.exec_command(f"rm -f {shlex.quote(temp_path)}")
-            await cleanup.communicate()
-        except Exception:
-            pass
-        raise
+    from openharness.tools.file_state import atomic_write_sandbox_text
+
+    await atomic_write_sandbox_text(session, sandbox_path, content, create_directories=False)

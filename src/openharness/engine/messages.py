@@ -51,6 +51,19 @@ class TextBlock(BaseModel):
     cache_control: dict[str, Any] | None = None
 
 
+def sniff_image_media_type(raw_bytes: bytes) -> str | None:
+    """Detect common raster image MIME types from magic bytes."""
+    if len(raw_bytes) >= 8 and raw_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if len(raw_bytes) >= 3 and raw_bytes[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if len(raw_bytes) >= 6 and raw_bytes[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if len(raw_bytes) >= 12 and raw_bytes[:4] == b"RIFF" and raw_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 class ImageBlock(BaseModel):
     """Image content encoded inline for multimodal providers."""
 
@@ -58,6 +71,102 @@ class ImageBlock(BaseModel):
     media_type: str
     data: str
     source_path: str = ""
+
+    @classmethod
+    def from_bytes_with_metadata(
+        cls,
+        raw_bytes: bytes,
+        *,
+        media_type: str | None = None,
+        source_path: str = "",
+        max_edge: int | None = 1600,
+        quality: int = 92,
+    ) -> tuple["ImageBlock", dict[str, Any]]:
+        """Create a base64-backed ImageBlock from raw bytes and return dimension/compression metadata."""
+        sniffed = sniff_image_media_type(raw_bytes)
+        effective_mime = sniffed or media_type or ""
+        if (not effective_mime or not effective_mime.startswith("image/")) and source_path:
+            guessed, _ = mimetypes.guess_type(source_path)
+            suffix = Path(source_path).suffix.lower()
+            effective_mime = guessed or COMMON_IMAGE_MIME_TYPES.get(suffix, "")
+        if not effective_mime or not effective_mime.startswith("image/"):
+            raise ValueError(f"Unsupported image content: {source_path or 'bytes'}")
+
+        original_width = 0
+        original_height = 0
+        width = 0
+        height = 0
+        final_bytes = raw_bytes
+        final_mime = effective_mime
+
+        try:
+            import io
+            from PIL import Image
+
+            with Image.open(io.BytesIO(raw_bytes)) as img:
+                original_width, original_height = img.size
+                width, height = original_width, original_height
+                longest = max(original_width, original_height)
+                needs_resize = bool(max_edge and longest > max_edge)
+                should_reencode = needs_resize or (
+                    bool(max_edge)
+                    and len(raw_bytes) > 256 * 1024
+                    and (effective_mime != "image/gif" or not getattr(img, "is_animated", False))
+                )
+                if should_reencode:
+                    if needs_resize and max_edge:
+                        scale = max_edge / longest
+                        new_size = (max(1, int(round(original_width * scale))), max(1, int(round(original_height * scale))))
+                        resampled = img.resize(new_size, Image.Resampling.LANCZOS)
+                    else:
+                        resampled = img
+
+                    if resampled.mode in ("CMYK", "P"):
+                        resampled = resampled.convert("RGBA" if "transparency" in resampled.info else "RGB")
+
+                    buf = io.BytesIO()
+                    resampled.save(buf, format="WEBP", quality=quality, method=6)
+                    compressed_bytes = buf.getvalue()
+                    if needs_resize or len(compressed_bytes) < len(raw_bytes):
+                        final_bytes = compressed_bytes
+                        final_mime = "image/webp"
+                        width, height = resampled.size
+        except Exception:
+            pass  # Fall back to raw bytes on any image processing error
+
+        payload = base64.b64encode(final_bytes).decode("ascii")
+        block = cls(media_type=final_mime, data=payload, source_path=source_path)
+        meta: dict[str, Any] = {
+            "media_type": final_mime,
+            "original_media_type": effective_mime,
+            "width": width,
+            "height": height,
+            "original_width": original_width,
+            "original_height": original_height,
+            "byte_length": len(final_bytes),
+            "original_byte_length": len(raw_bytes),
+        }
+        return block, meta
+
+    @classmethod
+    def from_bytes(
+        cls,
+        raw_bytes: bytes,
+        *,
+        media_type: str | None = None,
+        source_path: str = "",
+        max_edge: int | None = 1600,
+        quality: int = 92,
+    ) -> "ImageBlock":
+        """Create a base64-backed ImageBlock from raw bytes."""
+        block, _ = cls.from_bytes_with_metadata(
+            raw_bytes,
+            media_type=media_type,
+            source_path=source_path,
+            max_edge=max_edge,
+            quality=quality,
+        )
+        return block
 
     @classmethod
     def from_path(
@@ -76,39 +185,13 @@ class ImageBlock(BaseModel):
         if not media_type or not media_type.startswith("image/"):
             raise ValueError(f"Unsupported image attachment: {resolved}")
         raw_bytes = resolved.read_bytes()
-
-        # If vision optimization is requested and file is large (>256KB), generate an optimized vision buffer
-        if max_edge and len(raw_bytes) > 256 * 1024:
-            try:
-                import io
-                from PIL import Image
-
-                with Image.open(resolved) as img:
-                    w, h = img.size
-                    longest = max(w, h)
-                    needs_resize = longest > max_edge
-                    if needs_resize or (media_type == "image/png" and len(raw_bytes) > 500 * 1024):
-                        if needs_resize:
-                            scale = max_edge / longest
-                            new_size = (int(w * scale), int(h * scale))
-                            resampled = img.resize(new_size, Image.Resampling.LANCZOS)
-                        else:
-                            resampled = img
-
-                        if resampled.mode in ("CMYK", "P"):
-                            resampled = resampled.convert("RGBA" if "transparency" in resampled.info else "RGB")
-
-                        buf = io.BytesIO()
-                        resampled.save(buf, format="WEBP", quality=quality, method=6)
-                        compressed_bytes = buf.getvalue()
-                        if len(compressed_bytes) < len(raw_bytes):
-                            payload = base64.b64encode(compressed_bytes).decode("ascii")
-                            return cls(media_type="image/webp", data=payload, source_path=str(resolved))
-            except Exception:
-                pass  # Fall back to raw bytes on any image processing error
-
-        payload = base64.b64encode(raw_bytes).decode("ascii")
-        return cls(media_type=media_type, data=payload, source_path=str(resolved))
+        return cls.from_bytes(
+            raw_bytes,
+            media_type=media_type,
+            source_path=str(resolved),
+            max_edge=max_edge,
+            quality=quality,
+        )
 
 
 class VideoBlock(BaseModel):
@@ -160,6 +243,7 @@ class ToolResultBlock(BaseModel):
     tool_use_id: str
     content: str
     is_error: bool = False
+    images: list[ImageBlock] = Field(default_factory=list)
     result_metadata: dict[str, Any] = Field(default_factory=dict)
     cache_control: dict[str, Any] | None = None
 
@@ -310,12 +394,34 @@ def serialize_content_block(block: ContentBlock) -> dict[str, Any]:
             "input": block.input,
         }
     else:
-        result = {
-            "type": "tool_result",
-            "tool_use_id": block.tool_use_id,
-            "content": block.content,
-            "is_error": block.is_error,
-        }
+        if block.images:
+            content_blocks: list[dict[str, Any]] = []
+            if block.content:
+                content_blocks.append({"type": "text", "text": block.content})
+            for image in block.images:
+                content_blocks.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": image.media_type,
+                            "data": image.data,
+                        },
+                    }
+                )
+            result = {
+                "type": "tool_result",
+                "tool_use_id": block.tool_use_id,
+                "content": content_blocks,
+                "is_error": block.is_error,
+            }
+        else:
+            result = {
+                "type": "tool_result",
+                "tool_use_id": block.tool_use_id,
+                "content": block.content,
+                "is_error": block.is_error,
+            }
 
     cache_control = getattr(block, "cache_control", None)
     if cache_control:

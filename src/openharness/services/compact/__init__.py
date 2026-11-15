@@ -29,8 +29,19 @@ from openharness.engine.messages import (
 )
 from openharness.engine.stream_events import CompactProgressEvent
 from openharness.hooks import HookEvent, HookExecutor
-from openharness.services.tool_outputs import is_microcompactable_tool_result
-from openharness.services.token_estimation import estimate_tokens
+from openharness.services.compact.image_offload import (
+    IMAGE_OFFLOAD_MARKER,
+    MAX_IMAGE_OFFLOAD_RETRIES,
+    count_inline_images,
+    extract_image_limit_from_error,
+    is_image_limit_error,
+    offload_oldest_images,
+)
+from openharness.services.tool_outputs import (
+    is_microcompactable_tool_result,
+    prune_tool_result_text,
+)
+from openharness.services.token_estimation import estimate_image_tokens, estimate_tokens
 
 log = logging.getLogger(__name__)
 
@@ -116,18 +127,23 @@ class CompactionResult:
 def estimate_message_tokens(messages: list[ConversationMessage]) -> int:
     """Estimate total tokens for a conversation, including the 4/3 padding."""
     total = 0
-    image_token_estimate = _vision_token_budget_per_image()
+    default_image_tokens = _vision_token_budget_per_image()
     for msg in messages:
         for block in msg.content:
             if isinstance(block, TextBlock):
                 total += estimate_tokens(block.text)
             elif isinstance(block, ToolResultBlock):
                 total += estimate_tokens(block.content)
+                if block.images:
+                    total += sum(
+                        estimate_image_tokens(img, default_tokens=default_image_tokens)
+                        for img in block.images
+                    )
             elif isinstance(block, ToolUseBlock):
                 total += estimate_tokens(block.name)
                 total += estimate_tokens(str(block.input))
             elif isinstance(block, ImageBlock):
-                total += image_token_estimate
+                total += estimate_image_tokens(block, default_tokens=default_image_tokens)
     return int(total * TOKEN_ESTIMATION_PADDING)
 
 
@@ -163,6 +179,9 @@ def _replace_images_with_compaction_placeholders(
                         text=f"[Image omitted from compaction summarization; source: {label}.]\n"
                     )
                 )
+            elif isinstance(block, ToolResultBlock) and block.images:
+                changed = True
+                next_content.append(block.model_copy(update={"images": []}))
             else:
                 next_content.append(block)
         if changed:
@@ -323,13 +342,7 @@ def try_context_collapse(
                 collapsed = _collapse_text(block.content)
                 if collapsed != block.content:
                     changed = True
-                new_blocks.append(
-                    ToolResultBlock(
-                        tool_use_id=block.tool_use_id,
-                        content=collapsed,
-                        is_error=block.is_error,
-                    )
-                )
+                new_blocks.append(block.model_copy(update={"content": collapsed}))
             else:
                 new_blocks.append(block)
         collapsed_older.append(ConversationMessage(role=message.role, content=new_blocks))
@@ -836,9 +849,11 @@ def microcompact_messages(
             if (
                 isinstance(block, ToolResultBlock)
                 and block.tool_use_id in clear_set
-                and block.content != TIME_BASED_MC_CLEARED_MESSAGE
+                and (block.content != TIME_BASED_MC_CLEARED_MESSAGE or block.images)
             ):
                 tokens_saved += estimate_tokens(block.content)
+                if block.images:
+                    tokens_saved += len(block.images) * _vision_token_budget_per_image()
                 new_content.append(
                     ToolResultBlock(
                         tool_use_id=block.tool_use_id,
@@ -854,6 +869,71 @@ def microcompact_messages(
         log.info("Microcompact cleared %d tool results, saved ~%d tokens", len(clear_set), tokens_saved)
 
     return messages, tokens_saved
+
+
+def prune_tool_results_for_compaction(
+    messages: list[ConversationMessage],
+    *,
+    preserve_recent: int = 4,
+    max_result_tokens: int = 800,
+    max_result_chars: int = 3_200,
+    target_tokens: int | None = None,
+) -> tuple[list[ConversationMessage], int]:
+    """Deterministically prune oversized historical ToolResultBlocks (0-token pass).
+
+    Unlike :func:`microcompact_messages` (which clears entire tool results for a
+    fixed allowlist), this pass preserves head+tail context on oversized results
+    while excluding the most recent messages so immediate working memory stays intact.
+    If *target_tokens* is given, pruning stops once estimated tokens fall below it.
+    """
+    if len(messages) <= preserve_recent:
+        return messages, 0
+
+    older, newer = _split_preserving_tool_pairs(messages, preserve_recent=preserve_recent)
+    if not older:
+        return messages, 0
+
+    tool_names_by_id: dict[str, str] = {}
+    for msg in messages:
+        for block in msg.content:
+            if isinstance(block, ToolUseBlock):
+                tool_names_by_id[block.id] = block.name
+
+    tokens_saved = 0
+    for msg in older:
+        if target_tokens is not None and estimate_message_tokens([*older, *newer]) <= target_tokens:
+            break
+        if msg.role != "user":
+            continue
+        changed = False
+        new_content: list[ContentBlock] = []
+        for block in msg.content:
+            if (
+                isinstance(block, ToolResultBlock)
+                and block.content
+                and block.content != TIME_BASED_MC_CLEARED_MESSAGE
+                and tool_names_by_id.get(block.tool_use_id, "").lower() != "skill"
+            ):
+                before_tokens = estimate_tokens(block.content)
+                if before_tokens > max_result_tokens or len(block.content) > max_result_chars:
+                    pruned = prune_tool_result_text(
+                        block.content,
+                        max_chars=max_result_chars,
+                        max_tokens=max_result_tokens,
+                    )
+                    if len(pruned) < len(block.content):
+                        after_tokens = estimate_tokens(pruned)
+                        tokens_saved += max(0, before_tokens - after_tokens)
+                        new_content.append(block.model_copy(update={"content": pruned}))
+                        changed = True
+                        continue
+            new_content.append(block)
+        if changed:
+            msg.content = new_content
+
+    if tokens_saved > 0:
+        log.info("Deterministic tool-result pruner saved ~%d tokens (0 LLM tokens used)", tokens_saved)
+    return [*older, *newer], tokens_saved
 
 
 def _summarize_message_for_memory(message: ConversationMessage) -> str:
@@ -1541,6 +1621,42 @@ async def auto_compact_if_needed(
         log.info("Microcompact freed ~%d tokens, auto-compact no longer needed", tokens_freed)
         return messages, True
 
+    # Step 1.5: 0-token deterministic pruning of oversized historical tool results
+    threshold_tokens = get_autocompact_threshold(
+        model,
+        context_window_tokens=context_window_tokens,
+        auto_compact_threshold_tokens=auto_compact_threshold_tokens,
+    )
+    messages, prune_saved = prune_tool_results_for_compaction(
+        messages,
+        preserve_recent=min(preserve_recent, 4),
+        target_tokens=threshold_tokens,
+    )
+    _record_compact_checkpoint(
+        carryover_metadata,
+        checkpoint="query_prune_end",
+        trigger=trigger,
+        message_count=len(messages),
+        token_count=estimate_message_tokens(messages),
+        details={"tokens_freed_by_pruner": prune_saved},
+    )
+    if (
+        not force
+        and prune_saved > 0
+        and not should_autocompact(
+            messages,
+            model,
+            state,
+            context_window_tokens=context_window_tokens,
+            auto_compact_threshold_tokens=auto_compact_threshold_tokens,
+        )
+    ):
+        log.info(
+            "Deterministic tool-result pruner freed ~%d tokens, skipping LLM compact",
+            prune_saved,
+        )
+        return messages, True
+
     context_collapsed = try_context_collapse(messages, preserve_recent=preserve_recent)
     if context_collapsed is not None:
         await _emit_progress(
@@ -1707,19 +1823,26 @@ __all__ = [
     "CompactAttachment",
     "CompactionResult",
     "COMPACTABLE_TOOLS",
+    "IMAGE_OFFLOAD_MARKER",
+    "MAX_IMAGE_OFFLOAD_RETRIES",
     "TIME_BASED_MC_CLEARED_MESSAGE",
     "auto_compact_if_needed",
     "build_post_compact_messages",
     "build_compact_summary_message",
     "compact_conversation",
     "compact_messages",
+    "count_inline_images",
     "create_compact_boundary_message",
     "estimate_conversation_tokens",
     "estimate_message_tokens",
+    "extract_image_limit_from_error",
     "format_compact_summary",
     "get_autocompact_threshold",
     "get_compact_prompt",
+    "is_image_limit_error",
     "microcompact_messages",
+    "offload_oldest_images",
+    "prune_tool_results_for_compaction",
     "should_autocompact",
     "summarize_messages",
 ]

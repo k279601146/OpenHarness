@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 from pydantic import BaseModel, Field
@@ -29,10 +30,24 @@ class SendMessageTool(BaseTool):
     input_model = SendMessageToolInput
 
     async def execute(self, arguments: SendMessageToolInput, context: ToolExecutionContext) -> ToolResult:
-        del context
         # Swarm agents use agent_id format (name@team); legacy tasks use plain task IDs
         if "@" in arguments.task_id:
             return await self._send_swarm_message(arguments.task_id, arguments.message)
+
+        runtime = context.metadata.get("subagent_runtime")
+        target_id = arguments.task_id.strip()
+        if runtime is not None and hasattr(runtime, "send_message"):
+            if target_id == "lead" or (hasattr(runtime, "get") and runtime.get(target_id) is not None):
+                caller = str(context.metadata.get("subagent_id") or "lead")
+                try:
+                    delivery = await runtime.send_message(
+                        target_id=target_id,
+                        message=arguments.message,
+                        source=caller,
+                    )
+                    return ToolResult(output=json.dumps(delivery, ensure_ascii=False))
+                except KeyError as exc:
+                    return ToolResult(output=str(exc), is_error=True)
         try:
             await get_task_manager().write_to_task(arguments.task_id, arguments.message)
         except ValueError as exc:

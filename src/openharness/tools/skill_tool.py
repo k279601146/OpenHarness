@@ -19,6 +19,39 @@ class SkillToolInput(BaseModel):
     name: str = Field(description="Skill name")
 
 
+def _format_skill_output(
+    skill_name: str,
+    instructions: str,
+    *,
+    resource_lines: list[str] | None = None,
+) -> str:
+    """Wrap loaded skill instructions and base directory metadata in a canonical envelope."""
+    body = (instructions or "").strip()
+    resources_block = ""
+    if resource_lines:
+        joined = "\n".join(line for line in resource_lines if line)
+        resources_block = f"<skill_resources>\n{joined}\n</skill_resources>\n\n"
+    return (
+        f'<skill_content name="{skill_name}">\n'
+        f"{resources_block}"
+        "<skill_instructions>\n"
+        f"{body}\n"
+        "</skill_instructions>\n"
+        "</skill_content>"
+    )
+
+
+def _record_invoked_skill_metadata(context: ToolExecutionContext, skill_name: str) -> None:
+    if not isinstance(context.metadata, dict):
+        return
+    normalized = (skill_name or "").strip()
+    if not normalized:
+        return
+    bucket = context.metadata.setdefault("invoked_skills", [])
+    if isinstance(bucket, list) and normalized not in bucket:
+        bucket.append(normalized)
+
+
 class SkillTool(BaseTool):
     """Return the content of a loaded skill."""
 
@@ -67,10 +100,12 @@ class SkillTool(BaseTool):
                 output=f"Skill {command_name} can only be invoked by the user as /{command_name}.",
                 is_error=True,
             )
+        canonical_name = str(getattr(skill, "command_name", None) or getattr(skill, "name", None) or arguments.name)
         if skill.base_dir:
             if uses_e2b_task_workspace(context):
                 sandbox_skill_dir = preinstalled_bundled_skill_dir(context, skill)
                 if sandbox_skill_dir is not None:
+                    _record_invoked_skill_metadata(context, canonical_name)
                     if context.progress_callback is not None:
                         await context.progress_callback(
                             {
@@ -83,11 +118,14 @@ class SkillTool(BaseTool):
                             }
                         )
                     return ToolResult(
-                        output=(
-                            f"Sandbox directory for this skill: {sandbox_skill_dir}\n"
-                            "Use files under this sandbox directory only. "
-                            "Do not use host-only bundled skill paths.\n\n"
-                            f"{skill.content}"
+                        output=_format_skill_output(
+                            canonical_name,
+                            skill.content,
+                            resource_lines=[
+                                f"Sandbox directory for this skill: {sandbox_skill_dir}",
+                                "Resolve relative paths mentioned by this skill against this sandbox directory before using them. "
+                                "Load referenced resources only as needed. Do not use host-only bundled skill paths.",
+                            ],
                         ),
                         metadata={
                             "workspace": "e2b",
@@ -110,20 +148,30 @@ class SkillTool(BaseTool):
                             }
                         )
                     return ToolResult(output=f"Failed to install skill in sandbox: {exc}", is_error=True)
+                _record_invoked_skill_metadata(context, canonical_name)
                 return ToolResult(
-                    output=(
-                        f"Sandbox directory for this skill: {sandbox_skill_dir}\n"
-                        "Use files under this sandbox directory only. "
-                        "Do not use host-only bundled skill paths.\n\n"
-                        f"{skill.content}"
+                    output=_format_skill_output(
+                        canonical_name,
+                        skill.content,
+                        resource_lines=[
+                            f"Sandbox directory for this skill: {sandbox_skill_dir}",
+                            "Resolve relative paths mentioned by this skill against this sandbox directory before using them. "
+                            "Load referenced resources only as needed. Do not use host-only bundled skill paths.",
+                        ],
                     ),
                     metadata={"workspace": "e2b", "path": sandbox_skill_dir, "skill": skill.name},
                 )
+            _record_invoked_skill_metadata(context, canonical_name)
             return ToolResult(
-                output=(
-                    f"Base directory for this skill: {skill.base_dir}\n"
-                    "Use paths under this directory for bundled skill assets and scripts.\n\n"
-                    f"{skill.content}"
+                output=_format_skill_output(
+                    canonical_name,
+                    skill.content,
+                    resource_lines=[
+                        f"Base directory for this skill: {skill.base_dir}",
+                        "Resolve relative paths mentioned by this skill against this base directory before using them. "
+                        "Load referenced resources only as needed.",
+                    ],
                 )
             )
-        return ToolResult(output=skill.content)
+        _record_invoked_skill_metadata(context, canonical_name)
+        return ToolResult(output=_format_skill_output(canonical_name, skill.content))

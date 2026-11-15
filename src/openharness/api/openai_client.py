@@ -800,6 +800,10 @@ def _convert_messages_to_openai(
                         "tool_call_id": tr.tool_use_id,
                         "content": tr.content,
                     })
+                    if tr.images:
+                        label = tr.images[0].source_path or tr.tool_use_id
+                        user_blocks.append(TextBlock(text=f"[Image from tool result {tr.tool_use_id}: {label}]"))
+                        user_blocks.extend(tr.images)
             if user_blocks:
                 content = _convert_user_content_to_openai(user_blocks)
                 if isinstance(content, str):
@@ -867,17 +871,21 @@ def _convert_messages_to_responses_input(messages: list[ConversationMessage]) ->
             user_blocks = [b for b in msg.content if isinstance(b, (TextBlock, ImageBlock, VideoBlock))]
             tool_results = [b for b in msg.content if isinstance(b, ToolResultBlock)]
 
-            if user_blocks:
-                content = _convert_user_content_to_responses(user_blocks)
-                if content:
-                    responses_items.append({"role": "user", "content": content})
-
             for tool_result in tool_results:
                 responses_items.append({
                     "type": "function_call_output",
                     "call_id": tool_result.tool_use_id,
                     "output": tool_result.content,
                 })
+                if tool_result.images:
+                    label = tool_result.images[0].source_path or tool_result.tool_use_id
+                    user_blocks.append(TextBlock(text=f"[Image from tool result {tool_result.tool_use_id}: {label}]"))
+                    user_blocks.extend(tool_result.images)
+
+            if user_blocks:
+                content = _convert_user_content_to_responses(user_blocks)
+                if content:
+                    responses_items.append({"role": "user", "content": content})
 
             if not user_blocks and not tool_results:
                 responses_items.append({

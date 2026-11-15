@@ -91,7 +91,18 @@ def _convert_messages_to_codex(messages: list[ConversationMessage]) -> list[dict
                     })
             user_content: list[dict[str, Any]] = []
             for block in msg.content:
-                if isinstance(block, TextBlock) and block.text.strip():
+                if isinstance(block, ToolResultBlock) and block.images:
+                    label = block.images[0].source_path or block.tool_use_id
+                    user_content.append({
+                        "type": "input_text",
+                        "text": f"[Image from tool result {block.tool_use_id}: {label}]",
+                    })
+                    for img in block.images:
+                        user_content.append({
+                            "type": "input_image",
+                            "image_url": f"data:{img.media_type};base64,{img.data}",
+                        })
+                elif isinstance(block, TextBlock) and block.text.strip():
                     user_content.append({"type": "input_text", "text": block.text})
                 elif isinstance(block, ImageBlock):
                     user_content.append({

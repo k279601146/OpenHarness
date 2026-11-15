@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
+    from openharness.engine.messages import ImageBlock
     from openharness.hooks.executor import HookExecutor
 
 
@@ -57,6 +58,7 @@ class ToolResult:
     output: str
     is_error: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
+    images: list[ImageBlock] = field(default_factory=list)
 
 
 class BaseTool(ABC):
@@ -83,6 +85,15 @@ class BaseTool(ABC):
         """Return whether the invocation is read-only."""
         del arguments
         return False
+
+    def is_concurrency_safe(self, arguments: BaseModel) -> bool:
+        """Return whether this invocation may execute concurrently in a batch.
+
+        Tools with ``parallel_safe = False`` or an explicit ``execution_group``
+        run sequentially relative to exclusive barriers unless overridden.
+        """
+        del arguments
+        return bool(self.parallel_safe and self.execution_group is None)
 
     def display_label(self) -> str:
         """Return a user-facing tool label without changing the input schema."""

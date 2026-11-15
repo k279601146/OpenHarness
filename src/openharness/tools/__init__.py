@@ -3,6 +3,7 @@
 from openharness.tools.ask_user_question_tool import AskUserQuestionTool
 from openharness.tools.ask_user_form_tool import AskUserFormTool
 from openharness.tools.agent_tool import AgentTool
+from openharness.tools.apply_patch_tool import ApplyPatchTool
 from openharness.tools.bash_tool import BashTool
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
 from openharness.tools.brief_tool import BriefTool
@@ -35,9 +36,14 @@ from openharness.tools.mcp_tool import McpToolAdapter
 from openharness.tools.prepare_web_image_reference_tool import PrepareWebImageReferenceTool
 from openharness.tools.read_mcp_resource_tool import ReadMcpResourceTool
 from openharness.tools.remote_trigger_tool import RemoteTriggerTool
+from openharness.tools.run_code_tool import RunCodeTool
+from openharness.tools.interrupt_agent_tool import InterruptAgentTool
+from openharness.tools.list_agents_tool import ListAgentsTool
 from openharness.tools.query_memory_tool import QueryMemoryTool
 from openharness.tools.send_message_tool import SendMessageTool
 from openharness.tools.skill_tool import SkillTool
+from openharness.tools.task_board_tool import TaskBoardTool
+from openharness.tools.wait_agent_tool import WaitAgentTool
 from openharness.tools.sleep_tool import SleepTool
 from openharness.tools.todo_write_tool import TodoWriteTool
 from openharness.tools.tool_search_tool import ToolSearchTool
@@ -53,6 +59,7 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         FileReadTool(),
         FileWriteTool(),
         FileEditTool(),
+        ApplyPatchTool(),
         McpAuthTool(),
         GlobTool(),
         GrepTool(),
@@ -81,8 +88,13 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         CronToggleTool(),
         DeliverArtifactTool(),
         RemoteTriggerTool(),
+        RunCodeTool(),
         AgentTool(),
         SendMessageTool(),
+        WaitAgentTool(),
+        ListAgentsTool(),
+        InterruptAgentTool(),
+        TaskBoardTool(),
         QueryMemoryTool(),
     ):
         registry.register(tool)

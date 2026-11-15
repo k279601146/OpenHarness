@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 import os
 import re
@@ -18,8 +19,11 @@ from pydantic import ValidationError
 from openharness.api.client import SupportsStreamingMessages
 from openharness.api.usage import UsageSnapshot
 from openharness.config.paths import get_data_dir
+from openharness.engine.inbox import AgentInbox, InboxMessage
 from openharness.engine.messages import (
     ConversationMessage,
+    ImageBlock,
+    TextBlock,
     ToolResultBlock,
 )
 from openharness.engine.stream_events import (
@@ -42,7 +46,21 @@ from openharness.engine.turn_state import (
 )
 from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
-from openharness.services.tool_outputs import tool_output_inline_chars, tool_output_preview_chars
+from openharness.services.compact.image_offload import (
+    MAX_IMAGE_OFFLOAD_RETRIES,
+    count_inline_images,
+    extract_image_limit_from_error,
+    is_image_limit_error,
+    offload_oldest_images,
+)
+from openharness.services.tool_outputs import (
+    retain_tool_output_preview,
+    should_offload_tool_output,
+    tool_output_inline_chars,
+    tool_output_inline_tokens,
+    tool_output_preview_chars,
+    tool_output_preview_tokens,
+)
 from openharness.tools.ask_user_interaction import AskUserInteractionPaused
 from openharness.tools.base import BaseTool, CancellationToken, ToolExecutionContext, ToolResult
 from openharness.tools.base import ToolRegistry
@@ -219,6 +237,7 @@ def _tool_unavailable_message(tool_name: str, context: QueryContext) -> str:
 
 
 CORE_TOOL_SCHEMA_NAMES = {
+    "apply_patch",
     "ask_user_form",
     "ask_user_question",
     "bash",
@@ -229,6 +248,7 @@ CORE_TOOL_SCHEMA_NAMES = {
     "glob",
     "grep",
     "read_file",
+    "run_code",
     "skill",
     "sleep",
     "todo_write",
@@ -249,6 +269,10 @@ MEDIA_TOOL_SCHEMA_NAMES = {
 TASK_TOOL_SCHEMA_NAMES = {
     "agent",
     "send_message",
+    "wait_agent",
+    "list_agents",
+    "interrupt_agent",
+    "task_board",
 }
 SCHEDULE_TOOL_SCHEMA_NAMES = set(SCHEDULE_MANAGEMENT_TOOL_NAMES) | {"remote_trigger"}
 FORM_TOOL_SCHEMA_NAMES = {"ask_user_form"}
@@ -257,7 +281,7 @@ MCP_TOOL_SCHEMA_NAMES = {"mcp_auth", "list_mcp_resources", "read_mcp_resource"}
 MEMORY_TOOL_SCHEMA_NAMES = {"query_memory"}
 
 
-_WORKSPACE_WRITE_TOOL_NAMES = {"bash", "create_folder", "write_file", "edit_file", "deliver_artifact"}
+_WORKSPACE_WRITE_TOOL_NAMES = {"bash", "create_folder", "write_file", "edit_file", "apply_patch", "deliver_artifact"}
 _TASK_MUTATION_TOOL_NAMES = {
     "agent",
     "send_message",
@@ -265,14 +289,11 @@ _TASK_MUTATION_TOOL_NAMES = {
 _SCHEDULE_MUTATION_TOOL_NAMES = {"cron_create", "cron_delete", "cron_toggle", "remote_trigger"}
 
 
-def _tool_execution_group(context: QueryContext, tool_name: str) -> str | None:
-    tool = context.tool_registry.get(tool_name)
-    if tool is not None:
-        explicit_group = getattr(tool, "execution_group", None)
-        if explicit_group:
-            return str(explicit_group)
-        if getattr(tool, "parallel_safe", True) is False:
-            return f"tool:{tool_name}"
+def _tool_execution_group(
+    context: QueryContext,
+    tool_name: str,
+    tool_input: dict[str, object] | None = None,
+) -> str | None:
     if tool_name in _WORKSPACE_WRITE_TOOL_NAMES:
         return "workspace_write"
     if tool_name.startswith("canvas_") and tool_name not in {
@@ -287,7 +308,39 @@ def _tool_execution_group(context: QueryContext, tool_name: str) -> str | None:
         return "schedule"
     if tool_name == "todo_write":
         return "turn_state"
+    tool = context.tool_registry.get(tool_name)
+    if tool is not None:
+        if tool_input is not None:
+            try:
+                parsed = tool.input_model.model_validate(tool_input)
+                if tool.is_concurrency_safe(parsed):
+                    return None
+            except Exception:
+                pass
+        explicit_group = getattr(tool, "execution_group", None)
+        if explicit_group:
+            return str(explicit_group)
+        if getattr(tool, "parallel_safe", True) is False:
+            return f"tool:{tool_name}"
     return None
+
+
+def _is_tool_call_concurrency_safe(
+    context: QueryContext,
+    prepared: _PreparedToolCall,
+    *,
+    group: str | None = None,
+) -> bool:
+    if group is not None:
+        return False
+    tool = context.tool_registry.get(prepared.tool_name)
+    if tool is None:
+        return True
+    try:
+        parsed = tool.input_model.model_validate(prepared.tool_input)
+        return bool(tool.is_concurrency_safe(parsed))
+    except Exception:
+        return bool(getattr(tool, "parallel_safe", True))
 
 
 def _metadata_list(metadata: dict[str, object] | None, key: str) -> list[str]:
@@ -365,7 +418,15 @@ def _tool_schema_selected_for_context(tool_name: str, context: QueryContext) -> 
     if tool_name in SCHEDULE_TOOL_SCHEMA_NAMES:
         return _has_schedule_context(metadata)
     if tool_name in TASK_TOOL_SCHEMA_NAMES:
-        return _has_selected_skill(metadata, "agent", "task", "team", "project", "orchestrator")
+        if tool_name == "agent":
+            depth = int((metadata or {}).get("subagent_depth") or 0)
+            max_depth = int((metadata or {}).get("subagent_max_depth") or 2)
+            if depth >= max_depth:
+                return False
+        return (
+            bool(metadata and metadata.get("enable_subagents"))
+            or _has_selected_skill(metadata, "agent", "task", "team", "project", "orchestrator")
+        )
     if tool_name in FORM_TOOL_SCHEMA_NAMES:
         return _has_selected_skill(metadata, "form", "survey")
     if tool_name in PLAN_TOOL_SCHEMA_NAMES:
@@ -590,6 +651,10 @@ class QueryContext:
     hook_executor: HookExecutor | None = None
     tool_metadata: dict[str, object] | None = None
     cancellation_token: CancellationToken | None = None
+    inbox: AgentInbox | None = None
+    steer_poller: Callable[[], Awaitable[list[str]] | list[str]] | None = None
+    max_parallel_tool_calls: int = 8
+    auto_drain_subagents: bool = True
 
 
 def _append_capped_unique(bucket: list[Any], value: Any, *, limit: int) -> None:
@@ -972,9 +1037,18 @@ def _offload_tool_output_if_needed(
     output: str,
     workspace_dir: Path | None = None,
     expose_artifact_path: bool = True,
+    sandbox_workspace_dir: str | None = None,
+    images: list[ImageBlock] | None = None,
 ) -> tuple[str, Path | None]:
+    del images
     inline_limit = tool_output_inline_chars()
-    if len(output) <= inline_limit:
+    inline_token_limit = tool_output_inline_tokens()
+    if not should_offload_tool_output(
+        tool_name,
+        output,
+        max_inline_chars=inline_limit,
+        max_inline_tokens=inline_token_limit,
+    ):
         return output, None
 
     artifact_path = (
@@ -982,25 +1056,176 @@ def _offload_tool_output_if_needed(
         / f"{time.strftime('%Y%m%d-%H%M%S')}-{_safe_tool_artifact_name(tool_name)}-{uuid4().hex[:12]}.txt"
     )
     artifact_path.write_text(output, encoding="utf-8", errors="replace")
-    preview = output[:tool_output_preview_chars()]
+    preview = retain_tool_output_preview(
+        output,
+        tool_output_preview_chars(),
+        max_tokens=tool_output_preview_tokens(),
+    )
     omitted = max(0, len(output) - len(preview))
     inline = (
         "[Tool output truncated]\n"
         f"Tool: {tool_name}\n"
         f"Tool use id: {tool_use_id}\n"
         f"Original size: {len(output)} chars\n"
-        f"Inline preview: first {len(preview)} chars"
+        f"Inline preview: {len(preview)} chars (head + tail)"
     )
+    displayed_path: str | None = None
     if expose_artifact_path:
+        displayed_path = str(artifact_path)
+    elif sandbox_workspace_dir and str(sandbox_workspace_dir).strip().startswith("/"):
+        displayed_path = (
+            f"{str(sandbox_workspace_dir).strip().rstrip('/')}/.openharness/tool_artifacts/{artifact_path.name}"
+        )
+    if displayed_path:
         inline = inline.replace(
-            f"Inline preview: first {len(preview)} chars",
-            f"Full output saved to: {artifact_path}\nInline preview: first {len(preview)} chars",
+            f"Inline preview: {len(preview)} chars (head + tail)",
+            f"Full output saved to: {displayed_path}\n"
+            "Retrieval hint: Use read_file (with offset and limit) or grep on the saved path to inspect omitted sections.\n"
+            f"Inline preview: {len(preview)} chars (head + tail)",
         )
     if omitted:
         inline += f" ({omitted} chars omitted)"
     if preview:
         inline += f"\n\nPreview:\n{preview}"
     return inline, artifact_path
+
+
+_REPEAT_TOOL_PREVIEW_LIMIT = 500
+_REPEAT_TOOL_THRESHOLDS = (3, 5, 8)
+
+
+class RepeatToolTracker:
+    """Detect consecutive identical tool invocations and emit escalation reminders."""
+
+    def __init__(self, *, thresholds: tuple[int, ...] = _REPEAT_TOOL_THRESHOLDS) -> None:
+        self._thresholds = thresholds
+        self._last_key: tuple[str, str] | None = None
+        self._streak = 0
+
+    @property
+    def streak(self) -> int:
+        return self._streak
+
+    def record_call(self, tool_name: str, tool_input: dict[str, Any] | Any) -> str | None:
+        try:
+            canonical_args = json.dumps(
+                tool_input if tool_input is not None else {},
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                default=str,
+            )
+        except TypeError:
+            canonical_args = repr(tool_input)
+
+        key = (tool_name, canonical_args)
+        if key == self._last_key:
+            self._streak += 1
+        else:
+            self._last_key = key
+            self._streak = 1
+
+        if self._streak < self._thresholds[0]:
+            return None
+        should_notify = (
+            self._streak in self._thresholds
+            or (self._streak > self._thresholds[-1] and (self._streak - self._thresholds[-1]) % 4 == 0)
+        )
+        if not should_notify:
+            return None
+
+        if self._streak <= self._thresholds[0]:
+            return (
+                f"[Repeat Tool Notice] Tool '{tool_name}' was called with identical arguments "
+                f"{self._streak} consecutive times. Avoid repeating the exact same call; review the "
+                "prior result, adjust parameters, or explain the blocker."
+            )
+
+        preview = canonical_args[:_REPEAT_TOOL_PREVIEW_LIMIT]
+        if len(canonical_args) > _REPEAT_TOOL_PREVIEW_LIMIT:
+            preview += "..."
+        return (
+            f"[Repeat Tool Warning] Tool '{tool_name}' has been called with identical arguments "
+            f"{self._streak} consecutive times (args={preview}). Stop repeating this call; "
+            "switch strategy, change inputs, or report why you are blocked."
+        )
+
+    def record_batch(self, calls: list[tuple[str, Any]]) -> str | None:
+        reminder: str | None = None
+        for tool_name, tool_input in calls:
+            msg = self.record_call(tool_name, tool_input)
+            if msg is not None:
+                reminder = msg
+        return reminder
+
+
+def _has_root_subagent_runtime(context: QueryContext) -> bool:
+    metadata = context.tool_metadata if isinstance(context.tool_metadata, dict) else None
+    if metadata is None or metadata.get("subagent_id"):
+        return False
+    return metadata.get("subagent_runtime") is not None
+
+
+def _drain_subagent_events(context: QueryContext) -> list[AgentProgressEvent]:
+    if not _has_root_subagent_runtime(context):
+        return []
+    runtime = (context.tool_metadata or {}).get("subagent_runtime")
+    if runtime is not None and hasattr(runtime, "drain_events"):
+        return list(runtime.drain_events())
+    return []
+
+
+def _snapshot_completed_messages(
+    messages: list[ConversationMessage],
+) -> list[ConversationMessage]:
+    """Deep-copy completed conversation turns safe for forked subagent inheritance."""
+    trimmed = list(messages)
+    while trimmed and trimmed[-1].role == "assistant" and trimmed[-1].tool_uses:
+        trimmed.pop()
+    return [msg.model_copy(deep=True) for msg in trimmed]
+
+
+async def _poll_external_steers(context: QueryContext, inbox: AgentInbox) -> None:
+    poller = context.steer_poller
+    if poller is None:
+        return
+    try:
+        items = poller()
+        if inspect.isawaitable(items):
+            items = await items
+        for item in items or []:
+            text = str(item or "").strip()
+            if text:
+                await inbox.steer(text, source="user")
+    except Exception:
+        log.debug("steer_poller failed", exc_info=True)
+
+
+def _format_inbox_message_text(msg: InboxMessage) -> str:
+    text = msg.content if isinstance(msg.content, str) else str(msg.content)
+    stripped = text.lstrip()
+    if (
+        msg.source.startswith("subagent:")
+        or stripped.startswith("<task-notification>")
+        or stripped.startswith("[Message from ")
+    ):
+        return text
+    return f"[User Steer]\n{text}"
+
+
+def _append_inbox_to_messages(
+    messages: list[ConversationMessage],
+    claimed: list[InboxMessage],
+) -> None:
+    if not claimed:
+        return
+    combined = "\n\n".join(_format_inbox_message_text(msg) for msg in claimed)
+    if messages and messages[-1].role == "user":
+        messages[-1] = messages[-1].model_copy(
+            update={"content": [*messages[-1].content, TextBlock(text=combined)]}
+        )
+    else:
+        messages.append(ConversationMessage.from_user_text(combined))
 
 
 async def run_query(
@@ -1020,8 +1245,11 @@ async def run_query(
         auto_compact_if_needed,
     )
 
+    inbox = context.inbox or AgentInbox()
     compact_state = AutoCompactState()
     reactive_compact_attempted = False
+    image_offload_attempts = 0
+    repeat_tracker = RepeatToolTracker()
     last_compaction_result: tuple[list[ConversationMessage], bool] = (messages, False)
     effective_max_tokens = _bounded_completion_tokens(
         context.max_tokens,
@@ -1091,6 +1319,27 @@ async def run_query(
                 timing=turn_trace,
             ), None
             return
+        await _poll_external_steers(context, inbox)
+        for sub_evt in _drain_subagent_events(context):
+            yield sub_evt, None
+        claimed_steers = inbox.claim_next_step()
+        if claimed_steers:
+            _append_inbox_to_messages(messages, claimed_steers)
+            for steered_msg in claimed_steers:
+                if steered_msg.source == "user":
+                    steer_text = (
+                        steered_msg.content
+                        if isinstance(steered_msg.content, str)
+                        else str(steered_msg.content)
+                    )
+                    yield _progress_event(
+                        "steer_applied",
+                        f"已注入实时转向指令：{steer_text[:120]}",
+                        status="info",
+                        workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                        metadata={"message_id": steered_msg.id, "content": steer_text},
+                        timing=turn_trace,
+                    ), None
         if effective_max_tokens != context.max_tokens and not reported_token_clamp:
             reported_token_clamp = True
             yield StatusEvent(
@@ -1108,6 +1357,25 @@ async def run_query(
             messages[:] = compacted_messages
         # ---------------------------------------------------------------
 
+        is_e2b_ws = str((context.tool_metadata or {}).get("workspace_backend") or "").lower() == "e2b"
+        raw_max_images = (context.tool_metadata or {}).get("max_inline_images")
+        if isinstance(raw_max_images, (int, float)) and int(raw_max_images) > 0:
+            max_inline_images = int(raw_max_images)
+            if count_inline_images(messages) > max_inline_images:
+                preflight_offloaded = offload_oldest_images(
+                    messages,
+                    keep_recent_images=max_inline_images,
+                    workspace_dir=_concrete_path(context.cwd),
+                    expose_paths=not is_e2b_ws,
+                )
+                if preflight_offloaded > 0:
+                    yield StatusEvent(
+                        message=(
+                            f"Offloaded {preflight_offloaded} older inline image(s) "
+                            f"to stay within limit ({max_inline_images})."
+                        )
+                    ), None
+
         model_result: ModelTurnComplete | None = None
         try:
             async for item in stream_model_turn(
@@ -1121,7 +1389,11 @@ async def run_query(
                 if isinstance(item, ModelTurnComplete):
                     model_result = item
                     continue
+                for sub_evt in _drain_subagent_events(context):
+                    yield sub_evt, None
                 yield item
+            for sub_evt in _drain_subagent_events(context):
+                yield sub_evt, None
         except Exception as exc:
             error_msg = str(exc)
             failure_detail = _safe_request_failure_detail(exc)
@@ -1138,6 +1410,30 @@ async def run_query(
                     ), None
                     turn_count = max(0, turn_count - 1)
                     continue
+            if image_offload_attempts < MAX_IMAGE_OFFLOAD_RETRIES and is_image_limit_error(exc):
+                inline_count = count_inline_images(messages)
+                if inline_count > 0:
+                    reported_cap = extract_image_limit_from_error(exc)
+                    if reported_cap is not None and inline_count > reported_cap:
+                        offload_batch = max(1, inline_count - reported_cap)
+                    else:
+                        offload_batch = max(1, inline_count // 3)
+                    offloaded_count = offload_oldest_images(
+                        messages,
+                        count=offload_batch,
+                        workspace_dir=_concrete_path(context.cwd),
+                        expose_paths=not is_e2b_ws,
+                    )
+                    if offloaded_count > 0:
+                        image_offload_attempts += 1
+                        yield StatusEvent(
+                            message=(
+                                f"Provider rejected multimodal payload ({inline_count} image(s)); "
+                                f"offloaded {offloaded_count} older image(s) and retrying."
+                            )
+                        ), None
+                        turn_count = max(0, turn_count - 1)
+                        continue
             if not reactive_compact_attempted and _is_prompt_too_long_error(exc):
                 reactive_compact_attempted = True
                 yield StatusEvent(message=REACTIVE_COMPACT_STATUS_MESSAGE), None
@@ -1227,6 +1523,9 @@ async def run_query(
                 timing=turn_trace,
             ), None
 
+        completed_messages_snapshot = (
+            _snapshot_completed_messages(messages) if final_message.tool_uses else []
+        )
         messages.append(final_message)
         yield AssistantTurnComplete(message=final_message, usage=usage), usage
 
@@ -1234,6 +1533,62 @@ async def run_query(
             messages.append(coordinator_context_message)
 
         if not final_message.tool_uses:
+            await _poll_external_steers(context, inbox)
+            for sub_evt in _drain_subagent_events(context):
+                yield sub_evt, None
+            if inbox.has_next_step():
+                continue
+
+            subagent_runtime = (
+                (context.tool_metadata or {}).get("subagent_runtime")
+                if isinstance(context.tool_metadata, dict)
+                else None
+            )
+            caller_id = str((context.tool_metadata or {}).get("subagent_id") or "lead")
+            if (
+                context.auto_drain_subagents
+                and subagent_runtime is not None
+                and hasattr(subagent_runtime, "has_running")
+                and subagent_runtime.has_running(parent_id=caller_id)
+            ):
+                if not (context.tool_metadata or {}).get("subagent_id"):
+                    yield _progress_event(
+                        "subagent_wait",
+                        "正在等待异步子智能体完成任务...",
+                        status="running",
+                        workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                        metadata={"running_agents": subagent_runtime.running_ids(parent_id=caller_id)},
+                        timing=turn_trace,
+                    ), None
+                while (
+                    subagent_runtime.has_running(parent_id=caller_id)
+                    and not _query_cancelled(context)
+                    and not inbox.has_next_step()
+                ):
+                    await subagent_runtime.wait_for_agents(
+                        parent_id=caller_id,
+                        caller_inbox=inbox,
+                        timeout_seconds=0.25,
+                        cancellation_token=context.cancellation_token,
+                    )
+                    await _poll_external_steers(context, inbox)
+                    for sub_evt in _drain_subagent_events(context):
+                        yield sub_evt, None
+                for sub_evt in _drain_subagent_events(context):
+                    yield sub_evt, None
+                if _query_cancelled(context):
+                    yield _progress_event(
+                        "turn_aborted",
+                        "",
+                        status="error",
+                        workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                        metadata={"reason": _query_cancel_reason(context), "stage": "subagent_wait"},
+                        timing=turn_trace,
+                    ), None
+                    return
+                if inbox.has_next_step():
+                    continue
+
             if context.hook_executor is not None:
                 await context.hook_executor.execute(
                     HookEvent.STOP,
@@ -1256,6 +1611,9 @@ async def run_query(
                 timing=turn_trace,
             ), None
             return
+
+        if isinstance(context.tool_metadata, dict):
+            context.tool_metadata["parent_completed_messages"] = completed_messages_snapshot
 
         if len(tool_calls) == 1:
             # Single tool: sequential (stream events immediately)
@@ -1287,15 +1645,53 @@ async def run_query(
                 timing=turn_trace,
             ), None
             try:
-                async for progress_event, result in _run_tool_with_progress(
-                    context,
-                    prepared.tool_name,
-                    prepared.tool_use_id,
-                    prepared.tool_input,
-                    timing=turn_trace,
-                ):
-                    if progress_event is not None:
-                        yield progress_event, None
+                if _has_root_subagent_runtime(context):
+                    single_queue: asyncio.Queue[
+                        tuple[AgentProgressEvent | None, ToolResultBlock | BaseException | None]
+                    ] = asyncio.Queue()
+
+                    async def _run_single() -> None:
+                        try:
+                            async for progress_event, res in _run_tool_with_progress(
+                                context,
+                                prepared.tool_name,
+                                prepared.tool_use_id,
+                                prepared.tool_input,
+                                timing=turn_trace,
+                            ):
+                                await single_queue.put((progress_event, res))
+                        except BaseException as exc:
+                            await single_queue.put((None, exc))
+
+                    single_task = asyncio.create_task(_run_single())
+                    while result is None:
+                        for sub_evt in _drain_subagent_events(context):
+                            yield sub_evt, None
+                        try:
+                            progress_event, item = await asyncio.wait_for(single_queue.get(), timeout=0.2)
+                        except asyncio.TimeoutError:
+                            if single_task.done():
+                                break
+                            continue
+                        if progress_event is not None:
+                            yield progress_event, None
+                        if isinstance(item, BaseException):
+                            raise item
+                        if item is not None:
+                            result = item
+                    await asyncio.gather(single_task, return_exceptions=True)
+                    for sub_evt in _drain_subagent_events(context):
+                        yield sub_evt, None
+                else:
+                    async for progress_event, result in _run_tool_with_progress(
+                        context,
+                        prepared.tool_name,
+                        prepared.tool_use_id,
+                        prepared.tool_input,
+                        timing=turn_trace,
+                    ):
+                        if progress_event is not None:
+                            yield progress_event, None
             except AskUserInteractionPaused:
                 raise
             except QueryCancelled as exc:
@@ -1371,77 +1767,169 @@ async def run_query(
                     timing=turn_trace,
                 ), None
 
-            result_queue: asyncio.Queue[tuple[_PreparedToolCall, AgentProgressEvent | None, ToolResultBlock | BaseException | None]] = asyncio.Queue()
+            # Partition consecutive concurrency-safe tools into a bounded rolling parallel
+            # pool, and serialize grouped / non-concurrency-safe calls as exclusive barriers.
+            batches: list[tuple[bool, list[tuple[_PreparedToolCall, str | None]]]] = []
+            for prepared in prepared_calls:
+                group = _tool_execution_group(context, prepared.tool_name, prepared.tool_input)
+                safe = group is None and _is_tool_call_concurrency_safe(
+                    context, prepared, group=group
+                )
+                if safe and batches and batches[-1][0]:
+                    batches[-1][1].append((prepared, group))
+                else:
+                    batches.append((safe, [(prepared, group)]))
+
+            max_parallel = max(1, int(getattr(context, "max_parallel_tool_calls", 8) or 8))
+            raw_results_by_id: dict[str, ToolResultBlock | BaseException] = {}
             execution_group_locks: dict[str, asyncio.Lock] = {}
 
-            async def _run(prepared: _PreparedToolCall):
-                group = _tool_execution_group(context, prepared.tool_name)
-                queued_at = time.monotonic()
-                try:
-                    lock = execution_group_locks.setdefault(group, asyncio.Lock()) if group else None
-                    if lock is None:
-                        async for progress_event, result in _run_tool_with_progress(
-                            context,
-                            prepared.tool_name,
-                            prepared.tool_use_id,
-                            prepared.tool_input,
-                            timing=turn_trace,
-                        ):
-                            await result_queue.put((prepared, progress_event, result))
-                    else:
-                        async with lock:
-                            queued_ms = _elapsed_ms(queued_at)
-                            await result_queue.put(
-                                (
-                                    prepared,
-                                    _progress_event(
-                                        "tool_dispatch",
-                                        "",
-                                        status="info",
-                                        tool_name=prepared.tool_name,
-                                        tool_use_id=prepared.tool_use_id,
-                                        workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
-                                        metadata={"execution_group": group, "queued_ms": queued_ms},
-                                        timing=turn_trace,
-                                    ),
-                                    None,
-                                )
+            for is_parallel_batch, batch_items in batches:
+                if is_parallel_batch:
+                    result_queue: asyncio.Queue[
+                        tuple[_PreparedToolCall, AgentProgressEvent | None, ToolResultBlock | BaseException | None]
+                    ] = asyncio.Queue()
+                    semaphore = asyncio.Semaphore(max_parallel)
+
+                    async def _run_parallel(prepared: _PreparedToolCall) -> None:
+                        async with semaphore:
+                            try:
+                                async for progress_event, result in _run_tool_with_progress(
+                                    context,
+                                    prepared.tool_name,
+                                    prepared.tool_use_id,
+                                    prepared.tool_input,
+                                    timing=turn_trace,
+                                ):
+                                    await result_queue.put((prepared, progress_event, result))
+                            except BaseException as exc:
+                                await result_queue.put((prepared, None, exc))
+
+                    tasks = [
+                        asyncio.create_task(_run_parallel(prepared))
+                        for prepared, _ in batch_items
+                    ]
+                    batch_done_count = 0
+                    while batch_done_count < len(batch_items):
+                        for sub_evt in _drain_subagent_events(context):
+                            yield sub_evt, None
+                        try:
+                            prepared, progress_event, result = await asyncio.wait_for(
+                                result_queue.get(), timeout=0.2
                             )
-                            async for progress_event, result in _run_tool_with_progress(
-                                context,
-                                prepared.tool_name,
-                                prepared.tool_use_id,
-                                prepared.tool_input,
-                                timing=turn_trace,
-                            ):
-                                await result_queue.put((prepared, progress_event, result))
-                except BaseException as exc:
-                    await result_queue.put((prepared, None, exc))
+                        except asyncio.TimeoutError:
+                            continue
+                        if progress_event is not None:
+                            yield progress_event, None
+                        if result is not None:
+                            if isinstance(result, QueryCancelled):
+                                for running_task in tasks:
+                                    if not running_task.done():
+                                        running_task.cancel()
+                                await asyncio.gather(*tasks, return_exceptions=True)
+                                yield _progress_event(
+                                    "turn_aborted",
+                                    "",
+                                    status="error",
+                                    workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                                    metadata={"reason": str(result) or _query_cancel_reason(context), "stage": "tool_execution"},
+                                    timing=turn_trace,
+                                ), None
+                                return
+                            if prepared.tool_use_id not in raw_results_by_id:
+                                batch_done_count += 1
+                            raw_results_by_id[prepared.tool_use_id] = result
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                else:
+                    for prepared, group in batch_items:
+                        queued_at = time.monotonic()
+                        lock = execution_group_locks.setdefault(group, asyncio.Lock()) if group else None
+                        exclusive_queue: asyncio.Queue[
+                            tuple[_PreparedToolCall, AgentProgressEvent | None, ToolResultBlock | BaseException | None]
+                        ] = asyncio.Queue()
 
-            tasks = [asyncio.create_task(_run(prepared)) for prepared in prepared_calls]
-            raw_results_by_id: dict[str, ToolResultBlock | BaseException] = {}
-            while len(raw_results_by_id) < len(tool_calls):
-                prepared, progress_event, result = await result_queue.get()
-                if progress_event is not None:
-                    yield progress_event, None
-                if result is not None:
-                    if isinstance(result, QueryCancelled):
-                        for running_task in tasks:
-                            if not running_task.done():
-                                running_task.cancel()
-                        await asyncio.gather(*tasks, return_exceptions=True)
-                        yield _progress_event(
-                            "turn_aborted",
-                            "",
-                            status="error",
-                            workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
-                            metadata={"reason": str(result) or _query_cancel_reason(context), "stage": "tool_execution"},
-                            timing=turn_trace,
-                        ), None
-                        return
-                    raw_results_by_id[prepared.tool_use_id] = result
+                        async def _run_exclusive(
+                            p: _PreparedToolCall = prepared,
+                            g: str | None = group,
+                            lk: asyncio.Lock | None = lock,
+                            q_at: float = queued_at,
+                            q_out: asyncio.Queue[
+                                tuple[_PreparedToolCall, AgentProgressEvent | None, ToolResultBlock | BaseException | None]
+                            ] = exclusive_queue,
+                        ) -> None:
+                            try:
+                                if lk is not None:
+                                    async with lk:
+                                        queued_ms = _elapsed_ms(q_at)
+                                        await q_out.put(
+                                            (
+                                                p,
+                                                _progress_event(
+                                                    "tool_dispatch",
+                                                    "",
+                                                    status="info",
+                                                    tool_name=p.tool_name,
+                                                    tool_use_id=p.tool_use_id,
+                                                    workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                                                    metadata={"execution_group": g, "queued_ms": queued_ms},
+                                                    timing=turn_trace,
+                                                ),
+                                                None,
+                                            )
+                                        )
+                                        async for progress_event, result in _run_tool_with_progress(
+                                            context,
+                                            p.tool_name,
+                                            p.tool_use_id,
+                                            p.tool_input,
+                                            timing=turn_trace,
+                                        ):
+                                            await q_out.put((p, progress_event, result))
+                                else:
+                                    async for progress_event, result in _run_tool_with_progress(
+                                        context,
+                                        p.tool_name,
+                                        p.tool_use_id,
+                                        p.tool_input,
+                                        timing=turn_trace,
+                                    ):
+                                        await q_out.put((p, progress_event, result))
+                            except BaseException as exc:
+                                await q_out.put((p, None, exc))
 
-            await asyncio.gather(*tasks, return_exceptions=True)
+                        exclusive_task = asyncio.create_task(_run_exclusive())
+                        while prepared.tool_use_id not in raw_results_by_id:
+                            for sub_evt in _drain_subagent_events(context):
+                                yield sub_evt, None
+                            try:
+                                p, progress_event, result = await asyncio.wait_for(
+                                    exclusive_queue.get(), timeout=0.2
+                                )
+                            except asyncio.TimeoutError:
+                                if exclusive_task.done() and exclusive_queue.empty():
+                                    break
+                                continue
+                            if progress_event is not None:
+                                yield progress_event, None
+                            if result is not None:
+                                if isinstance(result, QueryCancelled):
+                                    if not exclusive_task.done():
+                                        exclusive_task.cancel()
+                                    await asyncio.gather(exclusive_task, return_exceptions=True)
+                                    yield _progress_event(
+                                        "turn_aborted",
+                                        "",
+                                        status="error",
+                                        workspace=str((context.tool_metadata or {}).get("workspace_backend") or ""),
+                                        metadata={"reason": str(result) or _query_cancel_reason(context), "stage": "tool_execution"},
+                                        timing=turn_trace,
+                                    ), None
+                                    return
+                                raw_results_by_id[p.tool_use_id] = result
+                        await asyncio.gather(exclusive_task, return_exceptions=True)
+
+            for sub_evt in _drain_subagent_events(context):
+                yield sub_evt, None
             cancellation = next(
                 (result for result in raw_results_by_id.values() if isinstance(result, QueryCancelled)),
                 None,
@@ -1506,7 +1994,15 @@ async def run_query(
             if paused_interaction is not None:
                 raise paused_interaction
 
+        repeat_reminder = repeat_tracker.record_batch([(tc.name, tc.input) for tc in tool_calls])
+        if repeat_reminder and tool_results:
+            last_result_block = tool_results[-1]
+            tool_results[-1] = last_result_block.model_copy(
+                update={"content": f"{last_result_block.content}\n\n{repeat_reminder}"}
+            )
         messages.append(ConversationMessage(role="user", content=tool_results))
+        if isinstance(context.tool_metadata, dict):
+            context.tool_metadata.pop("parent_completed_messages", None)
 
     if context.max_turns is not None:
         raise MaxTurnsExceeded(context.max_turns)
@@ -1521,6 +2017,7 @@ async def _execute_tool_call(
     progress_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     *,
     allow_media_split: bool = True,
+    skip_inline_offload: bool = False,
 ) -> ToolResultBlock:
     tool_input = _clean_tool_input_for_execution(context, tool_name, tool_input)
     if allow_media_split and _is_media_generation_tool(tool_name):
@@ -1696,6 +2193,24 @@ async def _execute_tool_call(
                     is_error=True,
                     result_metadata=release_metadata,
                 )
+        ptc_runner = None
+        if tool_name == "run_code":
+            async def _run_ptc_nested_tool(
+                nested_name: str,
+                nested_id: str,
+                nested_args: dict[str, object],
+            ) -> ToolResultBlock:
+                return await _execute_tool_call(
+                    context,
+                    nested_name,
+                    nested_id,
+                    nested_args,
+                    progress_callback=progress_callback,
+                    allow_media_split=False,
+                    skip_inline_offload=True,
+                )
+
+            ptc_runner = _run_ptc_nested_tool
         result = await tool.execute(
             parsed_input,
             ToolExecutionContext(
@@ -1707,6 +2222,7 @@ async def _execute_tool_call(
                     "tool_use_id": tool_use_id,
                     **tool_metadata,
                     "media_billing_reservation": media_reservation,
+                    **({"ptc_tool_runner": ptc_runner} if ptc_runner is not None else {}),
                 },
                 hook_executor=context.hook_executor,
                 progress_callback=progress_callback,
@@ -1763,19 +2279,36 @@ async def _execute_tool_call(
                     is_error=True,
                     metadata=result_metadata,
                 )
-    inline_output, artifact_path = _offload_tool_output_if_needed(
-        tool_name=tool_name,
-        tool_use_id=tool_use_id,
-        output=result.output,
-        workspace_dir=_concrete_path(context.cwd),
-        expose_artifact_path=str((context.tool_metadata or {}).get("workspace_backend") or "").lower() != "e2b",
+    is_e2b_workspace = str((context.tool_metadata or {}).get("workspace_backend") or "").lower() == "e2b"
+    sandbox_ws_dir = (
+        str((context.tool_metadata or {}).get("primary_workspace") or "/home/user")
+        if is_e2b_workspace
+        else None
     )
+    if skip_inline_offload:
+        inline_output, artifact_path = result.output, None
+    else:
+        inline_output, artifact_path = _offload_tool_output_if_needed(
+            tool_name=tool_name,
+            tool_use_id=tool_use_id,
+            output=result.output,
+            workspace_dir=_concrete_path(context.cwd),
+            expose_artifact_path=not is_e2b_workspace,
+            sandbox_workspace_dir=sandbox_ws_dir,
+            images=list(result.images or ()),
+        )
     if artifact_path is not None:
-        _remember_active_artifact(context.tool_metadata, str(artifact_path))
+        _remember_active_artifact(
+            context.tool_metadata,
+            f"{sandbox_ws_dir.rstrip('/')}/.openharness/tool_artifacts/{artifact_path.name}"
+            if is_e2b_workspace and sandbox_ws_dir
+            else str(artifact_path),
+        )
     tool_result = ToolResultBlock(
         tool_use_id=tool_use_id,
         content=inline_output,
         is_error=result.is_error,
+        images=list(result.images or ()),
         result_metadata=result_metadata,
     )
     _record_tool_carryover(

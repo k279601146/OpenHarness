@@ -107,9 +107,16 @@ class GrepTool(BaseTool):
         if matches is not None:
             return _format_rg_result(matches, arguments.timeout_seconds)
 
+        from openharness.tools.file_state import is_ignored_search_relpath
+
+        filtered_paths = (
+            path
+            for path in root.glob(arguments.file_glob)
+            if not is_ignored_search_relpath(path.relative_to(root), pattern=arguments.file_glob)
+        )
         return ToolResult(
             output=_python_grep_files(
-                paths=root.glob(arguments.file_glob),
+                paths=filtered_paths,
                 pattern=arguments.pattern,
                 case_sensitive=arguments.case_sensitive,
                 limit=arguments.limit,
@@ -134,6 +141,8 @@ def _python_grep_files(
     limit: int,
     display_base: Path,
 ) -> str:
+    from openharness.tools.file_state import truncate_search_line
+
     flags = 0 if case_sensitive else re.IGNORECASE
     try:
         compiled = re.compile(pattern, flags)
@@ -155,7 +164,9 @@ def _python_grep_files(
         text = raw.decode("utf-8", errors="replace")
         for line_no, line in enumerate(text.splitlines(), start=1):
             if compiled.search(line):
-                collected.append(f"{_format_path(path, display_base)}:{line_no}:{line}")
+                collected.append(
+                    f"{_format_path(path, display_base)}:{line_no}:{truncate_search_line(line)}"
+                )
                 if len(collected) >= limit:
                     break
 
@@ -194,9 +205,12 @@ async def _rg_grep(
     if not rg:
         return None
 
+    from openharness.tools.file_state import rg_vcs_exclude_args
+
     include_hidden = (root / ".git").exists() or (root / ".gitignore").exists()
     cmd: list[str] = [
         rg,
+        "--no-config",
         "--no-heading",
         "--line-number",
         "--color",
@@ -208,6 +222,7 @@ async def _rg_grep(
         cmd.append("-i")
     if file_glob:
         cmd.extend(["--glob", file_glob])
+    cmd.extend(rg_vcs_exclude_args())
     cmd.extend(["--", pattern, "."])
 
     process = await asyncio.create_subprocess_exec(
@@ -256,6 +271,7 @@ async def _rg_grep_file(
 
     cmd: list[str] = [
         rg,
+        "--no-config",
         "--no-heading",
         "--line-number",
         "--color",
@@ -312,6 +328,8 @@ async def _collect_rg_matches(
     *,
     limit: int,
 ) -> None:
+    from openharness.tools.file_state import truncate_search_line
+
     assert process.stdout is not None
     while len(matches) < limit:
         try:
@@ -320,8 +338,13 @@ async def _collect_rg_matches(
             continue
         if not raw:
             break
-        line = raw.decode("utf-8", errors="replace").rstrip("\n")
+        line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
         if line:
+            parts = line.split(":", 2)
+            if len(parts) == 3:
+                line = f"{parts[0]}:{parts[1]}:{truncate_search_line(parts[2])}"
+            else:
+                line = truncate_search_line(line)
             matches.append(line)
 
 
@@ -333,6 +356,8 @@ async def _collect_rg_file_matches(
     path: Path,
     display_base: Path,
 ) -> None:
+    from openharness.tools.file_state import truncate_search_line
+
     assert process.stdout is not None
     while len(matches) < limit:
         try:
@@ -341,9 +366,14 @@ async def _collect_rg_file_matches(
             continue
         if not raw:
             break
-        line = raw.decode("utf-8", errors="replace").rstrip("\n")
+        line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
         if not line:
             continue
+        if ":" in line:
+            line_no, content = line.split(":", 1)
+            line = f"{line_no}:{truncate_search_line(content)}"
+        else:
+            line = truncate_search_line(line)
         matches.append(f"{_format_path(path, display_base)}:{line}")
 
 

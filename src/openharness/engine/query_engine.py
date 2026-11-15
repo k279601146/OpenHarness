@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 from openharness.api.client import SupportsStreamingMessages
 from openharness.engine.cost_tracker import CostTracker
 from openharness.coordinator.coordinator_mode import get_coordinator_user_context
+from openharness.engine.inbox import AgentInbox, InboxMessage
 from openharness.engine.messages import ConversationMessage, TextBlock, ToolResultBlock, sanitize_conversation_messages
 from openharness.engine.events import (
     build_session_event,
@@ -50,6 +51,10 @@ class QueryEngine:
         hook_executor: HookExecutor | None = None,
         tool_metadata: dict[str, object] | None = None,
         settings: Settings | None = None,
+        inbox: AgentInbox | None = None,
+        steer_poller: Callable[[], Awaitable[list[str]] | list[str]] | None = None,
+        max_parallel_tool_calls: int = 8,
+        auto_drain_subagents: bool = True,
     ) -> None:
         self._api_client = api_client
         self._tool_registry = tool_registry
@@ -72,10 +77,27 @@ class QueryEngine:
         self._hook_executor = hook_executor
         self._tool_metadata = tool_metadata or {}
         self._settings = settings
+        self._inbox = inbox or AgentInbox()
+        self._steer_poller = steer_poller
+        self._max_parallel_tool_calls = max(1, int(max_parallel_tool_calls))
+        self._auto_drain_subagents = bool(auto_drain_subagents)
         self._messages: list[ConversationMessage] = []
         self._cost_tracker = CostTracker()
         self._active_cancellation_token: CancellationToken | None = None
         self._active_session_turn_id: str | None = None
+
+    @property
+    def inbox(self) -> AgentInbox:
+        """Return the engine's step/turn inbox."""
+        return self._inbox
+
+    async def steer(self, content: str | list[Any], *, source: str = "user") -> InboxMessage:
+        """Queue a live steering message injected at the next step boundary."""
+        return await self._inbox.steer(content, source=source)
+
+    async def followup(self, content: str | list[Any], *, source: str = "user") -> InboxMessage:
+        """Queue a follow-up message executed as a subsequent turn."""
+        return await self._inbox.followup(content, source=source)
 
     @property
     def messages(self) -> list[ConversationMessage]:
@@ -333,19 +355,38 @@ class QueryEngine:
             hook_executor=self._hook_executor,
             tool_metadata=self._tool_metadata,
             cancellation_token=cancellation_token,
+            inbox=self._inbox,
+            steer_poller=self._steer_poller,
+            max_parallel_tool_calls=self._max_parallel_tool_calls,
+            auto_drain_subagents=self._auto_drain_subagents,
         )
         query_messages = list(self._messages)
         coordinator_context = self._build_coordinator_context_message()
         if coordinator_context is not None:
             query_messages.append(coordinator_context)
         try:
-            async for event, usage in run_query(context, query_messages):
-                if isinstance(event, AssistantTurnComplete):
-                    self._messages = list(query_messages)
-                if usage is not None:
-                    self._cost_tracker.add(usage)
-                self._record_stream_event(event)
-                yield event
+            while True:
+                async for event, usage in run_query(context, query_messages):
+                    if isinstance(event, AssistantTurnComplete):
+                        self._messages = list(query_messages)
+                    if usage is not None:
+                        self._cost_tracker.add(usage)
+                    self._record_stream_event(event)
+                    yield event
+                self._messages = list(query_messages)
+                if cancellation_token.is_cancelled():
+                    break
+                next_turn = self._inbox.claim_next_turn()
+                if next_turn is None:
+                    break
+                follow_text = (
+                    next_turn.content
+                    if isinstance(next_turn.content, str)
+                    else str(next_turn.content)
+                )
+                follow_msg = ConversationMessage.from_user_text(follow_text)
+                self._messages.append(follow_msg)
+                query_messages = list(self._messages)
         finally:
             if self._active_cancellation_token is cancellation_token:
                 self._active_cancellation_token = None
@@ -377,6 +418,10 @@ class QueryEngine:
             hook_executor=self._hook_executor,
             tool_metadata=self._tool_metadata,
             cancellation_token=cancellation_token,
+            inbox=self._inbox,
+            steer_poller=self._steer_poller,
+            max_parallel_tool_calls=self._max_parallel_tool_calls,
+            auto_drain_subagents=self._auto_drain_subagents,
         )
         try:
             async for event, usage in run_query(context, self._messages):

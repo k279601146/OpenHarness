@@ -96,7 +96,7 @@ async def _await_with_progress(
 
 
 def uses_e2b_task_workspace(context: ToolExecutionContext) -> bool:
-    metadata = context.metadata or {}
+    metadata = getattr(context, "metadata", None) or {}
     explicit_backend = metadata.get("workspace_backend")
     if explicit_backend is not None:
         return str(explicit_backend).lower() == "e2b"
@@ -146,7 +146,46 @@ async def get_e2b_task_session(context: ToolExecutionContext):
         )
     await ensure_selected_skills_installed_in_sandbox(context, session)
     await _ensure_sandbox_inputs(context, session)
+    await ensure_spilled_tool_outputs_in_sandbox(context, session)
     return session
+
+
+async def ensure_spilled_tool_outputs_in_sandbox(context: ToolExecutionContext, session: Any) -> None:
+    """Sync any host-side spilled tool outputs into the active E2B task workspace."""
+    metadata = context.metadata or {}
+    host_root_raw = str(metadata.get("host_workspace") or context.cwd or "").strip()
+    if not host_root_raw:
+        return
+    try:
+        spill_dir = Path(host_root_raw).expanduser().resolve() / ".openharness" / "tool_artifacts"
+    except (OSError, RuntimeError, ValueError):
+        return
+    if not spill_dir.is_dir():
+        return
+    try:
+        spill_files = sorted(path for path in spill_dir.glob("*.txt") if path.is_file())
+    except OSError:
+        return
+    if not spill_files:
+        return
+
+    session_key = str(getattr(session, "sandbox_id", "") or id(session))
+    synced = metadata.setdefault("_sandbox_spills_synced", set())
+    pending = [
+        (path, f"{session_key}:{path.name}:{path.stat().st_size}")
+        for path in spill_files
+        if f"{session_key}:{path.name}:{path.stat().st_size}" not in synced
+    ]
+    if not pending:
+        return
+
+    target_dir = posixpath.join(sandbox_primary_workspace(context), ".openharness", "tool_artifacts")
+    mkdir_proc = await session.exec_command(f"mkdir -p {shlex.quote(target_dir)}")
+    await mkdir_proc.communicate()
+    for path, cache_key in pending:
+        target_path = posixpath.join(target_dir, path.name)
+        await session.write_file_binary(target_path, path.read_bytes())
+        synced.add(cache_key)
 
 
 async def _ensure_sandbox_inputs(context: ToolExecutionContext, session: Any) -> None:
@@ -278,15 +317,32 @@ async def ensure_sandbox_skill_path(context: ToolExecutionContext, session: Any,
 
 
 async def ensure_selected_skills_installed_in_sandbox(context: ToolExecutionContext, session: Any) -> None:
-    """Install UI-selected skills before generic sandbox tools read their files."""
+    """Install UI-selected or model-invoked skills before generic sandbox tools read their files."""
     metadata = context.metadata or {}
     raw_names = metadata.get("selected_skill_ids") or metadata.get("required_skill_ids") or []
-    if not isinstance(raw_names, (list, tuple, set)):
-        return
-    await _ensure_named_skills_installed(context, session, [str(name) for name in raw_names if str(name).strip()])
+    if isinstance(raw_names, (list, tuple, set)):
+        await _ensure_named_skills_installed(
+            context,
+            session,
+            [str(name) for name in raw_names if str(name).strip()],
+        )
+    invoked_names = metadata.get("invoked_skills") or []
+    if isinstance(invoked_names, (list, tuple, set)):
+        await _ensure_named_skills_installed(
+            context,
+            session,
+            [str(name) for name in invoked_names if str(name).strip()],
+            skip_if_preinstalled_present=True,
+        )
 
 
-async def _ensure_named_skills_installed(context: ToolExecutionContext, session: Any, names: list[str]) -> None:
+async def _ensure_named_skills_installed(
+    context: ToolExecutionContext,
+    session: Any,
+    names: list[str],
+    *,
+    skip_if_preinstalled_present: bool = False,
+) -> None:
     metadata = context.metadata or {}
     session_key = str(getattr(session, "sandbox_id", "") or id(session))
     ensured = metadata.setdefault("_sandbox_skills_ensured", set())
@@ -310,11 +366,23 @@ async def _ensure_named_skills_installed(context: ToolExecutionContext, session:
 
     registry = _load_context_skill_registry(context)
     for name, cache_key in pending:
-        skill = registry.get(name)
+        skill = registry.get(name) or registry.get(name.lower()) or registry.get(name.title())
         if skill is None:
             ensured.add(cache_key)
             session_ensured.add(name)
             continue
+        if skip_if_preinstalled_present and preinstalled_bundled_skill_dir(context, skill) is not None:
+            target_root = sandbox_skill_dir(context, skill)
+            skill_md = f"{target_root}/SKILL.md"
+            check_proc = await session.exec_command(
+                f"if test -d {shlex.quote(skill_md)}; then echo dir; "
+                f"elif test -f {shlex.quote(skill_md)}; then echo file; else echo missing; fi"
+            )
+            stdout, _ = await check_proc.communicate()
+            if stdout.decode("utf-8", errors="replace").strip() == "file":
+                ensured.add(cache_key)
+                session_ensured.add(name)
+                continue
         await _install_skill_in_sandbox_session(context, session, skill)
         ensured.add(cache_key)
         session_ensured.add(name)
@@ -496,10 +564,14 @@ async def sandbox_glob(session: Any, root: str, pattern: str, *, limit: int) -> 
         "root = os.path.normpath(data['root'])\n"
         "pattern = data['pattern'] or '*'\n"
         "limit = int(data['limit'])\n"
+        "ignored = {'.git', '.svn', '.hg', '.bzr', '.jj', '.sl', 'node_modules', '__pycache__', '.venv'}\n"
         "matches = glob.glob(os.path.join(root, pattern), recursive=True)\n"
         "rendered = []\n"
         "for path in sorted(matches):\n"
         "    rel = os.path.relpath(path, root)\n"
+        "    parts = [p for p in rel.split(os.sep) if p and p != '.']\n"
+        "    if any(p in ignored and p not in pattern for p in parts[:-1]) or (parts and parts[-1] in {'.git', '.svn', '.hg', '.bzr', '.jj', '.sl'} and parts[-1] not in pattern):\n"
+        "        continue\n"
         "    rendered.append(rel if rel != '.' else os.path.basename(path))\n"
         "    if len(rendered) >= limit:\n"
         "        break\n"
