@@ -65,3 +65,22 @@ def test_skill_fingerprint_ignores_permission_bits(tmp_path: Path, monkeypatch) 
 
     monkeypatch.setattr(Path, "stat", fake_stat)
     assert skill_source_fingerprint(skill_dir) == baseline
+
+
+def test_skill_fingerprint_uses_case_sensitive_posix_order(tmp_path: Path) -> None:
+    import hashlib
+
+    skill_dir = tmp_path / "skill-order"
+    (skill_dir / "agents").mkdir(parents=True)
+    skill_md = skill_dir / "SKILL.md"
+    openai_yaml = skill_dir / "agents" / "openai.yaml"
+    skill_md.write_bytes(b"skill")
+    openai_yaml.write_bytes(b"agent")
+
+    ordered = [path.relative_to(skill_dir).as_posix() for path in iter_skill_source_files(skill_dir)]
+    assert ordered == ["SKILL.md", "agents/openai.yaml"]
+
+    expected = hashlib.sha256(
+        b"SKILL.md\0skill\0agents/openai.yaml\0agent\0"
+    ).hexdigest()
+    assert skill_source_fingerprint(skill_dir) == expected

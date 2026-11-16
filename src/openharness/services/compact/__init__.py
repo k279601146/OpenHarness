@@ -1603,7 +1603,7 @@ async def auto_compact_if_needed(
 
     # Try microcompact first — may be enough
     messages, tokens_freed = microcompact_messages(messages)
-    _record_compact_checkpoint(
+    microcompact_metadata = _record_compact_checkpoint(
         carryover_metadata,
         checkpoint="query_microcompact_end",
         trigger=trigger,
@@ -1619,6 +1619,14 @@ async def auto_compact_if_needed(
         auto_compact_threshold_tokens=auto_compact_threshold_tokens,
     ):
         log.info("Microcompact freed ~%d tokens, auto-compact no longer needed", tokens_freed)
+        await _emit_progress(
+            progress_callback,
+            phase="context_collapse_end",
+            trigger=trigger,
+            message="Microcompacted earlier tool outputs to stay within context budget.",
+            checkpoint="query_microcompact_end",
+            metadata=microcompact_metadata,
+        )
         return messages, True
 
     # Step 1.5: 0-token deterministic pruning of oversized historical tool results
@@ -1632,7 +1640,7 @@ async def auto_compact_if_needed(
         preserve_recent=min(preserve_recent, 4),
         target_tokens=threshold_tokens,
     )
-    _record_compact_checkpoint(
+    prune_metadata = _record_compact_checkpoint(
         carryover_metadata,
         checkpoint="query_prune_end",
         trigger=trigger,
@@ -1654,6 +1662,14 @@ async def auto_compact_if_needed(
         log.info(
             "Deterministic tool-result pruner freed ~%d tokens, skipping LLM compact",
             prune_saved,
+        )
+        await _emit_progress(
+            progress_callback,
+            phase="context_collapse_end",
+            trigger=trigger,
+            message="Pruned oversized earlier tool outputs to stay within context budget.",
+            checkpoint="query_prune_end",
+            metadata=prune_metadata,
         )
         return messages, True
 

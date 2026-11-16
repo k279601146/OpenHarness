@@ -14,7 +14,10 @@ _EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
 def iter_skill_source_files(source_dir: str | Path):
     """Yield files that are part of the authored skill package."""
     root = Path(source_dir).expanduser().resolve()
-    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+    for path in sorted(
+        (item for item in root.rglob("*") if item.is_file()),
+        key=lambda item: item.relative_to(root).parts,
+    ):
         rel = path.relative_to(root)
         if any(part in _EXCLUDED_DIR_NAMES for part in rel.parts):
             continue
