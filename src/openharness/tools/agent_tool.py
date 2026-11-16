@@ -21,32 +21,46 @@ logger = logging.getLogger(__name__)
 class AgentToolInput(BaseModel):
     """Arguments for local agent spawning."""
 
-    description: str = Field(description="Short 3-5 word summary of the delegated subtask")
-    prompt: str = Field(
+    description: str = Field(
         description=(
-            "Complete, self-contained task specification for the subagent: objective, scope/files, "
-            "constraints, and expected output format (avoid vague one-liners unless inherit_context=True)."
+            "A short (3-5 word) description of the delegated task, for display. "
+            "Use the language of the user's current request."
         )
     )
-    subagent_type: str | None = Field(
-        default=None,
-        description="Agent type for definition lookup (e.g. 'general-purpose', 'Explore', 'worker')",
+    prompt: str = Field(
+        description=(
+            "The complete, self-contained task for the subagent. When `inherit_context=False` (default), "
+            "it does not share this conversation's context, so include everything it needs. "
+            "When `inherit_context=True`, it already sees this conversation's completed turns, "
+            "so build on them freely and state only what is new."
+        )
     )
-    model: str | None = Field(default=None)
-    name: str | None = Field(default=None, description="Optional short readable name for the subagent")
-    max_turns: int | None = Field(default=None, ge=1, description="Optional maximum turns for this subagent")
+    name: str | None = Field(
+        default=None,
+        description=(
+            "Optional short name for the subagent, unique among the subagents you create: "
+            "lower-case letters, digits, and hyphens, starting with a letter, at most 32 characters; "
+            "lead is reserved for the root agent. Omitted names default to agent-1, agent-2, and so on."
+        ),
+    )
     inherit_context: bool = Field(
         default=False,
         description=(
-            "When true, fork completed conversation turns so far into the child's history (excluding the "
-            "in-flight tool call) for continuation, review, or verification. Keep false by default for fresh "
-            "context isolation."
+            "When false (default), start a fresh isolated subagent that works in its own context. "
+            "When true, delegate to a child agent seeded with all completed turns so far (excluding the "
+            "current in-flight turn) for follow-up analysis, review, or verification."
         ),
     )
     output_schema: dict[str, object] | None = Field(
         default=None,
         description="Optional JSON Schema dict that the subagent's final output must conform to.",
     )
+    subagent_type: str | None = Field(
+        default=None,
+        description="Agent type for definition lookup (e.g. 'general-purpose', 'Explore', 'worker')",
+    )
+    model: str | None = Field(default=None)
+    max_turns: int | None = Field(default=None, ge=1, description="Optional maximum turns for this subagent")
     preset: str | None = Field(
         default=None,
         description="Optional AgentPreset name (e.g. 'researcher', 'coder', 'short_drama', 'voice').",
@@ -63,17 +77,45 @@ class AgentToolInput(BaseModel):
     )
 
 
+_HIDDEN_AGENT_SCHEMA_FIELDS = frozenset(
+    {
+        "subagent_type",
+        "model",
+        "max_turns",
+        "preset",
+        "external_cli",
+        "command",
+        "team",
+        "mode",
+    }
+)
+
+
 class AgentTool(BaseTool):
     """Spawn a local asynchronous subagent."""
 
     name = "agent"
     description = (
-        "Spawn a non-blocking asynchronous subagent and return its `agent_id` immediately. "
-        "Use for parallel independent workstreams, noisy exploration/verification isolation "
-        "(`inherit_context=False`), or context-inherited continuation/review (`inherit_context=True`). "
-        "Prefer answering simple direct tasks or 1-2 tool lookups without delegating."
+        "Delegate a self-contained task to a subagent (a separate agent that works in its own context) "
+        "to offload focused, independent work — research, multi-target comparison, document review, "
+        "a scoped implementation, or an analysis — so it does not consume this conversation's context. "
+        "The subagent returns its result, not its intermediate steps. "
+        "This tool starts an independently managed subagent and immediately returns its name (`agent_id`). "
+        "If you are still online when it finishes, the runtime automatically delivers its completion notice. "
+        "Use `send_message` to steer it while running or continue its conversation after it finishes."
     )
     input_model = AgentToolInput
+    execution_group = "task_manager"
+
+    def to_api_schema(self) -> dict[str, object]:
+        schema = super().to_api_schema()
+        input_schema = schema.get("input_schema")
+        if isinstance(input_schema, dict):
+            props = input_schema.get("properties")
+            if isinstance(props, dict):
+                for hidden_key in _HIDDEN_AGENT_SCHEMA_FIELDS:
+                    props.pop(hidden_key, None)
+        return schema
 
     def is_concurrency_safe(self, arguments: AgentToolInput) -> bool:
         """Spawning independent subagents can run concurrently when no custom CLI command is set."""

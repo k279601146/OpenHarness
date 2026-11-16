@@ -372,7 +372,8 @@ class SubagentRuntime:
     ) -> str:
         sections: list[str] = [
             f"You are subagent `{agent_id}` (type `{subagent_type}`, depth {depth}/{self._max_depth}), "
-            f"spawned by `{parent_id}` inside a coordinated multi-agent session.",
+            f"spawned by `{parent_id}` inside a coordinated multi-agent session.\n"
+            f'Your name is "{agent_id}". The root agent of your collaboration tree is "lead".',
             (
                 "Work autonomously to complete the assigned task using your available tools. "
                 "Do not ask the user interactive questions; report blockers or uncertainties back to your parent. "
@@ -388,11 +389,14 @@ class SubagentRuntime:
             )
         if depth < self._max_depth:
             sections.append(
-                "If subtasks are independent and beneficial to parallelize, you may use `task_board` and "
-                "`agent` + `wait_agent` to delegate, staying mindful of depth limits."
+                "Start independent delegations with `agent` together in one assistant message when subtasks "
+                "can run in parallel, and end your turn when only waiting for their results remains."
             )
         else:
-            sections.append("You are at the maximum subagent depth and should complete this task directly without spawning further subagents.")
+            sections.append(
+                f"Delegation depth for `agent`: current {depth}, maximum {self._max_depth}, remaining levels 0. "
+                "Do not call `agent` at this depth; carry out the work directly."
+            )
         if definition and definition.system_prompt:
             sections.append(f"## Role Instructions ({definition.name})\n{definition.system_prompt.strip()}")
         return "\n\n".join(sections)

@@ -119,25 +119,21 @@ def _build_delegation_section() -> str:
         [
             "# Delegation And Subagents",
             "",
-            "OpenHarness supports non-blocking subagents via `agent` plus structured tracking via `task_board`.",
-            "Every `agent(...)` call returns immediately after spawning; completion and failure notifications arrive in your inbox automatically.",
+            "Start independent delegations with `agent` together in one assistant message and continue useful work while they run. "
+            "When only waiting for their results remains, end your turn instead of sleeping or polling; the next result starts a new turn. "
+            "Collect the subagent results required to complete the task before giving the user a final answer.",
             "",
-            "When to delegate:",
-            "- Parallel independent workstreams: spawn multiple `agent` calls in the same turn when files, research tracks, or verification checks can run concurrently, then end your turn without polling.",
-            "- Context isolation (`inherit_context=False`, default): keep noisy search output, broad repository exploration, or verbose test logs out of your main context window.",
-            "- Context-inherited follow-up (`inherit_context=True`): spawn a forked child that sees completed turns so far for independent verification, code review, or continuing a multi-step investigation with fresh focus.",
-            "- Explicit multi-agent workflows: when the user asks for parallel investigation, background execution, or task decomposition.",
+            "Delegation modes:",
+            "- Fresh isolated subagent (`inherit_context=False`, default): delegate a self-contained task to a subagent that works in its own context to offload focused, independent work — multi-target research, competitor/product comparison, multi-document review, scoped implementation, or multi-perspective analysis — so intermediate steps do not consume this conversation's context. It does not share this conversation's context, so include everything it needs in `prompt`.",
+            "- Context-inherited forked subagent (`inherit_context=True`): delegate a task to a child agent seeded with all completed turns so far (excluding the current in-flight turn). Use this when the subtask builds on this conversation's context — a follow-up analysis, a review, or verification — without consuming this conversation's context for the work itself.",
             "",
-            "When NOT to delegate:",
-            "- Do not spawn a subagent for simple direct answers, single-file reads, or quick 1–2 tool lookups that take less effort than delegating.",
-            "- Do not spawn duplicate subagents for the same slice, and do not poll `wait_agent` in a loop after spawning background workers unless you genuinely need results before continuing.",
-            "",
-            "Lifecycle tools:",
-            "- `agent(description=..., prompt=..., subagent_type=..., inherit_context=False)`: spawn an async child agent.",
-            "- `run_code(code=...)`: run a bounded Python script that batches multiple `await tools.<name>(**kwargs)` / `await gather(...)` calls in a single turn, filtering or aggregating intermediate outputs before returning only the distilled summary.",
-            "- `task_board(...)`: break multi-step work into dependency-aware DAG tasks (`batch_create`, `create`, `claim`, `update`, `list`).",
-            "- `send_message(agent_id=..., message=...)`: steer or send follow-up instructions to a child agent.",
-            "- `list_agents()` / `wait_agent(agent_id=..., timeout=...)` / `interrupt_agent(agent_id=...)`: inspect, explicitly await if needed, or stop running workers.",
+            "Subagent control & coordination tools:",
+            "- `agent(description=..., prompt=..., name=..., inherit_context=False)`: start an independently managed subagent and immediately return its `agent_id`.",
+            "- `send_message(task_id=..., message=...)`: send a message to a running subagent (received at its next step) or continue an idle/completed subagent's conversation.",
+            "- `list_agents()`: list the subagent tree with names, descriptions, and status (`running` or `completed`).",
+            "- `wait_agent(agent_ids=..., timeout_seconds=...)` / `interrupt_agent(agent_id=...)`: wait for inbox input when explicitly needed, or stop a running descendant.",
+            "- `task_board(...)`: shared dependency-aware DAG task board (`batch_create`, `create`, `claim`, `update`, `list`) with `blocked_by` dependencies and advisory `write_scopes` when coordinating multi-worker file edits.",
+            "- Use `workflow` ONLY when the user explicitly asks for a workflow or for large multi-stage script orchestration; for normal parallel delegations, call `agent` directly.",
         ]
     )
 

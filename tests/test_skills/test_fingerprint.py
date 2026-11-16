@@ -36,3 +36,32 @@ def test_skill_sync_manifest_uses_same_source_file_filter(tmp_path: Path) -> Non
     (cache_dir / "tool.cpython-312.pyc").write_bytes(b"compiled")
 
     assert _skill_source_manifest(skill_dir) == {"file_count": 1, "total_size": 5}
+
+
+def test_skill_fingerprint_ignores_permission_bits(tmp_path: Path, monkeypatch) -> None:
+    skill_dir = tmp_path / "skill-perms"
+    skill_dir.mkdir(parents=True)
+    skill_md = skill_dir / "SKILL.md"
+    skill_md.write_text("# Hypit\n", encoding="utf-8")
+
+    baseline = skill_source_fingerprint(skill_dir)
+
+    orig_stat = Path.stat
+
+    class _FakeStat:
+        def __init__(self, real_stat, mode: int) -> None:
+            self._real = real_stat
+            self.st_mode = mode
+
+        def __getattr__(self, name: str):
+            return getattr(self._real, name)
+
+    # Simulate Linux container file mode 0o755 vs Windows NTFS mode 0o666.
+    def fake_stat(self: Path, *args, **kwargs):
+        real = orig_stat(self, *args, **kwargs)
+        if self == skill_md:
+            return _FakeStat(real, (real.st_mode & ~0o777) | 0o755)
+        return real
+
+    monkeypatch.setattr(Path, "stat", fake_stat)
+    assert skill_source_fingerprint(skill_dir) == baseline

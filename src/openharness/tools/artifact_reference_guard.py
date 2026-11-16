@@ -77,7 +77,8 @@ def artifact_lookup_guard_result(context: ToolExecutionContext, text: str) -> To
     if not has_mentioned_media(context):
         return None
     normalized = str(text or "").replace("\\", "/").lower()
-    if not _looks_like_wrong_artifact_lookup(normalized):
+    raw_thread_id = str(context.metadata.get("thread_id") or "").strip().lower()
+    if not _looks_like_wrong_artifact_lookup(normalized, thread_id=raw_thread_id or None):
         return None
     refs = ", ".join(media_input_refs(context)) or "the mentioned artifact input_ref"
     return ToolResult(
@@ -102,11 +103,15 @@ def wrong_media_type_error(context: ToolExecutionContext, expected: str) -> Tool
     )
 
 
-def _looks_like_wrong_artifact_lookup(text: str) -> bool:
+def _looks_like_wrong_artifact_lookup(text: str, *, thread_id: str | None = None) -> bool:
     if "/artifacts/" in text:
         return True
     if "imagegen_output" in text or "videogen_output" in text:
         return True
-    if "materialized" in text and ("glob" in text or "*" in text or "/inputs/materialized" in text):
-        return True
+    if "materialized" in text:
+        current_thread_dir = f"/tasks/{thread_id}/inputs/materialized" if thread_id else ""
+        if current_thread_dir and current_thread_dir in text and "glob" not in text and "**" not in text:
+            return False
+        if "glob" in text or "*" in text or "/inputs/materialized" in text:
+            return True
     return ("curl" in text or "wget" in text) and "artifact" in text

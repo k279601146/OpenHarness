@@ -31,10 +31,7 @@ def skill_source_fingerprint(source_dir: str | Path) -> str:
     hasher = hashlib.sha256()
     for path in iter_skill_source_files(root):
         rel = path.relative_to(root).as_posix()
-        stat = path.stat()
         hasher.update(rel.encode("utf-8"))
-        hasher.update(b"\0")
-        hasher.update(str(stat.st_mode & 0o777).encode("ascii"))
         hasher.update(b"\0")
         hasher.update(path.read_bytes())
         hasher.update(b"\0")

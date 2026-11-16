@@ -125,6 +125,38 @@ class PtcToolOutput:
     def __str__(self) -> str:
         return self.output
 
+    def __len__(self) -> int:
+        val = self.data
+        if isinstance(val, (dict, list, tuple, set, str)):
+            return len(val)
+        return len(self.output or "")
+
+    def __getitem__(self, key: Any) -> Any:
+        val = self.data
+        if isinstance(val, (dict, list, tuple)) and not isinstance(key, slice):
+            try:
+                return val[key]
+            except (KeyError, IndexError, TypeError):
+                if isinstance(val, dict) and key == "output":
+                    return self.output
+                raise
+        return (self.output or "")[key]
+
+    def __contains__(self, item: Any) -> bool:
+        val = self.data
+        if isinstance(val, (dict, list, tuple, set)):
+            return item in val
+        return str(item) in (self.output or "")
+
+    def __iter__(self):
+        val = self.data
+        if isinstance(val, (list, tuple, dict, set)):
+            return iter(val)
+        return iter(self.lines())
+
+    def __bool__(self) -> bool:
+        return not self.is_error and bool((self.output or "").strip() or self.structured_data is not None)
+
 
 class _ReturnSignal(Exception):
     def __init__(self, value: Any) -> None:

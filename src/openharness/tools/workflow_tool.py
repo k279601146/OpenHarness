@@ -80,9 +80,10 @@ class WorkflowTool(BaseTool):
     name = "workflow"
     display_name = "Workflow Orchestrator"
     description = (
-        "Run a multi-stage workflow combining `parallel`, `pipeline`, `phase`, and isolated `agent` steps. "
-        "Each `agent` step runs in its own clean context window (optionally validated against `output_schema`), "
-        "and only the aggregated structured outputs return to your context."
+        "Use this tool ONLY when the user explicitly asks for a workflow or for large multi-stage orchestration. "
+        "For normal parallel delegations (such as 2-6 independent research or review subtasks), call `agent` directly instead. "
+        "Runs a structured workflow combining `parallel`, `pipeline`, `phase`, and isolated `agent` steps, "
+        "returning only aggregated structured outputs."
     )
     input_model = WorkflowToolInput
     output_model = WorkflowOutputModel

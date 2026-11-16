@@ -283,7 +283,6 @@ MEMORY_TOOL_SCHEMA_NAMES = {"query_memory"}
 
 _WORKSPACE_WRITE_TOOL_NAMES = {"bash", "create_folder", "write_file", "edit_file", "apply_patch", "deliver_artifact"}
 _TASK_MUTATION_TOOL_NAMES = {
-    "agent",
     "send_message",
 }
 _SCHEDULE_MUTATION_TOOL_NAMES = {"cron_create", "cron_delete", "cron_toggle", "remote_trigger"}
