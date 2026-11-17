@@ -47,6 +47,9 @@ _TRANSIENT_METADATA_KEYS = frozenset(
         "subagent_depth",
         "subagent_inbox",
         "parent_completed_messages",
+        "prompt_context_tracker",
+        "dynamic_prompt_context_snapshot",
+        "invoked_tools",
     }
 )
 

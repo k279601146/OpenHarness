@@ -452,3 +452,89 @@ def test_skill_registry_rank_precedence_and_cache_invalidation(tmp_path: Path) -
     r1 = get_cached_skill_registry(tmp_path, include_default_user_skills=False, include_default_plugin_roots=False)
     r2 = get_cached_skill_registry(tmp_path, include_default_user_skills=False, include_default_plugin_roots=False)
     assert r1 is r2
+
+
+@pytest.mark.asyncio
+async def test_deferred_tool_schemas_and_dynamic_activation(tmp_path: Path) -> None:
+    from openharness.config.settings import PermissionSettings
+    from openharness.engine.query import (
+        SUBAGENT_CONTROL_TOOL_NAMES,
+        QueryContext,
+        _record_tool_carryover,
+        _tool_schemas_for_context,
+    )
+    from openharness.permissions.checker import PermissionChecker
+    from openharness.permissions.modes import PermissionMode
+    from openharness.tools import create_default_tool_registry
+    from openharness.tools.tool_search_tool import ToolSearchTool, ToolSearchToolInput
+
+    registry = create_default_tool_registry()
+    context = QueryContext(
+        api_client=None,
+        tool_registry=registry,
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.DEFAULT)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="sys",
+        max_tokens=1024,
+        tool_metadata={"enable_subagents": True, "subagent_depth": 0, "subagent_max_depth": 2},
+    )
+
+    initial_names = {s["name"] for s in _tool_schemas_for_context(context)}
+    assert "agent" in initial_names
+    assert "tool_search" in initial_names
+    for deferred in ("ask_user_form", "apply_patch", "workflow", "ralph", *SUBAGENT_CONTROL_TOOL_NAMES):
+        assert deferred not in initial_names
+
+    # 1. `tool_search` discovers and activates deferred tools for the next turn.
+    search_res = await ToolSearchTool().execute(
+        ToolSearchToolInput(query="workflow"),
+        ToolExecutionContext(cwd=tmp_path, metadata={"tool_registry": registry}),
+    )
+    assert "workflow" in (search_res.metadata or {}).get("activated_tools", [])
+    _record_tool_carryover(
+        context,
+        tool_name="tool_search",
+        tool_input={"query": "workflow"},
+        tool_output=search_res.output,
+        tool_result_metadata=search_res.metadata,
+        is_error=False,
+        resolved_file_path=None,
+    )
+    assert "workflow" in {s["name"] for s in _tool_schemas_for_context(context)}
+
+    # 2. Calling `agent` activates subagent control tools (`send_message`, `wait_agent`, `task_board`, etc.).
+    _record_tool_carryover(
+        context,
+        tool_name="agent",
+        tool_input={"description": "sub", "prompt": "do work"},
+        tool_output="agent_1",
+        tool_result_metadata=None,
+        is_error=False,
+        resolved_file_path=None,
+    )
+    after_agent_names = {s["name"] for s in _tool_schemas_for_context(context)}
+    assert set(SUBAGENT_CONTROL_TOOL_NAMES).issubset(after_agent_names)
+
+    # 3. Loading a `skill` that references `ask_user_form` auto-activates its schema.
+    _record_tool_carryover(
+        context,
+        tool_name="skill",
+        tool_input={"name": "game-marketing-video"},
+        tool_output="Call `ask_user_form` to collect the ad brief.",
+        tool_result_metadata=None,
+        is_error=False,
+        resolved_file_path=None,
+    )
+    assert "ask_user_form" in {s["name"] for s in _tool_schemas_for_context(context)}
+
+
+def test_sanitize_tool_json_schema_strips_pydantic_title_boilerplate() -> None:
+    from openharness.tools.ask_user_form_tool import AskUserFormTool
+
+    schema = AskUserFormTool().to_api_schema()["input_schema"]
+    assert "title" not in schema
+    # A genuine property named `title` must be preserved inside `properties`,
+    # while its Pydantic field `title` metadata is stripped.
+    assert "title" in schema["properties"]
+    assert "title" not in schema["properties"]["title"]

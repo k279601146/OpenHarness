@@ -236,13 +236,12 @@ def _tool_unavailable_message(tool_name: str, context: QueryContext) -> str:
     )
 
 
+# Always-declared tool schemas. Low-frequency or overlapping tools are deferred
+# (DeepSeek Harness `deferLoading` style): their schemas stay out of the request
+# until `tool_search` activates them via `invoked_tools`.
 CORE_TOOL_SCHEMA_NAMES = {
-    "apply_patch",
-    "ask_user_form",
     "ask_user_question",
     "bash",
-    "brief",
-    "create_folder",
     "deliver_artifact",
     "edit_file",
     "glob",
@@ -250,13 +249,30 @@ CORE_TOOL_SCHEMA_NAMES = {
     "read_file",
     "run_code",
     "skill",
-    "sleep",
     "todo_write",
     "tool_search",
     "web_fetch",
     "web_search",
     "write_file",
 }
+# Deferred general-purpose tools that `tool_search` may activate on demand.
+DEFERRED_TOOL_SCHEMA_NAMES = (
+    "apply_patch",
+    "ask_user_form",
+    "brief",
+    "create_folder",
+    "interrupt_agent",
+    "list_agents",
+    "ralph",
+    "send_message",
+    "sleep",
+    "task_board",
+    "wait_agent",
+    "workflow",
+)
+# Subagent control tools are only declared after the first `agent` delegation.
+SUBAGENT_CONTROL_TOOL_NAMES = ("send_message", "wait_agent", "list_agents", "interrupt_agent", "task_board")
+MAX_TRACKED_INVOKED_TOOLS = 24
 
 MEDIA_TOOL_SCHEMA_NAMES = {
     "generate_image",
@@ -422,6 +438,15 @@ def _tool_schema_selected_for_context(tool_name: str, context: QueryContext) -> 
 
     if tool_name in CORE_TOOL_SCHEMA_NAMES:
         return True
+    # Dynamically activated tools (from `tool_search`, `agent` delegation, or loaded skills).
+    invoked_tools = _metadata_list(metadata, "invoked_tools") + _metadata_list(metadata, "required_tools")
+    if tool_name.lower() in invoked_tools:
+        if tool_name == "agent":
+            depth = int((metadata or {}).get("subagent_depth") or 0)
+            max_depth = int((metadata or {}).get("subagent_max_depth") or 2)
+            if depth >= max_depth:
+                return False
+        return True
     if tool_name.startswith("connector__"):
         return bool(_metadata_list(metadata, "selected_connector_ids"))
     if tool_name.startswith("canvas_"):
@@ -436,22 +461,23 @@ def _tool_schema_selected_for_context(tool_name: str, context: QueryContext) -> 
             max_depth = int((metadata or {}).get("subagent_max_depth") or 2)
             if depth >= max_depth:
                 return False
-        return (
-            bool(metadata and metadata.get("enable_subagents"))
-            or _has_selected_skill(metadata, "agent", "task", "team", "project", "orchestrator")
-        )
+            return (
+                bool(metadata and metadata.get("enable_subagents"))
+                or _has_selected_skill(metadata, "agent", "task", "team", "project", "orchestrator")
+            )
+        return _has_selected_skill(metadata, "agent", "task", "team", "project", "orchestrator")
     if tool_name in FORM_TOOL_SCHEMA_NAMES:
-        return _has_selected_skill(metadata, "form", "survey")
+        return _has_selected_skill(metadata, "form", "survey", "brief", "marketing", "drama", "ad", "design")
     if tool_name in PLAN_TOOL_SCHEMA_NAMES:
         return _has_selected_skill(metadata, "plan")
     if tool_name in MCP_TOOL_SCHEMA_NAMES:
         return _has_mcp_context(context)
     if tool_name in MEMORY_TOOL_SCHEMA_NAMES:
         return _has_selected_skill(metadata, "memory", "viking", "recall")
-    # Dynamically exposed tools from active session context
-    invoked_tools = _metadata_list(metadata, "invoked_tools") + _metadata_list(metadata, "required_tools")
-    if tool_name.lower() in invoked_tools:
-        return True
+    if tool_name == "workflow":
+        return _has_selected_skill(metadata, "workflow", "orchestrator")
+    if tool_name == "ralph":
+        return _has_selected_skill(metadata, "ralph")
     return False
 
 
@@ -815,6 +841,23 @@ def _remember_skill_invocation(
         del bucket[:-MAX_TRACKED_SKILLS]
 
 
+def _remember_invoked_tools(
+    tool_metadata: dict[str, object] | None,
+    tool_names: list[str] | tuple[str, ...],
+) -> None:
+    """Activate deferred tool schemas for the following model steps."""
+    bucket = _tool_metadata_bucket(tool_metadata, "invoked_tools")
+    for raw in tool_names:
+        name = str(raw or "").strip().lower()
+        if not name:
+            continue
+        if name in bucket:
+            bucket.remove(name)
+        bucket.append(name)
+    if len(bucket) > MAX_TRACKED_INVOKED_TOOLS:
+        del bucket[:-MAX_TRACKED_INVOKED_TOOLS]
+
+
 def _remember_async_agent_activity(
     tool_metadata: dict[str, object] | None,
     *,
@@ -971,7 +1014,22 @@ def _record_tool_carryover(
         if skill_name:
             _remember_active_artifact(context.tool_metadata, f"skill:{skill_name}")
             _remember_verified_work(context.tool_metadata, f"Loaded skill {skill_name}")
+        # Auto-activate any deferred tool names explicitly referenced by the loaded skill
+        # so the model can call them on the very next turn without an extra tool_search.
+        mentioned_deferred = [
+            deferred_name
+            for deferred_name in DEFERRED_TOOL_SCHEMA_NAMES
+            if re.search(rf"\b{re.escape(deferred_name)}\b", tool_output or "")
+        ]
+        if mentioned_deferred:
+            _remember_invoked_tools(context.tool_metadata, mentioned_deferred)
+    elif tool_name == "tool_search":
+        activated = (tool_result_metadata or {}).get("activated_tools")
+        if isinstance(activated, list):
+            _remember_invoked_tools(context.tool_metadata, [str(item) for item in activated])
     elif tool_name in {"agent", "send_message"}:
+        if tool_name == "agent":
+            _remember_invoked_tools(context.tool_metadata, SUBAGENT_CONTROL_TOOL_NAMES)
         _remember_async_agent_activity(
             context.tool_metadata,
             tool_name=tool_name,
@@ -2401,7 +2459,8 @@ async def _execute_tool_call(
         else:
             result = await call_chain(parsed_input, exec_context)
 
-        result = tool.project_content(result, exec_context)
+        if hasattr(tool, "project_content") and callable(tool.project_content):
+            result = tool.project_content(result, exec_context)
     except (QueryCancelled, asyncio.CancelledError):
         if media_reservation and hook is not None and hasattr(hook, "release_media_tool_usage"):
             try:
@@ -2458,7 +2517,8 @@ async def _execute_tool_call(
         if is_e2b_workspace
         else None
     )
-    result = tool.finalize_content(result, exec_context)
+    if hasattr(tool, "finalize_content") and callable(tool.finalize_content):
+        result = tool.finalize_content(result, exec_context)
     result_metadata = dict(result.metadata or {})
     if skip_inline_offload:
         inline_output, artifact_path = result.output, None

@@ -1749,7 +1749,14 @@ class OpenAICompatibleClient:
     so it can be used as a drop-in replacement in the agent loop.
     """
 
-    def __init__(self, api_key: str, *, base_url: str | None = None, timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        base_url: str | None = None,
+        timeout: float | None = None,
+        supports_responses: bool = True,
+    ) -> None:
         kwargs: dict[str, Any] = {
             "api_key": api_key,
             "default_headers": {
@@ -1759,12 +1766,19 @@ class OpenAICompatibleClient:
         }
         normalized_base_url = _normalize_openai_base_url(base_url)
         self._base_url = normalized_base_url
+        self._supports_responses = bool(supports_responses)
+        self._responses_unsupported = not self._supports_responses
         if normalized_base_url:
             kwargs["base_url"] = normalized_base_url
         if timeout is not None:
             kwargs["timeout"] = timeout
         kwargs["max_retries"] = 0
         self._client = AsyncOpenAI(**kwargs)
+
+    @property
+    def supports_responses(self) -> bool:
+        """Whether the client should attempt the Responses API before chat/completions."""
+        return not self._responses_unsupported
 
     async def aclose(self) -> None:
         """Close the underlying async SDK client before its event loop exits."""
@@ -1923,34 +1937,53 @@ class OpenAICompatibleClient:
                 raise
 
         async def _create_response_or_chat(create_params: dict[str, Any], chat_create_params: dict[str, Any]) -> tuple[str, Any]:
+            if self._responses_unsupported:
+                return "chat/completions", await _create_chat_completion_with_optional_param_fallback(chat_create_params)
             try:
                 return "responses", await _create_response_with_optional_param_fallback(create_params)
             except Exception as exc:
                 if not _looks_like_endpoint_unsupported(exc):
                     raise
+                self._responses_unsupported = True
                 log.warning(
                     "[OpenAICompat:%s] responses endpoint unsupported by upstream; retrying via chat/completions",
                     request_id,
                 )
                 return "chat/completions", await _create_chat_completion_with_optional_param_fallback(chat_create_params)
 
-        log.info(
-            "[OpenAICompat:%s] responses request model=%s stream=%s input_items=%d system=%s "
-            "tools=%d tool_names=%s max_output_tokens=%s reasoning=%s prompt_cache=%s retention=%s service_tier=%s base_url=%s",
-            request_id,
-            request.model,
-            params.get("stream"),
-            len(responses_input),
-            "yes" if instructions else "no",
-            len(responses_tools or []),
-            [tool.get("name") or tool.get("type") for tool in (responses_tools or [])[:8]],
-            params.get("max_output_tokens"),
-            params.get("reasoning"),
-            "yes" if params.get("prompt_cache_key") else "no",
-            params.get("prompt_cache_retention"),
-            params.get("service_tier"),
-            getattr(self._client, "base_url", None),
-        )
+        if self._responses_unsupported:
+            log.info(
+                "[OpenAICompat:%s] chat/completions request model=%s stream=%s messages=%d system=%s "
+                "tools=%d tool_names=%s reasoning=%s service_tier=%s base_url=%s",
+                request_id,
+                request.model,
+                chat_params.get("stream"),
+                len(chat_params.get("messages") or []),
+                "yes" if request.system_prompt else "no",
+                len(chat_params.get("tools") or []),
+                [(tool.get("function") or {}).get("name") for tool in (chat_params.get("tools") or [])[:8]],
+                chat_params.get("reasoning_effort"),
+                chat_params.get("service_tier"),
+                getattr(self._client, "base_url", None),
+            )
+        else:
+            log.info(
+                "[OpenAICompat:%s] responses request model=%s stream=%s input_items=%d system=%s "
+                "tools=%d tool_names=%s max_output_tokens=%s reasoning=%s prompt_cache=%s retention=%s service_tier=%s base_url=%s",
+                request_id,
+                request.model,
+                params.get("stream"),
+                len(responses_input),
+                "yes" if instructions else "no",
+                len(responses_tools or []),
+                [tool.get("name") or tool.get("type") for tool in (responses_tools or [])[:8]],
+                params.get("max_output_tokens"),
+                params.get("reasoning"),
+                "yes" if params.get("prompt_cache_key") else "no",
+                params.get("prompt_cache_retention"),
+                params.get("service_tier"),
+                getattr(self._client, "base_url", None),
+            )
 
         if not params.get("stream"):
             response: Any | None = None

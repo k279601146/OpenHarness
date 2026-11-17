@@ -18,7 +18,8 @@ class ToolSearchTool(BaseTool):
 
     name = "tool_search"
     description = (
-        "Search the registered internal atomic tool list (e.g. read_file, web_fetch). "
+        "Search and activate deferred internal tools (e.g. ask_user_form, workflow, ralph, task_board, "
+        "apply_patch, cron_create, generate_image). Matched tools are activated for subsequent turns. "
         "Strictly DO NOT use this for searching specialized domain expertise (e.g. PPT, SEO, Design); "
         "always use the `find-skills` skill for those instead."
     )
@@ -32,11 +33,24 @@ class ToolSearchTool(BaseTool):
         registry = context.metadata.get("tool_registry") if hasattr(context, "metadata") else None
         if registry is None:
             return ToolResult(output="Tool registry context not available", is_error=True)
-        query = arguments.query.lower()
+        query = arguments.query.strip().lower()
+        tools = registry.list_tools()
         matches = [
-            tool for tool in registry.list_tools()
+            tool for tool in tools
             if query in tool.name.lower() or query in tool.description.lower()
         ]
+        if not matches and " " in query:
+            terms = [t for t in query.split() if t]
+            matches = [
+                tool for tool in tools
+                if any(term in tool.name.lower() or term in tool.description.lower() for term in terms)
+            ]
         if not matches:
             return ToolResult(output="(no matches)")
-        return ToolResult(output="\n".join(f"{tool.name}: {tool.description}" for tool in matches))
+        activated = [tool.name for tool in matches[:12]]
+        lines = [f"{tool.name}: {tool.description}" for tool in matches]
+        lines.append(f"\n[Activated tool schemas for next step: {', '.join(activated)}]")
+        return ToolResult(
+            output="\n".join(lines),
+            metadata={"activated_tools": activated},
+        )

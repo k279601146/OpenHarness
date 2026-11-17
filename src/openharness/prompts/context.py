@@ -118,22 +118,11 @@ def _build_delegation_section() -> str:
     return "\n".join(
         [
             "# Delegation And Subagents",
-            "",
-            "Start independent delegations with `agent` together in one assistant message and continue useful work while they run. "
-            "When only waiting for their results remains, end your turn instead of sleeping or polling; the next result starts a new turn. "
-            "Collect the subagent results required to complete the task before giving the user a final answer.",
-            "",
-            "Delegation modes:",
-            "- Fresh isolated subagent (`inherit_context=False`, default): delegate a self-contained task to a subagent that works in its own context to offload focused, independent work — multi-target research, competitor/product comparison, multi-document review, scoped implementation, or multi-perspective analysis — so intermediate steps do not consume this conversation's context. It does not share this conversation's context, so include everything it needs in `prompt`.",
-            "- Context-inherited forked subagent (`inherit_context=True`): delegate a task to a child agent seeded with all completed turns so far (excluding the current in-flight turn). Use this when the subtask builds on this conversation's context — a follow-up analysis, a review, or verification — without consuming this conversation's context for the work itself.",
-            "",
-            "Subagent control & coordination tools:",
-            "- `agent(description=..., prompt=..., name=..., inherit_context=False)`: start an independently managed subagent and immediately return its `agent_id`.",
-            "- `send_message(task_id=..., message=...)`: send a message to a running subagent (received at its next step) or continue an idle/completed subagent's conversation.",
-            "- `list_agents()`: list the subagent tree with names, descriptions, and status (`running` or `completed`).",
-            "- `wait_agent(agent_ids=..., timeout_seconds=...)` / `interrupt_agent(agent_id=...)`: wait for inbox input when explicitly needed, or stop a running descendant.",
-            "- `task_board(...)`: shared dependency-aware DAG task board (`batch_create`, `create`, `claim`, `update`, `list`) with `blocked_by` dependencies and advisory `write_scopes` when coordinating multi-worker file edits.",
-            "- Use `workflow` ONLY when the user explicitly asks for a workflow or for large multi-stage script orchestration; for normal parallel delegations, call `agent` directly.",
+            "Delegate independent multi-target/review/implementation work with `agent(description=..., prompt=..., name=..., inherit_context=False)` "
+            "(`inherit_context=False` for isolated context; `inherit_context=True` to fork completed turns). "
+            "Start independent `agent` calls together in one message; when only waiting remains, end your turn instead of polling (`sleep`). "
+            "Once `agent` is called, coordination tools (`send_message`, `list_agents`, `wait_agent`, `interrupt_agent`, `task_board`) activate automatically. "
+            "Use `workflow` (via `tool_search`) only for explicit multi-stage script orchestration.",
         ]
     )
 
@@ -215,17 +204,17 @@ def _build_skills_section(
         return None
     lines = [
         "# Available Skills",
-        "",
-        "The following skills are available via the `skill` tool. "
-        "When a user's request matches a skill, invoke it with `skill(name=\"<skill_name>\")` "
-        "to load detailed instructions before proceeding. "
-        "User-invocable skills can also be run directly by the user as `/<skill-name>`.",
-        "",
+        "Call `skill(name=\"<skill_name>\")` before acting when a request matches a skill below (user-invocable skills also accept `/<skill-name>`):",
     ]
     for skill in skills:
         command_name = skill.command_name or skill.name
-        display = f" ({skill.display_name})" if skill.display_name else ""
-        lines.append(f"- **{command_name}**{display}: {compact_skill_description(skill.description)}")
+        display_raw = (skill.display_name or "").strip()
+        show_display = (
+            display_raw
+            and display_raw.lower().replace(" ", "-") != command_name.lower().replace(" ", "-")
+        )
+        display = f" ({display_raw})" if show_display else ""
+        lines.append(f"- **{command_name}**{display}: {compact_skill_description(skill.description, max_chars=64)}")
     return "\n".join(lines)
 
 

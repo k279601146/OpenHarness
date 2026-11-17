@@ -1512,9 +1512,12 @@ def test_tool_schemas_for_context_prunes_heavy_default_tools(tmp_path: Path):
 
     names = _schema_names_for_context(context)
 
-    assert {"bash", "read_file", "write_file", "edit_file", "deliver_artifact", "skill"}.issubset(names)
-    assert "ask_user_form" in names
+    assert {"bash", "read_file", "write_file", "edit_file", "deliver_artifact", "skill", "tool_search"}.issubset(names)
     assert "ask_user_question" in names
+    assert "ask_user_form" not in names
+    assert "apply_patch" not in names
+    assert "workflow" not in names
+    assert "ralph" not in names
     assert "generate_image" not in names
     assert "generate_video" not in names
     assert "canvas_get_state" not in names

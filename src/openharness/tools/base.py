@@ -179,6 +179,8 @@ def sanitize_tool_json_schema(schema: Any) -> Any:
         return schema
 
     sanitized = deepcopy(schema)
+    # Strip Pydantic-generated schema boilerplate (`title`) to shrink prompt tokens.
+    sanitized.pop("title", None)
 
     # Clean array schemas
     if sanitized.get("type") == "array":
@@ -222,12 +224,24 @@ def _inline_local_json_schema_refs(schema: dict[str, Any]) -> dict[str, Any]:
         ref = value.get("$ref")
         if isinstance(ref, str) and ref.startswith("#/$defs/"):
             name = ref.rsplit("/", 1)[-1]
-            if name in definitions and name not in stack:
-                resolved = resolve(deepcopy(definitions[name]), (*stack, name))
+            if name in definitions:
+                if name not in stack:
+                    resolved = resolve(deepcopy(definitions[name]), (*stack, name))
+                    siblings = {key: item for key, item in value.items() if key != "$ref"}
+                    if siblings and isinstance(resolved, dict):
+                        resolved.update(resolve(siblings, stack))
+                    return resolved
+                # Break recursive $ref cycles without leaving dangling refs after $defs removal.
+                target = definitions[name]
+                fallback: dict[str, Any] = {
+                    "type": target.get("type") if isinstance(target, dict) and target.get("type") else "object"
+                }
+                if isinstance(target, dict) and isinstance(target.get("description"), str) and target.get("description"):
+                    fallback["description"] = target["description"]
                 siblings = {key: item for key, item in value.items() if key != "$ref"}
-                if siblings and isinstance(resolved, dict):
-                    resolved.update(resolve(siblings, stack))
-                return resolved
+                if siblings:
+                    fallback.update(resolve(siblings, stack))
+                return fallback
         return {key: resolve(item, stack) for key, item in value.items() if key != "$defs"}
 
     return resolve(schema)

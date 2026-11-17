@@ -9,6 +9,7 @@ import pytest
 
 from openharness.engine.query import (
     CORE_TOOL_SCHEMA_NAMES,
+    DEFERRED_TOOL_SCHEMA_NAMES,
     _WORKSPACE_WRITE_TOOL_NAMES,
     RepeatToolTracker,
 )
@@ -225,7 +226,8 @@ async def test_write_file_security_and_observation_guards(tmp_path: Path) -> Non
 async def test_apply_patch_preflight_fuzzy_crlf_move_delete_and_registration(tmp_path: Path) -> None:
     registry = create_default_tool_registry()
     assert registry.get("apply_patch") is not None
-    assert "apply_patch" in CORE_TOOL_SCHEMA_NAMES
+    assert "apply_patch" in DEFERRED_TOOL_SCHEMA_NAMES
+    assert "apply_patch" not in CORE_TOOL_SCHEMA_NAMES
     assert "apply_patch" in _WORKSPACE_WRITE_TOOL_NAMES
 
     src_file = tmp_path / "mod.py"

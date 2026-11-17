@@ -300,8 +300,28 @@ async def test_subagent_runtime_spawn_steer_cold_resume_wait_interrupt_and_depth
         tool_metadata={"enable_subagents": True, "subagent_depth": 0, "subagent_max_depth": 2},
     )
     enabled_names = {s["name"] for s in _tool_schemas_for_context(enabled_ctx)}
+    assert "agent" in enabled_names
+    assert not ({"wait_agent", "send_message", "list_agents", "interrupt_agent", "task_board"} & enabled_names)
+
+    # Once `agent` activates subagent control tools via `invoked_tools`, the coordination suite is exposed.
+    active_ctx = QueryContext(
+        api_client=empty_ctx.api_client,
+        tool_registry=registry,
+        permission_checker=empty_ctx.permission_checker,
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="sys",
+        max_tokens=1024,
+        tool_metadata={
+            "enable_subagents": True,
+            "subagent_depth": 0,
+            "subagent_max_depth": 2,
+            "invoked_tools": ["wait_agent", "send_message", "list_agents", "interrupt_agent", "task_board"],
+        },
+    )
+    active_names = {s["name"] for s in _tool_schemas_for_context(active_ctx)}
     assert {"agent", "wait_agent", "send_message", "list_agents", "interrupt_agent", "task_board"}.issubset(
-        enabled_names
+        active_names
     )
 
     # At max_depth, "agent" schema is hidden so workers cannot infinitely recurse.

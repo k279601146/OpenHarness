@@ -221,6 +221,24 @@ class TestConvertToolsToOpenai:
         assert between["items"] == {"type": "integer"}
         assert "prefixItems" not in between
 
+    def test_workflow_tool_schema_has_no_dangling_recursive_refs(self):
+        import json
+        from openharness.tools.workflow_tool import WorkflowTool
+
+        schema = WorkflowTool().to_api_schema()
+        serialized = json.dumps(schema)
+        assert "$defs" not in serialized
+        assert "$ref" not in serialized
+
+        top_step_schema = schema["input_schema"]["properties"]["steps"]["items"]
+        nested_step_item = top_step_schema["properties"]["steps"]["items"]
+        assert nested_step_item["type"] == "object"
+
+        chat_result = _convert_tools_to_openai([schema])
+        responses_result = _convert_tools_to_responses([schema])
+        assert "$ref" not in json.dumps(chat_result)
+        assert "$ref" not in json.dumps(responses_result)
+
 
 class TestConvertMessagesToOpenai:
     """Test Anthropic → OpenAI message format conversion."""
@@ -1664,6 +1682,137 @@ class TestStreamMessageTokenParams:
         assert len(fake_sdk.responses.calls) == 1
         assert len(fake_sdk.chat.completions.calls) == 1
         assert fake_sdk.chat.completions.calls[0]["stream_options"] == {"include_usage": True}
+
+    @pytest.mark.asyncio
+    async def test_supports_responses_false_skips_responses_probe(self):
+        class _UnexpectedResponses:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            async def create(self, **kwargs):
+                self.calls.append(kwargs)
+                raise AssertionError("responses.create must not be called when supports_responses=False")
+
+        class _ChatStream:
+            def __init__(self) -> None:
+                self._chunks = [
+                    SimpleNamespace(
+                        choices=[SimpleNamespace(delta=SimpleNamespace(content="hi"), finish_reason="stop")],
+                        usage=None,
+                    )
+                ]
+
+            def __aiter__(self):
+                self._iter = iter(self._chunks)
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self._iter)
+                except StopIteration as exc:
+                    raise StopAsyncIteration from exc
+
+        class _ChatCompletions:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            async def create(self, **kwargs):
+                self.calls.append(kwargs)
+                return _ChatStream()
+
+        class _Chat:
+            def __init__(self) -> None:
+                self.completions = _ChatCompletions()
+
+        class _FakeSdk:
+            def __init__(self) -> None:
+                self.responses = _UnexpectedResponses()
+                self.chat = _Chat()
+
+        client = OpenAICompatibleClient(
+            api_key="test-key",
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            supports_responses=False,
+        )
+        fake_sdk = _FakeSdk()
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="models/gemini-4-hydrogen",
+            messages=[ConversationMessage.from_user_text("Say hi")],
+        )
+
+        events = [event async for event in client.stream_message(request)]
+
+        assert fake_sdk.responses.calls == []
+        assert len(fake_sdk.chat.completions.calls) == 1
+        assert any(getattr(event, "text", None) == "hi" for event in events)
+
+    @pytest.mark.asyncio
+    async def test_responses_404_remembers_unsupported_for_subsequent_turns(self):
+        class _ResponsesNotFound(Exception):
+            status_code = 404
+            body = {"error": {"message": "Not Found"}}
+
+        class _FallbackResponses:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            async def create(self, **kwargs):
+                self.calls.append(kwargs)
+                raise _ResponsesNotFound("Not Found")
+
+        class _ChatStream:
+            def __init__(self) -> None:
+                self._chunks = [
+                    SimpleNamespace(
+                        choices=[SimpleNamespace(delta=SimpleNamespace(content="ok"), finish_reason="stop")],
+                        usage=None,
+                    )
+                ]
+
+            def __aiter__(self):
+                self._iter = iter(self._chunks)
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self._iter)
+                except StopIteration as exc:
+                    raise StopAsyncIteration from exc
+
+        class _ChatCompletions:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            async def create(self, **kwargs):
+                self.calls.append(kwargs)
+                return _ChatStream()
+
+        class _Chat:
+            def __init__(self) -> None:
+                self.completions = _ChatCompletions()
+
+        class _FakeSdk:
+            def __init__(self) -> None:
+                self.responses = _FallbackResponses()
+                self.chat = _Chat()
+
+        client = OpenAICompatibleClient(api_key="test-key", base_url="http://localhost:3000/v1")
+        fake_sdk = _FakeSdk()
+        client._client = fake_sdk
+
+        request = ApiMessageRequest(
+            model="models/gemini-4-hydrogen",
+            messages=[ConversationMessage.from_user_text("Say hi")],
+        )
+
+        _ = [event async for event in client.stream_message(request)]
+        _ = [event async for event in client.stream_message(request)]
+
+        assert client.supports_responses is False
+        assert len(fake_sdk.responses.calls) == 1
+        assert len(fake_sdk.chat.completions.calls) == 2
 
 
 class TestStripThinkBlocks:

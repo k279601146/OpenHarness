@@ -87,8 +87,7 @@ class RalphTool(BaseTool):
     def when(self, selection_context: Any) -> bool | None:
         meta = getattr(selection_context, "tool_metadata", None)
         if isinstance(meta, dict) and (
-            meta.get("enable_subagents")
-            or meta.get("subagent_runtime") is not None
+            meta.get("enable_ralph")
             or meta.get("ralph_round_runner") is not None
         ):
             return True
