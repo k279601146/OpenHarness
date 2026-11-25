@@ -26,7 +26,12 @@ SANDBOX_WORKSPACE = "/home/user"
 SANDBOX_TASKS_ROOT = "/home/user/tasks"
 SANDBOX_SKILLS_ROOT = "/home/user/.agents/skills"
 SANDBOX_ARTIFACTS_ROOT = "/home/user/artifacts"
-SANDBOX_READ_ROOTS = (SANDBOX_WORKSPACE, "/code", "/tmp")
+SANDBOX_PACKAGE_DOC_ROOTS = (
+    "/opt/node22/lib/node_modules/@hypit",
+    "/usr/local/lib/node_modules/@hypit",
+    "/opt/openharness/packages/hypit-provider-saas",
+)
+SANDBOX_READ_ROOTS = (SANDBOX_WORKSPACE, "/code", "/tmp", *SANDBOX_PACKAGE_DOC_ROOTS)
 SANDBOX_WRITE_ROOTS = (SANDBOX_WORKSPACE,)
 SKILL_ARCHIVE_SYNC_FILE_THRESHOLD = 128
 SKILL_ARCHIVE_SYNC_SIZE_THRESHOLD = 8 * 1024 * 1024
@@ -261,7 +266,7 @@ def sandbox_read_roots(context: ToolExecutionContext) -> tuple[str, ...]:
     workspace = sandbox_primary_workspace(context)
     skills = sandbox_skills_root(context)
     artifacts = sandbox_artifacts_root(context)
-    return (workspace, skills, artifacts, "/code", "/tmp")
+    return (workspace, skills, artifacts, "/code", "/tmp", *SANDBOX_PACKAGE_DOC_ROOTS)
 
 
 def sandbox_write_roots(context: ToolExecutionContext) -> tuple[str, ...]:

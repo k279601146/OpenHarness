@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 import datetime
+import hashlib
 import inspect
 import json
 import logging
 import os
+import posixpath
 import shlex
 import threading
 import uuid
@@ -278,6 +280,23 @@ def _acquire_space_record(settings: Settings, user_id: int, thread_id: str, db_s
     from models import SandboxSpace
 
     now = datetime.datetime.utcnow()
+    existing_overflow = (
+        _locked_space_query(db_session, SandboxSpace)
+        .filter_by(user_id=user_id, scope_type=OVERFLOW_SCOPE, scope_key=thread_id)
+        .first()
+    )
+    if (
+        existing_overflow is not None
+        and existing_overflow.status in ("running", "suspended")
+        and existing_overflow.container_name
+    ):
+        existing_overflow.active_thread_id = thread_id
+        existing_overflow.lease_expires_at = _lease_expires_at(settings)
+        existing_overflow.last_active_at = now
+        existing_overflow.template_id = settings.sandbox.template_id
+        _commit(db_session)
+        return existing_overflow
+
     main_scope_key = str(user_id)
     main = (
         _locked_space_query(db_session, SandboxSpace)
@@ -477,6 +496,37 @@ async def _ensure_remote_task_dirs(session: E2BSandboxSession, thread_id: str) -
         pass
 
 
+WORKSPACE_SYNC_EXCLUDED_DIRS = frozenset({
+    "inputs",
+    ".hypit",
+    ".openharness",
+    "node_modules",
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".next",
+    "dist",
+    "build",
+    ".cache",
+})
+WORKSPACE_SYNC_MAX_FILE_BYTES = 25 * 1024 * 1024
+WORKSPACE_SYNC_MAX_TOTAL_BYTES = 100 * 1024 * 1024
+
+
+def _session_synced_files_map(session: Any) -> dict[str, tuple[int, str]]:
+    mapping = getattr(session, "_synced_workspace_files", None)
+    if not isinstance(mapping, dict):
+        mapping = {}
+        try:
+            setattr(session, "_synced_workspace_files", mapping)
+        except Exception:
+            pass
+    return mapping
+
+
 async def _sync_local_workspace_to_task_dir(session: E2BSandboxSession, thread_id: str) -> None:
     """Upload any existing local task mirror into the sandbox task directory."""
     try:
@@ -488,22 +538,142 @@ async def _sync_local_workspace_to_task_dir(session: E2BSandboxSession, thread_i
             return
 
         target_root = _task_workspace(thread_id)
-        logger.info("Syncing local workspace %s to sandbox task dir %s", local_ws, target_root)
-        for root, _dirs, files in os.walk(local_ws):
+        synced_map = _session_synced_files_map(session)
+        pending_dirs: list[str] = [target_root]
+        pending_files: list[tuple[Path, str]] = []
+        for root, dirs, files in os.walk(local_ws):
+            dirs[:] = [
+                d for d in dirs
+                if d not in {"node_modules", ".git", "__pycache__", ".venv", "venv", ".cache"}
+            ]
             root_path = Path(root)
             rel_dir = root_path.relative_to(local_ws).as_posix()
             sandbox_dir = target_root if rel_dir == "." else f"{target_root}/{rel_dir}"
-            await session.exec_command(f"mkdir -p {shlex.quote(sandbox_dir)}")
+            if sandbox_dir not in pending_dirs:
+                pending_dirs.append(sandbox_dir)
             for filename in files:
                 local_file_path = root_path / filename
                 rel_path = local_file_path.relative_to(local_ws).as_posix()
                 sandbox_path = f"{target_root}/{rel_path}"
-                try:
-                    await session.write_file_binary(sandbox_path, local_file_path.read_bytes())
-                except Exception as exc:
-                    logger.warning("Failed to sync file %s: %s", local_file_path, exc)
+                pending_files.append((local_file_path, sandbox_path))
+
+        if not pending_files:
+            return
+        logger.info("Syncing local workspace %s to sandbox task dir %s", local_ws, target_root)
+        mkdir_args = " ".join(shlex.quote(d) for d in pending_dirs)
+        await session.exec_command(f"mkdir -p {mkdir_args}")
+        for local_file_path, sandbox_path in pending_files:
+            try:
+                data = local_file_path.read_bytes()
+                digest = hashlib.sha256(data).hexdigest()
+                if synced_map.get(sandbox_path) == (len(data), digest):
+                    continue
+                await session.write_file_binary(sandbox_path, data)
+                synced_map[sandbox_path] = (len(data), digest)
+            except Exception as exc:
+                logger.warning("Failed to sync file %s: %s", local_file_path, exc)
     except Exception as exc:
         logger.warning("Late startup sync failed: %s", exc)
+
+
+async def sync_task_dir_to_local_workspace(session: Any, thread_id: str) -> list[str]:
+    """Mirror new or modified files from the E2B task workspace back to temp_workspaces/<thread_id>."""
+    if session is None or not thread_id:
+        return []
+    exec_command = getattr(session, "exec_command", None)
+    read_file_binary = getattr(session, "read_file_binary", None)
+    if not callable(exec_command) or not callable(read_file_binary):
+        return []
+    project_root = _project_root()
+    if project_root is None:
+        return []
+
+    local_ws = (project_root / "temp_workspaces" / thread_id).resolve()
+    target_root = _task_workspace(thread_id)
+    prune_clauses = " -o ".join(f"-name {shlex.quote(name)}" for name in sorted(WORKSPACE_SYNC_EXCLUDED_DIRS))
+    find_cmd = (
+        f"if [ -d {shlex.quote(target_root)} ]; then "
+        f"find {shlex.quote(target_root)} -maxdepth 6 "
+        f"\\( -type d \\( {prune_clauses} \\) -prune \\) -o "
+        f"\\( -type f ! -name '.openharness-*' -printf '%s\\t%Ts\\t%P\\n' \\) 2>/dev/null; "
+        f"fi"
+    )
+    try:
+        result = await exec_command(find_cmd)
+        output = getattr(result, "stdout_str", "") or ""
+        if not output and hasattr(result, "communicate"):
+            stdout, _stderr = await result.communicate()
+            output = stdout.decode("utf-8", errors="replace") if isinstance(stdout, (bytes, bytearray)) else str(stdout or "")
+    except Exception as exc:
+        logger.debug("Reverse workspace scan skipped for %s: %s", thread_id, exc)
+        return []
+
+    if not output.strip():
+        return []
+
+    synced_paths: list[str] = []
+    synced_map = _session_synced_files_map(session)
+    total_bytes = 0
+    for raw_line in output.splitlines():
+        parts = raw_line.split("\t", 2)
+        if len(parts) != 3:
+            continue
+        size_text, mtime_text, rel_raw = parts
+        try:
+            size = int(size_text)
+            remote_mtime = int(float(mtime_text))
+        except ValueError:
+            continue
+        if size <= 0 or size > WORKSPACE_SYNC_MAX_FILE_BYTES:
+            continue
+        rel_norm = posixpath.normpath(rel_raw.strip().replace("\\", "/")).lstrip("/")
+        if not rel_norm or rel_norm in {".", ".."} or rel_norm.startswith("../") or "/../" in f"/{rel_norm}/":
+            continue
+        top_segment = rel_norm.split("/", 1)[0]
+        if top_segment in WORKSPACE_SYNC_EXCLUDED_DIRS or top_segment.startswith(".openharness-"):
+            continue
+
+        local_target = (local_ws / Path(*rel_norm.split("/"))).resolve()
+        try:
+            local_target.relative_to(local_ws)
+        except ValueError:
+            continue
+
+        sandbox_path = f"{target_root}/{rel_norm}"
+        try:
+            if local_target.is_file():
+                stat = local_target.stat()
+                if stat.st_size == size and int(stat.st_mtime) >= remote_mtime:
+                    continue
+        except OSError:
+            pass
+
+        if total_bytes + size > WORKSPACE_SYNC_MAX_TOTAL_BYTES:
+            logger.warning("Reverse workspace sync reached byte cap for thread %s", thread_id)
+            break
+
+        try:
+            content = await read_file_binary(sandbox_path)
+            if isinstance(content, str):
+                content = content.encode("utf-8")
+            local_target.parent.mkdir(parents=True, exist_ok=True)
+            tmp_target = local_target.with_name(f".{local_target.name}.sync-{uuid.uuid4().hex[:8]}.tmp")
+            tmp_target.write_bytes(content)
+            os.replace(tmp_target, local_target)
+            if remote_mtime > 0:
+                try:
+                    os.utime(local_target, (remote_mtime, remote_mtime))
+                except OSError:
+                    pass
+            synced_map[sandbox_path] = (len(content), hashlib.sha256(content).hexdigest())
+            total_bytes += len(content)
+            synced_paths.append(sandbox_path)
+        except Exception as exc:
+            logger.warning("Failed to mirror sandbox workspace file %s -> %s: %s", sandbox_path, local_target, exc)
+
+    if synced_paths:
+        logger.info("Mirrored %d workspace files from sandbox for thread %s", len(synced_paths), thread_id)
+    return synced_paths
 
 
 async def touch_task_manifest(
@@ -820,19 +990,37 @@ def _lease_expires_at(settings: Settings) -> datetime.datetime:
     return datetime.datetime.utcnow() + datetime.timedelta(seconds=ttl + LEASE_GRACE_SECONDS)
 
 
-async def suspend_sandbox(user_id: int, thread_id: str, db_session=None) -> None:
+async def suspend_sandbox(
+    user_id: int,
+    thread_id: str,
+    db_session=None,
+    *,
+    preserve_overflow: bool = False,
+) -> None:
     """Release the sandbox lease held by a task."""
     async with _locked_registry():
-        await _suspend_sandbox_locked(user_id, thread_id, db_session)
+        await _suspend_sandbox_locked(user_id, thread_id, db_session, preserve_overflow=preserve_overflow)
 
 
-async def _suspend_sandbox_locked(user_id: int, thread_id: str, db_session: Any) -> None:
+async def _suspend_sandbox_locked(
+    user_id: int,
+    thread_id: str,
+    db_session: Any,
+    *,
+    preserve_overflow: bool = False,
+) -> None:
     thread_key = _thread_key(user_id, thread_id)
     registry_key = _thread_scope_registry.pop(thread_key, None)
     session = _sandbox_registry.pop(registry_key, None) if registry_key else None
     space = _find_space_for_thread(db_session, user_id, thread_id)
 
-    if space is not None and space.scope_type == OVERFLOW_SCOPE:
+    if session is not None:
+        try:
+            await sync_task_dir_to_local_workspace(session, thread_id)
+        except Exception as exc:
+            logger.warning("Pre-suspend workspace mirror failed for %s: %s", thread_id, exc)
+
+    if space is not None and space.scope_type == OVERFLOW_SCOPE and not preserve_overflow:
         if session is not None:
             await session.destroy()
         elif space.container_name:
@@ -853,7 +1041,8 @@ async def _suspend_sandbox_locked(user_id: int, thread_id: str, db_session: Any)
         return
 
     if session is not None:
-        await maybe_run_sandbox_gc(session, active_thread_id=thread_id, force_check=True)
+        if space is None or space.scope_type != OVERFLOW_SCOPE:
+            await maybe_run_sandbox_gc(session, active_thread_id=thread_id, force_check=True)
         await session.suspend()
 
     if space is not None:

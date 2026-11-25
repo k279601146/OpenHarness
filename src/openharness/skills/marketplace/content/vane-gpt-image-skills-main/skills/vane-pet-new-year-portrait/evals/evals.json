@@ -1,0 +1,76 @@
+{
+  "skill": "vane-pet-new-year-portrait",
+  "behavior_contract": {
+    "must": [
+      "使用真实宠物参考图保持可见身份特征",
+      "默认逐张生成并保存九张独立写真",
+      "姿势相近的照片最多两张，避免过远和过近",
+      "检查每张新年元素、主体和实际尺寸"
+    ],
+    "must_not": [
+      "以虚构宠物冒充参考图",
+      "把九宫格预览当成九张独立成片",
+      "未获指定便猜测生肖或年份"
+    ]
+  },
+  "cases": [
+    {
+      "id": "normal-01",
+      "type": "normal",
+      "prompt": "用这张猫咪正面照做一套新年写真。",
+      "input_files": [],
+      "expected_behavior": [
+        "以原照为参考分别生成九张独立图片",
+        "使用默认 3:4 竖版并报告实际尺寸"
+      ]
+    },
+    {
+      "id": "preview-01",
+      "type": "boundary",
+      "prompt": "先给我的猫做一张白底 3:4 的九宫格预览，想看看中国红摄影棚的效果。",
+      "input_files": [],
+      "expected_behavior": [
+        "生成一张九格白底预览",
+        "不把预览说成九张独立写真"
+      ]
+    },
+    {
+      "id": "selected-01",
+      "type": "normal",
+      "prompt": "按刚才选中的九宫格，给我的猫逐张生成九张照片。",
+      "input_files": [],
+      "expected_behavior": [
+        "使用预览和原始宠物照片作为参考",
+        "分九次生成、分别保存并按预览位置编号"
+      ]
+    },
+    {
+      "id": "boundary-01",
+      "type": "boundary",
+      "prompt": "帮我的狗做新年写真。",
+      "input_files": [],
+      "expected_behavior": [
+        "请求上传清晰照片，不虚构成宠物本人"
+      ]
+    },
+    {
+      "id": "negative-01",
+      "type": "negative",
+      "prompt": "我的猫食欲下降怎么办？",
+      "input_files": [],
+      "expected_behavior": [
+        "不触发新年写真工作流"
+      ]
+    },
+    {
+      "id": "holdout-01",
+      "type": "holdout",
+      "prompt": "用同一只兔子的正面、侧面和背面照做墨绿金色羊年写真。",
+      "input_files": [],
+      "expected_behavior": [
+        "使用三张参考图，遵循颜色和羊年要求",
+        "默认生成九张独立写真"
+      ]
+    }
+  ]
+}

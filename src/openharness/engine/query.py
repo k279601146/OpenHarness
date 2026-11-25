@@ -393,6 +393,8 @@ def _has_canvas_context(metadata: dict[str, object] | None) -> bool:
 
 
 def _has_media_context(metadata: dict[str, object] | None) -> bool:
+    if _has_selected_skill(metadata, "hypit"):
+        return False
     canvas_request = _metadata_dict(metadata, "canvas_request")
     request_kind = str(canvas_request.get("kind") or "").lower()
     if request_kind in {"image_generation", "video_generation", "audio_generation", "music_generation"}:
@@ -1014,12 +1016,12 @@ def _record_tool_carryover(
         if skill_name:
             _remember_active_artifact(context.tool_metadata, f"skill:{skill_name}")
             _remember_verified_work(context.tool_metadata, f"Loaded skill {skill_name}")
-        # Auto-activate any deferred tool names explicitly referenced by the loaded skill
-        # so the model can call them on the very next turn without an extra tool_search.
+        # Auto-activate deferred tool names only when explicitly code-quoted in the loaded
+        # skill (e.g. `ask_user_form`), avoiding false positives on prose words like "brief".
         mentioned_deferred = [
             deferred_name
             for deferred_name in DEFERRED_TOOL_SCHEMA_NAMES
-            if re.search(rf"\b{re.escape(deferred_name)}\b", tool_output or "")
+            if re.search(rf"`{re.escape(deferred_name)}`", tool_output or "")
         ]
         if mentioned_deferred:
             _remember_invoked_tools(context.tool_metadata, mentioned_deferred)
