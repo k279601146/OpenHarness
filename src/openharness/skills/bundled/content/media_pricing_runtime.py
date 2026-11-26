@@ -1819,7 +1819,10 @@ def enabled_model_ids(kind: Literal["image", "video", "audio", "music"], rules: 
         if isinstance(rule, dict) and rule.get("enabled", True):
             result.add(model_id)
             if model_id.startswith("apimart-"):
-                result.add(model_id[len("apimart-"):])
+                clean = model_id[len("apimart-"):]
+                result.add(clean)
+                if clean.endswith("-apimart"):
+                    result.add(clean[:-len("-apimart")])
             else:
                 result.add(f"apimart-{model_id}")
     return result
